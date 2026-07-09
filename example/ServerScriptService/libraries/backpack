@@ -1,0 +1,82 @@
+local backpack = {}
+
+local Players = game:GetService("Players")
+local network = require(script.Parent.network)
+local datastore = require(script.Parent.datastore)
+
+local storage = {}
+
+local function defaultData()
+	return {
+		ores = {},
+		max = 16,
+		
+		loaded = false,
+		clearing = false
+	}
+end
+
+function backpack.store(p, name)
+	if storage[p] and #storage[p].ores < storage[p].max then
+		table.insert(storage[p].ores, name)
+		return true, storage[p]
+	end
+end
+
+function backpack.clear(p, sell)
+	local totalValue = 0 -- TODO
+	
+	if storage[p] then
+		if sell and #storage[p].ores > 0 then
+			for _, ore in ipairs(storage[p].ores) do
+				totalValue = totalValue + 1 -- TODO
+			end
+		end
+		
+		storage[p].ores = {}
+		network.send(p, "setBackpack", storage[p])
+		return true
+	end
+	
+	return totalValue
+end
+
+function backpack.isFull(p)
+	if storage[p] and #storage[p].ores == storage[p].max then
+		return true
+	end
+	return false
+end
+
+function backpack.playerAdded(p)
+	p.CharacterAdded:connect(function(c)
+		backpack.clear(p, false)
+	end)
+	
+	storage[p] = defaultData()
+	
+	-- TODO: load data
+	
+	storage[p].loaded = true
+end
+
+function backpack.playerRemoving(p)
+	storage[p] = nil
+end
+
+network.on("getBackpack", function(p)
+	repeat
+		task.wait()
+	until
+		(storage[p] and storage[p].loaded) or p.Parent ~= Players
+	return storage[p]
+end)
+
+network.on("sellOres", function(p)
+	local earned = backpack.clear(p, true)
+	if earned and earned > 0 then
+		datastore.adjustCoins(p, earned)
+	end
+end)
+
+return backpack

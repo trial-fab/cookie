@@ -1,0 +1,37 @@
+local network = {}
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local triggers = {}
+
+local FUNC = ReplicatedStorage:WaitForChild("F")
+local EVENT = ReplicatedStorage:WaitForChild("E")
+
+local function validate(trigger)
+	if typeof(trigger) ~= "string" then
+		error(`Trigger {trigger} is not a string`)
+	end
+end
+
+function network.send(trigger, data)
+	validate(trigger)
+	EVENT:FireServer(trigger, data)
+end
+
+function network.get(trigger, data)
+	validate(trigger)
+	return FUNC:InvokeServer(trigger, data)
+end
+
+function network.on(trigger, func)
+	validate(trigger)
+	triggers[trigger] = func
+end
+
+EVENT.OnClientEvent:Connect(function(trigger, data)
+	if triggers[trigger] then
+		triggers[trigger](data)
+	end
+end)
+
+return network

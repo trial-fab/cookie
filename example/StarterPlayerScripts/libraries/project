@@ -1,0 +1,90 @@
+local project = {}
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+local GuiService = game:GetService("GuiService")
+local Lighting = game:GetService("Lighting")
+local vars = require(ReplicatedStorage.Shared.vars)
+
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+local playerGui = player:WaitForChild("PlayerGui")
+local topBar = playerGui:WaitForChild("customTopBar")
+
+local PROJECT_DURATION = 0.55
+local SHATTER_DURATION = 0.4
+
+function project.project(clone)
+	local gui = Instance.new("ScreenGui")
+	gui.ResetOnSpawn = false
+	gui.ScreenInsets = Enum.ScreenInsets.None
+	gui.DisplayOrder = 4
+	gui.Parent = playerGui
+	
+	local viewport = Instance.new("ViewportFrame")
+	viewport.Size = UDim2.fromScale(1, 1)
+	viewport.Position = UDim2.fromScale(0, 0)
+	viewport.BackgroundTransparency = 1
+	viewport.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+	viewport.Ambient = Lighting.Ambient
+	viewport.LightColor = Color3.fromRGB(255, 255, 255)
+	viewport.Parent = gui
+	
+	local cam = workspace.CurrentCamera:Clone()
+	cam.Parent = viewport
+	viewport.CurrentCamera = cam
+	
+	clone.Anchored = true
+	clone.CanCollide = false
+	clone.CanTouch = false
+	clone.CanQuery = false
+	clone.Parent = viewport
+	
+	local vpPos = workspace.CurrentCamera:WorldToViewportPoint(clone.Position)
+	local bpPos = topBar.icons.right.backpack.AbsolutePosition + (topBar.icons.right.backpack.AbsoluteSize / 2) + GuiService:GetGuiInset()
+	
+	TweenService:Create(viewport, TweenInfo.new(PROJECT_DURATION, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
+		Position = UDim2.fromOffset(bpPos.X - vpPos.X, bpPos.Y - vpPos.Y)
+	}):Play()
+	
+	local function shatter()
+		clone:Destroy()
+		clone = nil
+		
+		for i = 1, 15 do
+			local exp = Vector2.new(math.random(-35, 35), math.random(-15, 15))
+			local dot = Instance.new("Frame")
+			dot.Size = UDim2.fromOffset(2, 2)
+			dot.BackgroundColor3 = Color3.new(1, 1, 1)
+			dot.BorderSizePixel = 0
+			dot.AnchorPoint = Vector2.new(0.5, 0.5)
+			dot.Position = UDim2.fromOffset(bpPos.X + exp.X, bpPos.Y + exp.Y)
+			dot.Parent = gui
+			
+			TweenService:create(dot, TweenInfo.new(SHATTER_DURATION), {
+				Position = UDim2.fromOffset(bpPos.X + exp.X * 2.5, bpPos.Y + exp.Y * 2),
+				Transparency = 1
+			}):Play()
+		end
+		
+		task.delay(SHATTER_DURATION, function()
+			gui:Destroy()
+		end)
+	end
+	
+	local start = tick()
+	local angles = vars.randAngles(-10, 10)
+	local conn
+	conn = RunService.RenderStepped:connect(function()
+		if tick() - start >= PROJECT_DURATION then
+			conn:disconnect()
+			shatter()
+		else
+			clone.CFrame = clone.CFrame * angles
+		end
+	end)
+end
+
+return project

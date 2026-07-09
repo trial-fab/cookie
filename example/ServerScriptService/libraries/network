@@ -1,0 +1,43 @@
+local network = {}
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local triggers = {}
+
+local event = Instance.new("RemoteEvent")
+event.Name = "E"
+event.Parent = ReplicatedStorage
+
+local func = Instance.new("RemoteFunction")
+func.Name = "F"
+func.Parent = ReplicatedStorage
+
+local function validate(trigger)
+	if typeof(trigger) ~= "string" then
+		error(`Trigger {trigger} is not a string`)
+	end
+end
+
+event.OnServerEvent:Connect(function(p, trigger, data)
+	if triggers[trigger] then
+		triggers[trigger](p, data)
+	end
+end)
+
+func.OnServerInvoke = function(p, trigger, data)
+	if triggers[trigger] then
+		return triggers[trigger](p, data)
+	end
+end
+
+network.on = function(trigger, func)
+	validate(trigger)
+	triggers[trigger] = func
+end
+
+network.send = function(p, trigger, data)
+	validate(trigger)
+	event:FireClient(p, trigger, data)
+end
+
+return network

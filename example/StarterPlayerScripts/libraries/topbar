@@ -1,0 +1,117 @@
+local topbar = {}
+
+local Players = game:GetService("Players")
+local TextService = game:GetService("TextService")
+local StarterGui = game:GetService("StarterGui")
+local SocialService = game:GetService("SocialService")
+local GuiService = game:GetService("GuiService")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local light = require(script.Parent.light)
+local network = require(script.Parent.network)
+local button = require(script.button)
+local vars = require(ReplicatedStorage.Shared.vars)
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local topbarGui = playerGui:WaitForChild("customTopBar")
+
+local BONUS_BUTTON = button(topbarGui.icons.left.bonus)
+local LIGHT_BUTTON = button(topbarGui.icons.right.light)
+local BACKPACK_BUTTON = button(topbarGui.icons.right.backpack)
+local DIGBUCKS_BUTTON = button(topbarGui.icons.right.digbucks)
+
+local lastStorage
+
+local function canSendGameInvite()
+	local success, canSend = pcall(function()
+		return SocialService:CanSendGameInviteAsync(player)
+	end)
+	return success and canSend
+end
+
+local function textBounds(text, label)
+	local params = Instance.new("GetTextBoundsParams")
+	params.Text = text
+	params.Font = label.FontFace
+	params.Size = label.TextSize
+	params.Width = 10000
+	return math.ceil(TextService:GetTextBoundsAsync(params).X)
+end
+
+local function createButton(btn)
+	
+end
+
+function topbar.updateBonus(bonus)
+	local bounds = textBounds(`{vars.round(bonus * 100)}%`, topbarGui.icons.left.bonus.text)
+	
+	topbarGui.icons.left.bonus.text.Text = `{vars.round(bonus * 100)}<b>%</b>`
+	topbarGui.icons.left.bonus.Size = UDim2.fromOffset(bounds + 116, 44)
+end
+
+function topbar.updateStorage(storage)
+	lastStorage = storage
+	
+	local count = #storage.ores
+	local max = storage.max
+	local bounds = textBounds(`{count}/{max}`, topbarGui.icons.right.backpack.text)
+	
+	local spacer = "<font size=\"7\"> </font>"
+	topbarGui.icons.right.backpack.text.Text = `{count}{spacer}/{spacer}{max}`
+	topbarGui.icons.right.backpack.bar.Size = UDim2.new(1, -70 - bounds, 0, 4)
+	topbarGui.icons.right.backpack.bar.pct.Size = UDim2.fromScale(count / max, 1)
+end
+
+function topbar.isStorageFull()
+	if lastStorage and #lastStorage.ores == lastStorage.max then
+		return true
+	end
+end
+
+function topbar.setPlacingLight(v)
+	LIGHT_BUTTON.set(v)
+end
+
+function topbar.setDigbucks(v)
+	local text = vars.format(v)
+	local bounds = textBounds(text, topbarGui.icons.right.digbucks.text)
+	
+	topbarGui.icons.right.digbucks.text.Text = text
+	topbarGui.icons.right.digbucks.Size = UDim2.fromOffset(bounds + 59, 44)
+end
+
+-- EVENTS --
+
+LIGHT_BUTTON.toggled = function(selected)
+	light.setPlacingLight(selected)
+end
+
+BONUS_BUTTON.toggled = function(selected)
+	topbarGui.icons.left.bonus.popup.Visible = selected
+	pcall(function()
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, not selected)
+	end)
+end
+
+topbarGui.icons.left.bonus.popup.container.invite.Activated:connect(function()
+	if canSendGameInvite() then
+		local options = Instance.new("ExperienceInviteOptions")
+		options.PromptMessage = "Play with friends for a digging speed bonus!"
+		options.InviteMessageId = "43fa3aca-6210-7146-810e-0983e4baa2a8"
+		
+		if canSendGameInvite() then
+			SocialService:PromptGameInvite(player, options)
+		end
+	end
+end)
+
+GuiService.MenuOpened:connect(function()
+	topbarGui.icons.left.con.Visible = true
+end)
+
+GuiService.MenuClosed:connect(function()
+	topbarGui.icons.left.con.Visible = false
+end)
+
+return topbar

@@ -1,0 +1,8 @@
+local util = {}
+
+util.ATTRIBUTE_NAMES = {
+	CAM_CONTROL_LOCK = "CamControl",
+	CHAR_GRAB_LOCK = "GrabLock"
+}
+
+return util

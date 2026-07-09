@@ -1,0 +1,276 @@
+local conveyor = {}
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local network = require(script.Parent.network)
+local vars = require(ReplicatedStorage.Shared.vars)
+
+local BELT_LENGTH = vars.CONVEYOR_BELT_LENGTH  -- default length for first belt
+local BELT_WIDTH  = vars.CONVEYOR_BELT_WIDTH
+local BELT_HEIGHT = vars.CONVEYOR_BELT_HEIGHT
+local MIN_LENGTH  = 1  -- minimum belt length in studs
+
+local camera = workspace.CurrentCamera
+
+local placing = false
+local previewPart = nil
+local previewRenderConn = nil
+
+-- Chain state: exit of the last placed belt
+local chainExitPos = nil
+local chainDir = nil
+
+-- Last computed preview data (read on LMB to place)
+-- { entry = Vector3, exit = Vector3, dir = Vector3, length = number }
+local previewData = nil
+
+local terrainParams = RaycastParams.new()
+terrainParams.FilterDescendantsInstances = { workspace.Terrain }
+terrainParams.FilterType = Enum.RaycastFilterType.Include
+
+local function castToTerrainMouse()
+	local location = UserInputService:GetMouseLocation()
+	local unitRay = camera:ViewportPointToRay(location.X, location.Y)
+	return workspace:Raycast(unitRay.Origin, unitRay.Direction * 500, terrainParams)
+end
+
+local function snapYToTerrain(pos)
+	local result = workspace:Raycast(pos + Vector3.new(0, 5, 0), Vector3.new(0, -20, 0), terrainParams)
+	if result then
+		return result.Position.Y + BELT_HEIGHT / 2
+	end
+	return pos.Y
+end
+
+local function projectXZ(v)
+	local flat = Vector3.new(v.X, 0, v.Z)
+	local len = flat.Magnitude
+	if len < 0.001 then return nil end
+	return flat / len
+end
+
+local function createPreview()
+	local part = Instance.new("Part")
+	part.Name = "ConveyorBeltPreview"
+	part.Size = Vector3.new(BELT_WIDTH, BELT_HEIGHT, BELT_LENGTH)
+	part.Color = Color3.fromRGB(35, 35, 35)
+	part.Material = Enum.Material.SmoothPlastic
+	part.Anchored = true
+	part.CanCollide = false
+	part.CastShadow = false
+
+	local hi = Instance.new("Highlight")
+	hi.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hi.FillColor = Color3.new(0, 1, 0)
+	hi.OutlineColor = Color3.new(0, 1, 0)
+	hi.FillTransparency = 0.5
+	hi.OutlineTransparency = 0
+	hi.Parent = part
+
+	return part
+end
+
+local function updatePreview(mousePos)
+	local dir, entry, exit_
+
+	if chainExitPos then
+		-- Stretch belt from chain exit to mouse position (XZ)
+		local exitXZ = Vector3.new(chainExitPos.X, 0, chainExitPos.Z)
+		local mouseXZ = Vector3.new(mousePos.X, 0, mousePos.Z)
+		local diff = mouseXZ - exitXZ
+		local dist = diff.Magnitude
+
+		if dist < MIN_LENGTH then
+			dir = chainDir or projectXZ(camera.CFrame.LookVector) or Vector3.new(0, 0, 1)
+			dist = MIN_LENGTH
+		else
+			dir = diff.Unit  -- XZ unit vector; becomes chainDir for next belt's Bézier tangent
+		end
+
+		-- Snap entry Y from chain, exit Y from terrain at exit XZ
+		local entryY = chainExitPos.Y
+		local exitX = chainExitPos.X + dir.X * dist
+		local exitZ = chainExitPos.Z + dir.Z * dist
+		local exitY = snapYToTerrain(Vector3.new(exitX, mousePos.Y, exitZ))
+
+		entry = Vector3.new(chainExitPos.X, entryY, chainExitPos.Z)
+		exit_ = Vector3.new(exitX, exitY, exitZ)
+
+		-- 3D center and direction so preview tilts with slope
+		local center3D = (entry + exit_) / 2
+		local diff3D   = exit_ - entry
+		local length3D = diff3D.Magnitude
+		local dir3D    = length3D > 0.001 and (diff3D / length3D) or Vector3.new(dir.X, 0, dir.Z)
+
+		previewPart.Size   = Vector3.new(BELT_WIDTH, BELT_HEIGHT, length3D)
+		previewPart.CFrame = CFrame.new(center3D, center3D + dir3D)
+		previewPart.Parent = workspace
+
+		previewData = { entry = entry, exit = exit_, dir = dir, length = length3D }
+	else
+		-- First belt: fixed length, facing camera direction, flat
+		dir = projectXZ(camera.CFrame.LookVector) or Vector3.new(0, 0, 1)
+		local length = BELT_LENGTH
+		local snappedY = snapYToTerrain(mousePos)
+		local center = Vector3.new(mousePos.X, snappedY, mousePos.Z)
+		entry = Vector3.new(center.X - dir.X * length / 2, snappedY, center.Z - dir.Z * length / 2)
+		exit_ = Vector3.new(center.X + dir.X * length / 2, snappedY, center.Z + dir.Z * length / 2)
+
+		previewPart.Size   = Vector3.new(BELT_WIDTH, BELT_HEIGHT, length)
+		previewPart.CFrame = CFrame.new(center, center + dir)
+		previewPart.Parent = workspace
+
+		previewData = { entry = entry, exit = exit_, dir = dir, length = length }
+	end
+end
+
+local function startPreview()
+	previewPart = createPreview()
+
+	previewRenderConn = RunService.RenderStepped:Connect(function()
+		if not placing then
+			previewPart:Destroy()
+			previewPart = nil
+			if previewRenderConn then
+				previewRenderConn:Disconnect()
+				previewRenderConn = nil
+			end
+			return
+		end
+
+		local result = castToTerrainMouse()
+		if result then
+			updatePreview(result.Position)
+		else
+			previewPart.Parent = nil
+			previewData = nil
+		end
+	end)
+end
+
+local function stopPreview()
+	if previewRenderConn then
+		previewRenderConn:Disconnect()
+		previewRenderConn = nil
+	end
+	if previewPart then
+		previewPart:Destroy()
+		previewPart = nil
+	end
+	previewData = nil
+end
+
+function conveyor.isPlacing()
+	return placing
+end
+
+-- Called from init.client on LMB while placing
+function conveyor.placeBelt()
+	if not previewData then return end
+	network.send("placeConveyor", {
+		entry   = previewData.entry,
+		exit    = previewData.exit,
+		prevDir = chainDir,  -- nil for first belt; server uses straight-line fallback
+	})
+	-- Advance chain to exit of belt just placed
+	chainExitPos = previewData.exit
+	chainDir = previewData.dir
+end
+
+-- Called when LMB clicks an existing belt while placing.
+-- Extends a belt from the current chain exit to the nearest end of targetBelt,
+-- then snaps the chain to continue from that end.
+function conveyor.connectToBelt(targetBelt, hitPos)
+	if not targetBelt then return end
+
+	local halfLen = targetBelt.Size.Z / 2
+	local lookVec = targetBelt.CFrame.LookVector
+	local exitPoint  = targetBelt.CFrame.Position + lookVec * halfLen
+	local entryPoint = targetBelt.CFrame.Position - lookVec * halfLen
+	local lookXZ = projectXZ(lookVec)
+
+	-- Find nearest end to the current chain exit (or hit pos if no chain yet)
+	local refPos = chainExitPos or hitPos
+	local ref = Vector3.new(refPos.X, 0, refPos.Z)
+	local dExit  = (ref - Vector3.new(exitPoint.X,  0, exitPoint.Z)).Magnitude
+	local dEntry = (ref - Vector3.new(entryPoint.X, 0, entryPoint.Z)).Magnitude
+
+	local snapPoint, newDir
+	if dExit <= dEntry then
+		snapPoint = exitPoint
+		newDir = lookXZ
+	else
+		snapPoint = entryPoint
+		newDir = nil  -- entry connection: no prevDir tangent, so next belt is straight
+	end
+
+	-- Place a belt segment from chainExitPos to the snap point
+	if chainExitPos then
+		network.send("placeConveyor", {
+			entry   = chainExitPos,
+			exit    = snapPoint,
+			prevDir = chainDir,
+		})
+	end
+
+	-- Snap chain to the chosen end
+	chainExitPos = snapPoint
+	chainDir = newDir
+end
+
+-- Snap the chain state to the nearest end of an existing belt.
+-- hitPos: the world position the mouse hit (used to pick exit vs entry end).
+local function snapChainToBelt(belt, hitPos)
+	local halfLen = belt.Size.Z / 2
+	local lookVec = belt.CFrame.LookVector
+	-- Exit end (green, local -Z) = center + LookVector * halfLen
+	-- Entry end (orange, local +Z) = center - LookVector * halfLen
+	local exitPoint  = belt.CFrame.Position + lookVec * halfLen
+	local entryPoint = belt.CFrame.Position - lookVec * halfLen
+	local lookXZ = projectXZ(lookVec)
+
+	local ref = Vector3.new(hitPos.X, 0, hitPos.Z)
+	local dExit  = (ref - Vector3.new(exitPoint.X,  0, exitPoint.Z)).Magnitude
+	local dEntry = (ref - Vector3.new(entryPoint.X, 0, entryPoint.Z)).Magnitude
+
+	if dExit <= dEntry then
+		chainExitPos = exitPoint
+		chainDir = lookXZ
+	else
+		chainExitPos = entryPoint
+		chainDir = nil  -- entry connection: no prevDir tangent, so next belt is straight
+	end
+end
+
+-- attachBelt: optional existing ConveyorBelt Part to snap chain to on activation
+-- hitPos: world hit position used to pick nearest end
+function conveyor.toggle(attachBelt, hitPos)
+	placing = not placing
+	if placing then
+		chainExitPos = nil
+		chainDir = nil
+		if attachBelt and hitPos then
+			snapChainToBelt(attachBelt, hitPos)
+		end
+		startPreview()
+	else
+		chainExitPos = nil
+		chainDir = nil
+		stopPreview()
+	end
+	return placing
+end
+
+function conveyor.finalize()
+	placing = false
+	chainExitPos = nil
+	chainDir = nil
+	stopPreview()
+end
+
+function conveyor.tryReverse(beltPart)
+	network.send("reverseConveyor", beltPart)
+end
+
+return conveyor

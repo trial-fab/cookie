@@ -1,0 +1,126 @@
+local controller = {}
+
+-- NO LONGER USED
+if true then error() end
+
+local Players = game:GetService("Players")
+local ContextActionService = game:GetService("ContextActionService")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local vars = require(ReplicatedStorage.Shared.vars)
+local interface = require(script.Parent.interface)
+local util = require(script.Parent.util)
+
+local camera = workspace.CurrentCamera
+local player = Players.LocalPlayer
+
+local BASE_CAMERA_OFFSET = Vector3.new(2, 2, 8)
+local MIN_OFFSET_Z = 0
+local MAX_OFFSET_Z = 12
+local OFFSET_Z_PER_STEP = 1
+
+local cameraOffsetZ = 0
+local isFocused = true
+local isControlling = UserInputService.TouchEnabled
+local cameraAngleX = 0
+local cameraAngleY = 0
+local root, hum
+local lastCamUpdateSBC = not isControlling
+
+local function shouldBeControlling()
+	return isFocused and not interface.isPopupOpen() and isControlling and root ~= nil and hum ~= nil
+end
+
+local function handleChar(c)
+	if not c or not vars.mutexAttribute(c, util.ATTRIBUTE_NAMES.CAM_CONTROL_LOCK, true) then
+		return
+	end
+	
+	hum = c:WaitForChild("Humanoid")
+	root = c:WaitForChild("HumanoidRootPart")
+
+	cameraAngleX = 0
+	cameraAngleY = 0
+end
+
+local function handlePlayerInput(actionName, inputState, inputObject)
+	if shouldBeControlling() and inputState == Enum.UserInputState.Change then
+		cameraAngleX -= inputObject.Delta.X
+		cameraAngleY = math.clamp(cameraAngleY - inputObject.Delta.Y * 0.4, -75, 75)
+	end
+end
+
+local function handleCameraUpdate()
+	local sbc = shouldBeControlling()
+	if sbc ~= lastCamUpdateSBC then
+		camera.CameraType = sbc and Enum.CameraType.Scriptable or Enum.CameraType.Custom
+		camera.CameraSubject = hum
+		UserInputService.MouseBehavior = sbc and Enum.MouseBehavior.LockCenter or Enum.MouseBehavior.Default
+		if hum then
+			hum.AutoRotate = not sbc
+		end
+	end
+	lastCamUpdateSBC = sbc
+	
+	if sbc then
+		local cameraOffset = BASE_CAMERA_OFFSET + Vector3.new(0, 0, cameraOffsetZ)		
+		local startCFrame = CFrame.new(root.CFrame.Position) * CFrame.Angles(0, math.rad(cameraAngleX), 0) * CFrame.Angles(math.rad(cameraAngleY), 0, 0)
+		local cameraPos = startCFrame:PointToWorldSpace(cameraOffset)
+		local cameraFocus = startCFrame:PointToWorldSpace(Vector3.new(cameraOffset.X, cameraOffset.Y, -100000))
+		
+		local params = RaycastParams.new()
+		params.FilterDescendantsInstances = { workspace.Terrain }
+		params.FilterType = Enum.RaycastFilterType.Include
+		local result = workspace:Raycast(startCFrame.Position, cameraPos - startCFrame.Position, params)
+		if result and result.Position then
+			local dist = (result.Position - cameraFocus).Magnitude
+			cameraPos = result.Position:Lerp(cameraFocus, 1.5 / dist)
+		end
+		
+		camera.CFrame = CFrame.lookAt(cameraPos, cameraFocus)
+
+		local lookCFrame = CFrame.lookAt(root.Position, camera.CFrame:PointToWorldSpace(Vector3.new(0, 0, -100000)))
+		root.CFrame = CFrame.fromMatrix(root.Position, lookCFrame.XVector, root.CFrame.YVector)
+	end
+end
+
+function controller.handleMouseWheel(input)
+	local up = input.Position.Z >= 0
+	cameraOffsetZ = math.max(math.min(cameraOffsetZ + (up and -OFFSET_Z_PER_STEP or OFFSET_Z_PER_STEP), MAX_OFFSET_Z), MIN_OFFSET_Z)
+end
+
+function controller.setControlling(b)
+	isControlling = b
+end
+
+function controller.toggleControlling()
+	isControlling = not isControlling
+end
+
+function controller.init()
+	task.spawn(function()
+		repeat
+			task.wait()
+		until
+			player.Character ~= nil
+		handleChar(player.Character)
+	end)
+	
+	ContextActionService:BindAction("PlayerInput", handlePlayerInput, false, Enum.UserInputType.MouseMovement, Enum.UserInputType.Touch)
+	RunService:BindToRenderStep("CameraUpdate", Enum.RenderPriority.Camera.Value, handleCameraUpdate)
+end
+
+player.CharacterAdded:Connect(function(c)
+	handleChar(c)
+end)
+
+UserInputService.WindowFocused:connect(function()
+	isFocused = true
+end)
+
+UserInputService.WindowFocusReleased:connect(function()
+	isFocused = false
+end)
+
+return controller

@@ -1,0 +1,176 @@
+local interface = {}
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local GuiService = game:GetService("GuiService")
+local TweenService = game:GetService("TweenService")
+local TextChatService = game:GetService("TextChatService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local network = require(script.Parent.network)
+local vars = require(ReplicatedStorage.Shared.vars)
+
+local ENABLE_CON = true
+local MOUSE_ENABLED = not UserInputService.TouchEnabled
+local UI_PADDING = 12
+local POPUP_TWEEN_TIME = 0.18
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local screenGui = playerGui:WaitForChild("screenGui")
+
+local actionTick
+local currPopup
+local popupChangeFunc
+
+local function animatePopup(frame, visible, dur)
+	local yScale, yOffset
+	if frame.AnchorPoint.Y == 0 then
+		-- bottom middle of screen
+		yScale = 1
+		yOffset = visible and -frame.AbsoluteSize.Y - UI_PADDING or 25
+	else
+		-- middle of screen
+		yScale = visible and 0.5 or 1.5
+		yOffset = 0
+	end
+	
+	TweenService:Create(frame, TweenInfo.new(dur or 0.175), {
+		Position = UDim2.new(0.5, 0, yScale, yOffset)
+	}):Play()
+end
+
+local function notifyChange()
+	if popupChangeFunc then
+		popupChangeFunc(interface.isPopupOpen())
+	end
+end
+
+local function showPopup(frame, dur)
+	if currPopup then
+		animatePopup(currPopup, false, dur)
+	end
+	animatePopup(frame, true, dur)
+	currPopup = frame
+	notifyChange()
+end
+
+local function hidePopup(dur)
+	if currPopup then
+		animatePopup(currPopup, false, dur)
+	end
+	currPopup = nil
+	notifyChange()
+end
+
+local function setup()
+	showPopup(screenGui.start, 0)
+	
+	screenGui.action.Visible = false
+	if MOUSE_ENABLED then
+		RunService.RenderStepped:connect(function()
+			local mouseLocation = UserInputService:GetMouseLocation()
+			local inset = GuiService:GetGuiInset()
+			screenGui.action.Position = UDim2.fromOffset(mouseLocation.X - inset.X + 6, mouseLocation.Y - inset.Y + 30)
+		end)
+	end
+end
+
+function interface.showAction(duration)
+	local currTick = tick()
+	actionTick = currTick
+	
+	screenGui.action.Visible = true
+	screenGui.action.pct.Size = UDim2.fromScale(0, 1)
+	
+	TweenService:Create(screenGui.action.pct, TweenInfo.new(duration, Enum.EasingStyle.Linear), {
+		Size = UDim2.fromScale(1, 1)
+	}):Play()
+	task.delay(duration, function()
+		if actionTick == currTick then
+			screenGui.action.Visible = false
+		end
+	end)
+end
+
+function interface.updateStorage(storage)
+	local isFull = storage and #storage.ores == storage.max
+	if isFull then
+		showPopup(screenGui.full)
+	elseif currPopup == screenGui.full then
+		hidePopup()
+	end
+end
+
+function interface.isPopupOpen()
+	return currPopup ~= nil
+end
+
+function interface.bindPopupChanged(f)
+	if popupChangeFunc ~= nil then
+		error()
+	end
+	
+	popupChangeFunc = f
+end
+
+-- EVENTS --
+
+screenGui.full.Activated:connect(function()
+	hidePopup()
+end)
+
+screenGui.start.btns.start.Activated:connect(function()
+	hidePopup()
+end)
+
+screenGui.con.Visible = false
+if ENABLE_CON then
+	local counterTick = nil
+	
+	screenGui.con.counter.Visible = false
+	local function openCounter()
+		local currTick = tick()
+		counterTick = currTick
+		
+		screenGui.con.counter.Visible = true
+		task.spawn(function()
+			while counterTick == currTick do
+				local rem = vars.comma(1000000000 - network.get("getConCount"))
+				screenGui.con.counter.ImageLabel.TextLabel.Text = `Click here\n{rem}\nmore times`
+
+				task.wait(1)
+			end
+		end)
+	end
+	
+	local function close()
+		screenGui.con.counter.Visible = false
+		screenGui.con.Visible = false
+		counterTick = nil
+	end
+	
+	TextChatService.SendingMessage:Connect(function(textChatMessage)
+		if textChatMessage.Text:lower() == "@con" then
+			screenGui.con.Visible = true
+		end
+	end)
+	
+	screenGui.con.TextButton.Activated:connect(function()
+		close()
+	end)
+	
+	screenGui.con.TextBox.FocusLost:connect(function()
+		if screenGui.con.TextBox.Text == "41127213" then
+			openCounter()
+		end
+		screenGui.con.TextBox.Text = ""
+	end)
+	
+	screenGui.con.counter.ImageLabel.Activated:connect(function()
+		network.send("addConCount")
+	end)
+end
+
+setup()
+return interface

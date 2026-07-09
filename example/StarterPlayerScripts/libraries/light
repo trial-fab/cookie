@@ -1,0 +1,95 @@
+local light = {}
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local network = require(script.Parent.network)
+local vars = require(ReplicatedStorage.Shared.vars)
+
+local camera = workspace.CurrentCamera
+local assets = ReplicatedStorage.assets
+
+local placingLight
+
+local function castToMouse()
+	local params = RaycastParams.new()
+	params.FilterDescendantsInstances = { workspace.Terrain, workspace.Ores }
+	params.FilterType = Enum.RaycastFilterType.Include
+
+	local location = UserInputService:GetMouseLocation()
+	local unitRay = camera:ViewportPointToRay(location.X, location.Y)
+	return workspace:Raycast(unitRay.Origin, unitRay.Direction * 500, params)
+end
+
+local function startPlacingLight()
+	local clone = assets.light:Clone()
+	clone.light:ClearAllChildren()
+	clone.light.Material = Enum.Material.SmoothPlastic
+	for _, d in ipairs(clone:GetDescendants()) do
+		if d:IsA("BasePart") or d:IsA("UnionOperation") then
+			d.CanCollide = false
+		end
+	end
+
+	local hi = Instance.new("Highlight")
+	hi.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hi.FillTransparency = 0.5
+	hi.OutlineTransparency = 0
+	hi.Parent = clone
+
+	local conn
+	conn = RunService.RenderStepped:connect(function()
+		if not placingLight then
+			clone:Destroy()
+			conn:disconnect()
+			return
+		end
+
+		local result = castToMouse()
+		if result and result.Position then
+			clone:PivotTo(vars.getLightPivot(result.Position, result.Normal))
+			clone.Parent = workspace
+
+			local valid = vars.isLightPositionValid(result.Position, result.Normal)
+			local color = valid and Color3.new(0, 1, 0) or Color3.new(1, 0, 0)
+			hi.FillColor = color
+			hi.OutlineColor = color
+		else
+			clone.Parent = nil
+		end
+	end)
+end
+
+function light.isPlacing()
+	return placingLight
+end
+
+function light.placeLight()
+	local result = castToMouse()
+	if result and vars.isLightPositionValid(result.Position, result.Normal) then
+		network.send("light", {
+			pos = result.Position,
+			normal = result.Normal
+		})
+		light.setPlacingLight(false)
+	end
+end
+
+function light.togglePlacingLight()
+	placingLight = not placingLight
+
+	if placingLight then
+		startPlacingLight()
+	end
+	
+	return placingLight
+end
+
+function light.setPlacingLight(val)
+	if placingLight ~= val then
+		light.togglePlacingLight()
+	end
+	return placingLight
+end
+
+return light

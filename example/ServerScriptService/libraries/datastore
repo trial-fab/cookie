@@ -1,0 +1,46 @@
+local datastore = {}
+
+local network = require(script.Parent.network)
+
+local store = {}
+
+local function getData(p)
+	if store[p] and store[p].loaded then
+		return store[p]
+	end
+end
+
+local function defaultData()
+	return {
+		digbucks = 0,
+		
+		loaded = false
+	}
+end
+
+function datastore.playerAdded(p)
+	store[p] = defaultData()
+	
+	-- TODO load
+	
+	store[p].loaded = true
+end
+
+function datastore.playerRemoving(p)
+	-- TODO save
+	store[p] = nil
+end
+
+function datastore.adjustCoins(p, amt)
+	local data = getData(p)
+	if data then
+		data.digbucks = data.digbucks + amt
+		network.send(p, "updData", data)
+	end
+end
+
+network.on("getData", function(p)
+	return getData(p)
+end)
+
+return datastore

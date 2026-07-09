@@ -1,0 +1,174 @@
+local terrain = {}
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local network = require(script.Parent.network)
+local ores = require(script.Parent.ores)
+local backpack = require(script.Parent.backpack)
+local tools = require(script.Parent.tools)
+local lights = require(script.Parent.lights)
+local vars = require(ReplicatedStorage.Shared.vars)
+
+local Terrain = workspace.Terrain
+
+local GRID_SIZE = 4
+local GEN_REGION_RADIUS = GRID_SIZE * 7
+local REGIONS = {
+	{ material = Enum.Material.Grass, start = 0 },
+	{ material = Enum.Material.Ground, start = -4 },
+	{ material = Enum.Material.Rock, start = -52 },
+	{ material = Enum.Material.Basalt, start = -752 },
+	{ material = Enum.Material.CrackedLava, start = -1232 },
+}
+local LAVA_HEIGHT = REGIONS[#REGIONS].start
+
+local GENERATE_CAVES = false
+
+local genVoxelList = {}
+local debounce = {}
+
+local function getMaterial(y)
+	for i = #REGIONS, 1, -1 do
+		if y <= REGIONS[i].start then
+			return REGIONS[i].material
+		end
+	end
+end
+
+local function snapToGrid(v3)
+	return Vector3.new(math.floor(v3.X / GRID_SIZE) * GRID_SIZE, math.floor(v3.Y / GRID_SIZE) * GRID_SIZE, math.floor(v3.Z / GRID_SIZE) * GRID_SIZE)
+end
+
+local function dig(p, pos)
+	if debounce[p] then
+		return false
+	end
+	
+	--[[
+	if backpack.isFull(p) then
+		return false
+	end
+	]]
+	
+	local root = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+	if not root or (root.Position - pos).magnitude > vars.MAX_DIG_DISTANCE then
+		return false
+	end
+	
+	-- set debounce
+	debounce[p] = true
+	delay(tools.getActionTime(p) * 0.98, function()
+		debounce[p] = nil
+	end)
+
+	-- dig
+	local digSize = 4
+	Terrain:FillBall(pos, digSize, Enum.Material.Air)
+	ores.release(pos, digSize)
+	lights.fixLights(pos, digSize)
+	
+	if pos.Y > -2 then
+		local v3 = Vector3.new(digSize, 4, digSize)
+		local r3 = Region3.new(pos - v3, pos + v3):ExpandToGrid(4)
+		Terrain:ReplaceMaterial(r3, 4, Enum.Material.Grass, Enum.Material.Ground)
+	end
+	
+	return true
+end
+
+function terrain.generateAround(pos, overrideRegionSize, overrideRegionSizeY)
+	local regionSizeXZ = GEN_REGION_RADIUS
+	local regionSizeY = GEN_REGION_RADIUS
+	if overrideRegionSize then
+		regionSizeXZ = GRID_SIZE * overrideRegionSize
+		regionSizeY = GRID_SIZE * (overrideRegionSizeY or overrideRegionSize)
+	end
+	
+	local regionStart = snapToGrid(pos - Vector3.new(regionSizeXZ, regionSizeY, regionSizeXZ))
+	local regionStop = snapToGrid(pos + Vector3.new(regionSizeXZ, regionSizeY, regionSizeXZ))
+	local region = Region3.new(regionStart, regionStop)
+	local mats, occs = Terrain:ReadVoxels(region, GRID_SIZE)
+
+	for xLocal, xArr in ipairs(mats) do
+		for yLocal, yArr in ipairs(xArr) do
+			for zLocal, mat in ipairs(yArr) do
+				if mat ~= Enum.Material.Air then
+					continue
+				end
+
+				local x = regionStart.X + (xLocal * GRID_SIZE)
+				local y = regionStart.Y + (yLocal * GRID_SIZE)
+				local z = regionStart.Z + (zLocal * GRID_SIZE)
+
+				if not genVoxelList[x] then
+					genVoxelList[x] = {}
+				end
+				if not genVoxelList[x][y] then
+					genVoxelList[x][y] = {}
+				end
+
+				if not genVoxelList[x][y][z] then
+					genVoxelList[x][y][z] = true
+
+					local mat = getMaterial(y)
+					if mat then
+						if GENERATE_CAVES then
+							local NOISE_SCALE = 0.015
+							local NOISE_VAL = -0.475
+							if math.noise(x * NOISE_SCALE, y * NOISE_SCALE, z * NOISE_SCALE) < NOISE_VAL then
+								mat = Enum.Material.Air
+							end
+						end
+						
+						mats[xLocal][yLocal][zLocal] = mat
+						occs[xLocal][yLocal][zLocal] = 1
+
+						if mat ~= Enum.Material.Grass and mat ~= Enum.Material.Air then
+							ores.gen(x, y, z)
+						end
+					end
+				end
+			end
+		end
+	end
+
+	Terrain:WriteVoxels(region, 4, mats, occs)
+end
+
+function terrain.generate()
+	for _, p in ipairs(Players:GetPlayers()) do
+		local root = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+		if root then
+			terrain.generateAround(root.Position)
+		end
+	end
+end
+
+function terrain.charAdded(p, c)
+	task.spawn(function()
+		local start = tick()
+		repeat
+			task.wait(1)
+		until
+			c:IsDescendantOf(workspace) or (tick() - start) > 5
+		
+		while task.wait(1) and c:IsDescendantOf(workspace) do
+			local root = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+			local hum = p.Character and p.Character:FindFirstChild("Humanoid")
+			if hum and root and root.Position.Y < LAVA_HEIGHT then
+				hum:TakeDamage(5)
+			end
+		end
+	end)
+end
+
+-- NETWORK --
+
+network.on("dig", function(p, data)
+	if dig(p, data) then
+		tools.playAnimation(p)
+	end
+end)
+
+return terrain

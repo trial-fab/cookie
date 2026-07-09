@@ -1,0 +1,363 @@
+local conveyors = {}
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local network = require(script.Parent.network)
+local vars = require(ReplicatedStorage.Shared.vars)
+
+local BELT_WIDTH    = vars.CONVEYOR_BELT_WIDTH   -- 4
+local BELT_HEIGHT   = vars.CONVEYOR_BELT_HEIGHT  -- 0.3
+local BELT_SPEED    = vars.CONVEYOR_BELT_SPEED   -- 12
+local MAX_SEG_LEN   = 3  -- max segment length before auto-subdividing
+
+-- Structure constants (cartoony oversized industrial style)
+local RAIL_THICK    = 0.55   -- side wall thickness
+local POST_THICK    = 0.55   -- leg stump thickness (matches side wall)
+local RAIL_ABOVE    = 0.55   -- how far above belt top the side wall extends
+local POST_INTERVAL = 5      -- stud interval between leg stumps
+local RAIL_COLOR    = Color3.fromRGB(75, 75, 80)
+local LEG_COLOR     = Color3.fromRGB(55, 55, 60)
+local MAX_LEG_HEIGHT = 3     -- short cartoony legs
+local MIN_LEG_HEIGHT = 0.8   -- always show at least a stub
+
+-- Create workspace folder if missing
+local Conveyors = workspace:FindFirstChild("Conveyors")
+if not Conveyors then
+	Conveyors = Instance.new("Folder")
+	Conveyors.Name = "Conveyors"
+	Conveyors.Parent = workspace
+end
+
+-- Registry: array of { part, dirX, dirZ }
+local belts = {}
+
+-- Ores currently on belts: ore -> belt entry
+local oresOnBelts = {}
+
+local terrainParams = RaycastParams.new()
+terrainParams.FilterDescendantsInstances = { workspace.Terrain }
+terrainParams.FilterType = Enum.RaycastFilterType.Include
+
+local function snapYToTerrain(pos)
+	local result = workspace:Raycast(pos + Vector3.new(0, 5, 0), Vector3.new(0, -20, 0), terrainParams)
+	if result then
+		return result.Position.Y + BELT_HEIGHT / 2
+	end
+	return pos.Y
+end
+
+-- Returns a simple anchored structural Part parented under beltPart
+local function mkPart(beltPart, size, color, cframe)
+	local p = Instance.new("Part")
+	p.Size = size
+	p.Color = color
+	p.Material = Enum.Material.Metal
+	p.Anchored = true
+	p.CanCollide = false
+	p.CastShadow = false
+	p.CFrame = cframe
+	p.Parent = beltPart
+	return p
+end
+
+-- Build the end-cap stripe (green = exit, orange = entry) at one end of the belt
+local function addEndCap(beltPart, halfL, isExit)
+	-- isExit=true → local -Z = front face (LookVector direction)
+	local localZ = isExit and -(halfL - 0.08) or (halfL - 0.08)
+	local color = isExit and Color3.fromRGB(0, 220, 80) or Color3.fromRGB(220, 100, 0)
+	local cap = Instance.new("Part")
+	cap.Size = Vector3.new(BELT_WIDTH, BELT_HEIGHT + 0.05, 0.14)
+	cap.Color = color
+	cap.Material = Enum.Material.Neon
+	cap.Anchored = true
+	cap.CanCollide = false
+	cap.CastShadow = false
+	cap.CFrame = beltPart.CFrame * CFrame.new(0, 0, localZ)
+	local weld = Instance.new("WeldConstraint")
+	weld.Part0 = beltPart
+	weld.Part1 = cap
+	weld.Parent = cap
+	cap.Parent = beltPart
+end
+
+-- Build chunky low-poly side walls and leg stumps for a belt Part
+local function addStructure(beltPart, length)
+	local halfW = BELT_WIDTH / 2
+	local halfH = BELT_HEIGHT / 2
+	local halfL = length / 2
+
+	-- Side wall: flush with belt bottom, extends RAIL_ABOVE above belt top
+	local sideH   = BELT_HEIGHT + RAIL_ABOVE          -- total wall height
+	local sideMidY = RAIL_ABOVE / 2                   -- local Y of wall center
+
+	-- Leg stump positions: ends + every POST_INTERVAL
+	local numGaps = math.max(1, math.floor(length / POST_INTERVAL))
+	local postLocalZs = {}
+	for i = 0, numGaps do
+		table.insert(postLocalZs, -halfL + (i / numGaps) * length)
+	end
+
+	for _, side in ipairs({ -1, 1 }) do
+		local sideX = side * (halfW + RAIL_THICK * 0.5 + 0.02)
+
+		-- One thick side wall running the full belt length (+RAIL_THICK to overlap seams at joints)
+		mkPart(
+			beltPart,
+			Vector3.new(RAIL_THICK, sideH, length + RAIL_THICK),
+			RAIL_COLOR,
+			beltPart.CFrame * CFrame.new(sideX, sideMidY, 0)
+		)
+
+		-- Chunky leg stumps at each post position
+		for _, localZ in ipairs(postLocalZs) do
+			local botWorld = (beltPart.CFrame * CFrame.new(sideX, -halfH, localZ)).Position
+			local result = workspace:Raycast(botWorld + Vector3.new(0, 1, 0), Vector3.new(0, -80, 0), terrainParams)
+			local groundY = result and result.Position.Y or (botWorld.Y - MIN_LEG_HEIGHT)
+
+			local fullHeight = math.clamp(botWorld.Y - groundY, MIN_LEG_HEIGHT, MAX_LEG_HEIGHT)
+			if fullHeight > 0.05 then
+				local centerY = botWorld.Y - fullHeight * 0.5
+				mkPart(
+					beltPart,
+					Vector3.new(POST_THICK, fullHeight, POST_THICK),
+					LEG_COLOR,
+					CFrame.new(botWorld.X, centerY, botWorld.Z)
+				)
+			end
+		end
+	end
+end
+
+-- Two-arm chevron ">" pointing toward belt exit (local -Z = LookVector = movement direction)
+local function addDirectionArrow(beltPart, length)
+	local arrowColor = Color3.fromRGB(60, 220, 100)
+	local topY   = BELT_HEIGHT / 2 + 0.12
+	local spread = BELT_WIDTH * 0.28
+	local reach  = math.min(length * 0.3, 1.2)
+	local armThick = 0.3
+	local armDepth = 0.15
+
+	for _, side in ipairs({ -1, 1 }) do
+		local startLocal = Vector3.new(side * spread, topY,  reach)
+		local endLocal   = Vector3.new(0,             topY, -reach)
+		local diff   = endLocal - startLocal
+		local armLen = diff.Magnitude
+		if armLen < 0.1 then continue end
+
+		local armDir      = diff / armLen
+		local worldCenter = beltPart.CFrame * ((startLocal + endLocal) / 2)
+		local worldDir    = beltPart.CFrame:VectorToWorldSpace(armDir)
+
+		local arm = Instance.new("Part")
+		arm.Size       = Vector3.new(armThick, armDepth, armLen)
+		arm.Color      = arrowColor
+		arm.Material   = Enum.Material.Neon
+		arm.Anchored   = true
+		arm.CanCollide = false
+		arm.CastShadow = false
+		arm.CFrame     = CFrame.new(worldCenter, worldCenter + worldDir)
+
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = beltPart
+		weld.Part1 = arm
+		weld.Parent = arm
+		arm.Parent = beltPart
+	end
+end
+
+-- Create one belt Part with all visual structure
+local function createBeltPart(center, dirX, dirY, dirZ, length)
+	local dir = Vector3.new(dirX, dirY, dirZ)  -- full 3D direction (tilts with slope)
+	local halfL = length / 2
+
+	local part = Instance.new("Part")
+	part.Name = "ConveyorBelt"
+	part.Size = Vector3.new(BELT_WIDTH, BELT_HEIGHT, length)
+	part.Color = Color3.fromRGB(35, 35, 35)
+	part.Material = Enum.Material.SmoothPlastic
+	part.Anchored = true
+	part.CanCollide = true
+	part.CastShadow = false
+	part.CFrame = CFrame.new(center, center + dir)
+	part:SetAttribute("BeltDirX", dirX)
+	part:SetAttribute("BeltDirY", dirY)
+	part:SetAttribute("BeltDirZ", dirZ)
+	part.Parent = Conveyors
+
+	-- End-cap indicators
+	addEndCap(part, halfL, true)   -- green at exit (front)
+	addEndCap(part, halfL, false)  -- orange at entry (back)
+
+	-- Geometric chevron arrow pointing toward exit (no SurfaceGui ambiguity)
+	addDirectionArrow(part, length)
+
+	-- Legs and railings
+	addStructure(part, length)
+
+	return part
+end
+
+-- Place a belt segment given entry and exit world positions (Y already terrain-snapped).
+-- Belt tilts in 3D to follow slope between the two points.
+local function placeBeltFromPoints(entry, exit_)
+	local diff = exit_ - entry
+	local length = diff.Magnitude
+	if length < 0.25 then return nil end
+
+	local dir3D = diff / length
+	local center = (entry + exit_) / 2
+
+	local part = createBeltPart(center, dir3D.X, dir3D.Y, dir3D.Z, length)
+	table.insert(belts, { part = part, dirX = dir3D.X, dirY = dir3D.Y, dirZ = dir3D.Z })
+	return part
+end
+
+function conveyors.reverseBelt(beltPart)
+	if not beltPart or beltPart.Parent ~= Conveyors then return end
+
+	local dirX = beltPart:GetAttribute("BeltDirX")
+	local dirY = beltPart:GetAttribute("BeltDirY") or 0
+	local dirZ = beltPart:GetAttribute("BeltDirZ")
+	if not dirX or not dirZ then return end
+
+	dirX = -dirX
+	dirY = -dirY
+	dirZ = -dirZ
+	beltPart:SetAttribute("BeltDirX", dirX)
+	beltPart:SetAttribute("BeltDirY", dirY)
+	beltPart:SetAttribute("BeltDirZ", dirZ)
+	-- 180° flip swaps end caps and arrow direction automatically
+	beltPart.CFrame = beltPart.CFrame * CFrame.Angles(0, math.pi, 0)
+
+	for _, entry in ipairs(belts) do
+		if entry.part == beltPart then
+			entry.dirX = dirX
+			entry.dirY = dirY
+			entry.dirZ = dirZ
+			break
+		end
+	end
+end
+
+-- Physics heartbeat: push ores on belt surfaces
+local oreOverlapParams = OverlapParams.new()
+oreOverlapParams.FilterDescendantsInstances = { workspace.Ores }
+oreOverlapParams.FilterType = Enum.RaycastFilterType.Include
+
+RunService.Heartbeat:Connect(function()
+	local newOresOnBelts = {}
+
+	for _, entry in ipairs(belts) do
+		if not entry.part or not entry.part.Parent then continue end
+		local expandedSize = entry.part.Size + Vector3.new(0, 1, 0)
+		local expandedCF   = entry.part.CFrame * CFrame.new(0, 0.5, 0)
+		local found = workspace:GetPartBoundsInBox(expandedCF, expandedSize, oreOverlapParams)
+		for _, ore in ipairs(found) do
+			if ore.Anchored or ore:GetAttribute("dragging") then continue end
+			newOresOnBelts[ore] = entry
+		end
+	end
+
+	for ore in pairs(newOresOnBelts) do
+		if not oresOnBelts[ore] then
+			pcall(function() ore:SetNetworkOwner(nil) end)
+		end
+	end
+	for ore in pairs(oresOnBelts) do
+		if not newOresOnBelts[ore] then
+			pcall(function() ore:SetNetworkOwnerAuto() end)
+		end
+	end
+
+	for ore, entry in pairs(newOresOnBelts) do
+		ore.AssemblyLinearVelocity = Vector3.new(
+			entry.dirX * BELT_SPEED,
+			(entry.dirY or 0) * BELT_SPEED,
+			entry.dirZ * BELT_SPEED
+		)
+	end
+
+	oresOnBelts = newOresOnBelts
+end)
+
+Conveyors.ChildRemoved:Connect(function(child)
+	for i = #belts, 1, -1 do
+		if belts[i].part == child then
+			table.remove(belts, i)
+		end
+	end
+end)
+
+-- Network handlers
+
+-- Place: subdivide into ≤MAX_SEG_LEN segments along a quadratic Bézier (if prevDir given)
+-- or a straight line. Each sample point's Y is independently snapped to terrain.
+network.on("placeConveyor", function(p, data)
+	if not data or not data.entry or not data.exit then return false end
+
+	local entry, exit_ = data.entry, data.exit
+	local diffX = exit_.X - entry.X
+	local diffZ = exit_.Z - entry.Z
+	local totalLen = math.sqrt(diffX * diffX + diffZ * diffZ)
+	if totalLen < 0.25 then return false end
+
+	local numSegs = math.max(1, math.ceil(totalLen / MAX_SEG_LEN))
+	local prevDir = data.prevDir  -- optional XZ unit Vector3 (previous chain direction)
+
+	-- Sample N+1 points along the path (Bézier or straight), Y terrain-snapped per point
+	local pts = {}
+	if prevDir then
+		-- Quadratic Bézier: P0=entry, P2=exit, P1=control point along prevDir
+		local P0x, P0z = entry.X, entry.Z
+		local P2x, P2z = exit_.X, exit_.Z
+		local s = 0.4 * totalLen
+		local P1x = P0x + prevDir.X * s
+		local P1z = P0z + prevDir.Z * s
+		for i = 0, numSegs do
+			local t = i / numSegs
+			local mt = 1 - t
+			local bx = mt*mt*P0x + 2*mt*t*P1x + t*t*P2x
+			local bz = mt*mt*P0z + 2*mt*t*P1z + t*t*P2z
+			-- Preserve exact endpoint Ys so segments connect flush
+			local y = (i == 0) and entry.Y or (i == numSegs) and exit_.Y
+				or snapYToTerrain(Vector3.new(bx, entry.Y, bz))
+			pts[i] = Vector3.new(bx, y, bz)
+		end
+	else
+		for i = 0, numSegs do
+			local t = i / numSegs
+			local bx = entry.X + diffX * t
+			local bz = entry.Z + diffZ * t
+			local y = (i == 0) and entry.Y or (i == numSegs) and exit_.Y
+				or snapYToTerrain(Vector3.new(bx, entry.Y, bz))
+			pts[i] = Vector3.new(bx, y, bz)
+		end
+	end
+
+	for i = 0, numSegs - 1 do
+		placeBeltFromPoints(pts[i], pts[i + 1])
+	end
+
+	return true
+end)
+
+network.on("reverseConveyor", function(p, beltPart)
+	if typeof(beltPart) ~= "Instance" then return end
+	conveyors.reverseBelt(beltPart)
+end)
+
+network.on("startDrag", function(p, ore)
+	if typeof(ore) ~= "Instance" then return end
+	if not ore.Parent or ore.Parent ~= workspace.Ores then return end
+	if ore.Anchored then return end
+	ore:SetAttribute("dragging", true)
+	pcall(function() ore:SetNetworkOwner(p) end)
+end)
+
+network.on("endDrag", function(p, ore)
+	if typeof(ore) ~= "Instance" then return end
+	ore:SetAttribute("dragging", nil)
+	pcall(function() ore:SetNetworkOwnerAuto() end)
+end)
+
+return conveyors

@@ -1,0 +1,22 @@
+local lock = {}
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+
+local LockOption = player:WaitForChild("MobileMouseLock")
+
+function lock.isMobileLockEnabled()
+	return LockOption.Value
+end
+
+function lock.setMobileLockEnabled(b)
+	LockOption.Value = b
+end
+
+if not UserInputService.KeyboardEnabled then
+	LockOption.Value = true
+end
+
+return lock

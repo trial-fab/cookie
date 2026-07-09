@@ -1,0 +1,39 @@
+local con = {}
+
+local DataStoreService = game:GetService("DataStoreService")
+local miscDS = DataStoreService:GetOrderedDataStore("misc")
+
+local network = require(script.Parent.network)
+
+local debounce = {}
+local count
+local needToAdd = 0
+
+network.on("getConCount", function()
+	return count
+end)
+
+network.on("addConCount", function(p)
+	if debounce[p] then
+		return
+	end
+	debounce[p] = true
+	task.delay(1, function()
+		debounce[p] = nil
+	end)
+	
+	count = count + 1 -- simulate a change, count will get overwritten with real value eventually
+	needToAdd = needToAdd + 1
+end)
+
+task.spawn(function()
+	while true do
+		local add = needToAdd
+		needToAdd = 0
+		
+		count = miscDS:IncrementAsync("test01counter", add)
+		task.wait(30)
+	end
+end)
+
+return con

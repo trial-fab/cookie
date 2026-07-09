@@ -1,0 +1,13 @@
+local util = {}
+
+util.ATTRIBUTE_NAMES = {
+	ORE_GRABBED = "Grabbed",
+	ORE_DEBRIS = "Debris",
+	ORE_TYPE = "Type",
+}
+
+function util.randRad(radius)
+	return math.random(-radius, radius)
+end
+
+return util

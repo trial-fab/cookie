@@ -1,0 +1,316 @@
+local network = require(script.libraries.network)
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
+local topbar = require(script.libraries.topbar)
+local interface = require(script.libraries.interface)
+local project = require(script.libraries.project)
+local light = require(script.libraries.light)
+local conveyor = require(script.libraries.conveyor)
+local lock = require(script.libraries.lock)
+local vars = require(ReplicatedStorage.Shared.vars)
+local util = require(script.libraries.util)
+
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+local assets = ReplicatedStorage.assets
+
+local actionTime = vars.DEFAULT_DIG_TIME
+local actionDebounce
+local mouseDown
+local mouseDownR
+-- Drag state
+local DRAG_THRESHOLD = 0.15
+local draggingOre = nil
+local orePendingDrag = nil
+local orePendingDragTime = nil
+
+-- Conveyor folder reference (created server-side, wait for it)
+local Conveyors = nil
+task.spawn(function()
+	Conveyors = workspace:WaitForChild("Conveyors", 15)
+end)
+
+local terrainOnlyParams = RaycastParams.new()
+terrainOnlyParams.FilterDescendantsInstances = { workspace.Terrain }
+terrainOnlyParams.FilterType = Enum.RaycastFilterType.Include
+
+-- Returns the root ConveyorBelt Part from a raycast hit (handles child parts too)
+local function getBeltFromHit(instance)
+	if not instance or not Conveyors then return nil end
+	if instance.Name == "ConveyorBelt" and instance.Parent == Conveyors then
+		return instance
+	end
+	local p = instance.Parent
+	if p and p.Name == "ConveyorBelt" and p.Parent == Conveyors then
+		return p
+	end
+	return nil
+end
+
+local function castToMouse()
+	local params = RaycastParams.new()
+	local filter = { workspace.Terrain, workspace.Ores }
+	if Conveyors then table.insert(filter, Conveyors) end
+	params.FilterDescendantsInstances = filter
+	params.FilterType = Enum.RaycastFilterType.Include
+
+	local location = UserInputService:GetMouseLocation()
+	local unitRay = camera:ViewportPointToRay(location.X, location.Y)
+	return workspace:Raycast(unitRay.Origin, unitRay.Direction * 500, params)
+end
+
+local function handleToolInfo(info)
+	actionTime = info.actionTime
+	topbar.updateBonus(info.bonus)
+end
+
+local function grab(ore)
+	if topbar.isStorageFull() then
+		return false
+	end
+
+	local clone = ore:Clone()
+	local storage = network.get("grab", ore)
+	if storage then
+		topbar.updateStorage(storage)
+		interface.updateStorage(storage)
+		project.project(clone)
+		return true
+	else
+		clone:Destroy()
+	end
+	return false
+end
+
+local function digLoop()
+	local currTick = tick()
+	mouseDown = currTick
+
+	repeat
+		task.wait()
+	until
+		actionDebounce == nil
+
+	while mouseDown == currTick do
+		actionDebounce = true
+
+		local result = castToMouse()
+
+		if result then
+			local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+			if root and (root.Position - result.Position).magnitude <= vars.MAX_DIG_DISTANCE then
+				network.send("dig", result.Position)
+				interface.showAction(actionTime)
+			end
+		end
+
+		task.wait(actionTime)
+		actionDebounce = nil
+	end
+end
+
+local function handleChar(c)
+	if not c or not vars.mutexAttribute(c, util.ATTRIBUTE_NAMES.CHAR_GRAB_LOCK, true) then
+		return
+	end
+	local root = c:WaitForChild("HumanoidRootPart") -- luacheck: ignore (kept for future use)
+end
+
+local function updateData(data)
+	topbar.setDigbucks(data.digbucks)
+end
+
+local function init()
+	-- update core ui
+	for _, g in ipairs({
+		{ name = Enum.CoreGuiType.All, value = false },
+		{ name = Enum.CoreGuiType.Health, value = true },
+		{ name = Enum.CoreGuiType.Chat, value = true },
+		{ name = Enum.CoreGuiType.EmotesMenu, value = true },
+	}) do
+		pcall(function()
+			StarterGui:SetCoreGuiEnabled(g.name, g.value)
+		end)
+	end
+
+	-- get user data
+	-- TODO: "getData" "updData" vars.format(n)
+	task.spawn(function()
+		local data
+		repeat
+			data = network.get("getData")
+		until
+			data ~= nil
+
+		updateData(data)
+	end)
+
+	-- get backpack info
+	task.spawn(function()
+		local storage = network.get("getBackpack")
+		if storage then
+			topbar.updateStorage(storage)
+			interface.updateStorage(storage)
+		end
+	end)
+
+	-- get tool info
+	task.spawn(function()
+		local toolInfo
+		repeat
+			toolInfo = network.get("getTool")
+			if not toolInfo then
+				task.wait(1)
+			end
+		until
+			toolInfo ~= nil and toolInfo.loaded
+
+		handleToolInfo(toolInfo)
+	end)
+end
+
+UserInputService.InputBegan:connect(function(input, gameProcessed)
+	if gameProcessed then
+		return
+	end
+
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		if light.isPlacing() then
+			light.placeLight()
+			topbar.setPlacingLight(false)
+		elseif conveyor.isPlacing() then
+			local result = castToMouse()
+			local hitBelt = getBeltFromHit(result and result.Instance)
+			if hitBelt then
+				conveyor.connectToBelt(hitBelt, result.Position)
+			else
+				conveyor.placeBelt()
+			end
+		else
+			local result = castToMouse()
+			if result and result.Instance and result.Instance.Parent == workspace.Ores
+				and not result.Instance.Anchored then
+				-- Record pending ore interaction: short click = grab, hold = drag
+				orePendingDrag = result.Instance
+				orePendingDragTime = tick()
+			else
+				digLoop()
+			end
+		end
+
+	elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+		if conveyor.isPlacing() then
+			conveyor.finalize()
+			return
+		end
+
+		local result = castToMouse()
+		if result and result.Instance and Conveyors
+			and result.Instance.Parent == Conveyors then
+			conveyor.tryReverse(result.Instance)
+			return
+		end
+
+		mouseDownR = workspace.CurrentCamera.CFrame
+
+		local conn
+		conn = RunService.RenderStepped:connect(function()
+			if not mouseDownR or not mouseDownR:FuzzyEq(workspace.CurrentCamera.CFrame, 0.1) then
+				conn:disconnect()
+				mouseDownR = nil
+			end
+		end)
+
+	elseif input.UserInputType == Enum.UserInputType.Keyboard then
+		if input.KeyCode == Enum.KeyCode.E then
+			mouseDown = nil
+			local newPlacing = light.togglePlacingLight()
+			topbar.setPlacingLight(newPlacing)
+		elseif input.KeyCode == Enum.KeyCode.C then
+			mouseDown = nil
+			local result = castToMouse()
+			local hitBelt = getBeltFromHit(result and result.Instance)
+			conveyor.toggle(hitBelt, result and result.Position)
+		end
+	end
+end)
+
+UserInputService.InputChanged:connect(function(input, gameProcessed)
+	if gameProcessed then
+		return
+	end
+
+	if input.UserInputType == Enum.UserInputType.MouseWheel then
+		-- controller.handleMouseWheel(input)
+	end
+end)
+
+UserInputService.InputEnded:connect(function(input, gameProcessed)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		mouseDown = nil
+
+		if draggingOre then
+			-- Was dragging: release ore
+			network.send("endDrag", draggingOre)
+			draggingOre = nil
+		end
+		-- Short click on ore: no longer collects
+
+		orePendingDrag = nil
+		orePendingDragTime = nil
+	elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+		if mouseDownR then
+			mouseDownR = nil
+			-- no longer used for anything, but kept here just incase
+		end
+	end
+end)
+
+-- Drag threshold check + ore movement
+RunService.RenderStepped:Connect(function()
+	-- Promote pending ore click to drag if held long enough
+	if orePendingDrag and not draggingOre then
+		if tick() - orePendingDragTime >= DRAG_THRESHOLD then
+			draggingOre = orePendingDrag
+			orePendingDrag = nil
+			orePendingDragTime = nil
+			network.send("startDrag", draggingOre)
+		end
+	end
+
+	-- Move dragged ore to follow mouse over terrain
+	if draggingOre and draggingOre.Parent then
+		local location = UserInputService:GetMouseLocation()
+		local unitRay = camera:ViewportPointToRay(location.X, location.Y)
+		local result = workspace:Raycast(unitRay.Origin, unitRay.Direction * 500, terrainOnlyParams)
+		if result then
+			draggingOre.CFrame = CFrame.new(result.Position + Vector3.new(0, 2, 0))
+		end
+	end
+end)
+
+handleChar(player.Character)
+player.CharacterAdded:connect(function(c)
+	handleChar(c)
+end)
+
+-- NETWORK --
+
+network.on("setBackpack", function(data)
+	topbar.updateStorage(data)
+	interface.updateStorage(data)
+end)
+
+network.on("setTool", function(data)
+	handleToolInfo(data)
+end)
+
+network.on("updData", function(data)
+	updateData(data)
+end)
+
+init()

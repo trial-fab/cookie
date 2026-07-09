@@ -1,0 +1,136 @@
+local ores = {}
+
+local ServerStorage = game:GetService("ServerStorage")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local network = require(script.Parent.network)
+local backpack = require(script.Parent.backpack)
+local util = require(script.Parent.util)
+local vars = require(ReplicatedStorage.Shared.vars)
+
+local ServerAssets = ServerStorage.assets
+
+local DEBRIS_DELAY = 30
+local TOTAL_SPAWN_CHANCE = 1/7 -- chance to spawn any ore overall
+local ORE_PARAMS = {
+	clay      = { center = 0,      maxWeight = 50, spread = 300 },
+	stone     = { center = -200,   maxWeight = 40, spread = 300 },
+	aluminum  = { center = -400,   maxWeight = 30, spread = 300 },
+	copper    = { center = -600,   maxWeight = 25, spread = 300 },
+	coal      = { center = -800,   maxWeight = 20, spread = 300 },
+	iron      = { center = -1000,  maxWeight = 15, spread = 300 },
+	emerald   = { center = -1100,  maxWeight = 10, spread = 200 },
+	sapphire  = { center = -1200,  maxWeight = 8,  spread = 200 },
+	gold      = { center = -1250,  maxWeight = 5,  spread = 150 },
+	silver    = { center = -1300,  maxWeight = 4,  spread = 150 },
+	diamond   = { center = -1350,  maxWeight = 3,  spread = 100 },
+	titanium  = { center = -1375,  maxWeight = 2,  spread = 75  },
+	uranium   = { center = -1400,  maxWeight = 1,  spread = 50  },
+}
+
+local function addDebris(ore)
+	if ore.Parent ~= workspace.Ores or not vars.mutexAttribute(ore, util.ATTRIBUTE_NAMES.ORE_DEBRIS, true) then
+		return
+	end
+
+	task.delay(DEBRIS_DELAY, function()
+		ore:Destroy()
+	end)
+end
+
+local function shouldSpawnOre()
+	return math.random() < TOTAL_SPAWN_CHANCE
+end
+
+local function getRandomOre(name)
+	local c = ServerAssets.materials[name]:GetChildren()
+	return c[math.random(1, #c)]:Clone()
+end
+
+local function getOreEffectiveWeight(oreName, y)
+	local ore = ORE_PARAMS[oreName]
+	if not ore then return 0 end
+	local diff = y - ore.center
+	local exponent = -(diff * diff) / (2 * ore.spread * ore.spread)
+	local weight = ore.maxWeight * math.exp(exponent)
+	return weight
+end
+
+local function getOreForHeight(y)
+	if not shouldSpawnOre() then
+		return nil  -- No ore spawns at this height.
+	end
+
+	local totalWeight = 0
+	local effectiveWeights = {}
+
+	for oreName, _ in pairs(ORE_PARAMS) do
+		local weight = getOreEffectiveWeight(oreName, y)
+		effectiveWeights[oreName] = weight
+		totalWeight = totalWeight + weight
+	end
+
+	local roll = math.random() * totalWeight
+	for oreName, weight in pairs(effectiveWeights) do
+		roll = roll - weight
+		if roll <= 0 then
+			return oreName
+		end
+	end
+end
+
+local function grab(p, ore)
+	if backpack.isFull(p) then
+		return nil
+	end
+	
+	local root = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+	if root and (root.Position - ore.Position).magnitude < vars.ORE_GRAB_DISTANCE then
+		local name = ore:GetAttribute(util.ATTRIBUTE_NAMES.ORE_TYPE)
+		if not vars.hasAttribute(ore, util.ATTRIBUTE_NAMES.ORE_GRABBED) then
+			local result, storage = backpack.store(p, name)
+			if result == true then
+				ore:SetAttribute(util.ATTRIBUTE_NAMES.ORE_GRABBED, true)
+				ore:Destroy()
+				return storage
+			end
+		end
+	end
+end
+
+function ores.gen(x, y, z)
+	local name = getOreForHeight(y)
+	local ore = name and getRandomOre(name)
+	if ore then
+		ore.Transparency = 0.8
+		ore.CFrame = CFrame.new(x, y, z) * vars.randAngles()
+		ore:SetAttribute(util.ATTRIBUTE_NAMES.ORE_TYPE, name)
+		ore.Parent = workspace.Ores
+	end
+end
+
+function ores.release(pos, radius)
+	local oresInRadius = vars.getOresInRadius(pos, radius * 1.5)
+	for _, ore in oresInRadius do
+		local downParams = RaycastParams.new()
+		downParams.FilterDescendantsInstances = { workspace.Terrain }
+		downParams.FilterType = Enum.RaycastFilterType.Include
+		local downCast = workspace:Raycast(ore.Position, Vector3.new(0, -100, 0), downParams)
+
+		local upParams = RaycastParams.new()
+		upParams.FilterDescendantsInstances = { workspace.Terrain, ore }
+		upParams.FilterType = Enum.RaycastFilterType.Include
+		local upCast = downCast and workspace:Raycast(downCast.Position, Vector3.new(0, 100, 0), upParams)
+
+		ore.Transparency = 0 -- even if we can't release it, still show it
+		if upCast and upCast.Instance == ore then
+			ore.Anchored = false
+			addDebris(ore)
+		end
+	end
+end
+
+network.on("grab", function(p, data)
+	return grab(p, data)
+end)
+
+return ores

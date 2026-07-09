@@ -1,0 +1,106 @@
+local Terrain = workspace.Terrain
+
+local Players = game:GetService("Players")
+local ServerStorage = game:GetService("ServerStorage")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local network = require(script.libraries.network)
+local terrain = require(script.libraries.terrain)
+local datastore = require(script.libraries.datastore)
+local backpack = require(script.libraries.backpack)
+local tools = require(script.libraries.tools)
+local util = require(script.libraries.util)
+local conveyors = require(script.libraries.conveyors)
+local vars = require(ReplicatedStorage.Shared.vars)
+
+local ReplicatedAssets = ReplicatedStorage.assets
+local FillArea = workspace.FillArea
+
+local MAX_SPAWN_HEIGHT = -5 -- must be <= 0
+
+local function findSpawnPoint(c)
+	local radius = 20
+	local hum = c:WaitForChild("Humanoid", 5)
+	local root = c:WaitForChild("HumanoidRootPart", 5)
+	if not hum or not root then
+		return nil
+	end
+	
+	while true do
+		local pos = Vector3.new(util.randRad(radius), 10, util.randRad(radius))
+		local params = RaycastParams.new()
+		params.FilterDescendantsInstances = { workspace.Terrain }
+		params.FilterType = Enum.RaycastFilterType.Include
+		local result = workspace:Raycast(pos, Vector3.new(0, -10 + MAX_SPAWN_HEIGHT, 0))
+		if result and result.Position then
+			return result.Position + Vector3.new(0, hum.HipHeight + (root.Size.Y / 2), 0)
+		end
+		
+		-- expand possible radius and try again
+		radius = radius + 10
+		task.wait()
+	end
+end
+
+local function startGameLoop()
+	local shouldCaveIn = false
+
+	terrain.generateAround(Vector3.new(), 36, 1)
+	while true do
+		if not shouldCaveIn then
+			terrain.generate()
+		end
+		task.wait(0.4)
+	end
+end
+
+-- EVENTS --
+
+Players.PlayerAdded:connect(function(p)
+	datastore.playerAdded(p)
+	backpack.playerAdded(p)
+	tools.playerAdded(p)
+	
+	p.CharacterAdded:connect(function(c)
+		terrain.charAdded(p, c)
+		
+		task.spawn(function()
+			local pos = findSpawnPoint(c)
+			if pos then
+				c:PivotTo(CFrame.new(pos))
+			end
+			
+			local root = c:WaitForChild("HumanoidRootPart", 30)
+			while task.wait(5) and root and root:IsDescendantOf(workspace) do
+				if root.Position.Y > 0  then
+					backpack.clear(p, false)
+				end
+			end
+		end)
+	end)
+end)
+
+Players.PlayerRemoving:connect(function(p)
+	datastore.playerRemoving(p)
+	backpack.playerRemoving(p)
+	tools.playerRemoving(p)
+end)
+
+workspace.Ores.ChildRemoved:connect(function(c)
+	if vars.hasAttribute(c, util.ATTRIBUTE_NAMES.ORE_GRABBED) then
+		if c.Transparency > 0 then
+			warn("Grabbed hidden ore")
+		end
+	elseif not vars.hasAttribute(c, util.ATTRIBUTE_NAMES.ORE_DEBRIS) then
+		warn("Lost ore")
+	end
+end)
+
+local r, e = pcall(function()
+	local con = require(script.libraries.con)
+end)
+if not r then warn(r, e) end
+
+workspace.Dev:Destroy()
+FillArea.Parent = nil
+startGameLoop()
+-- NO CODE BELOW THIS POINT --

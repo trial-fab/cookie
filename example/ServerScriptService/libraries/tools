@@ -1,0 +1,99 @@
+local tools = {}
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local network = require(script.Parent.network)
+local vars = require(ReplicatedStorage.Shared.vars)
+
+local bonus = {}
+
+local ReplicatedAssets = ReplicatedStorage.assets
+
+local BONUS_PER_FRIEND = 0.1
+
+local function getBonus(p)
+	if bonus[p] then
+		return BONUS_PER_FRIEND * #bonus[p]
+	end
+	return 0
+end
+
+local function getToolInfo(p)
+	return {
+		actionTime = tools.getActionTime(p),
+		bonus = getBonus(p)
+	}
+end
+
+local function characterAdded(p, c)
+	local shovel = ReplicatedAssets.Shovel:Clone()
+	shovel.Parent = c
+end
+
+function tools.playAnimation(p)
+	local tool = p and p.Character and p.Character:FindFirstChildOfClass("Tool")
+	if tool then
+		local anim = Instance.new("StringValue")
+		anim.Name = "toolanim"
+		anim.Value = "Slash"
+		anim.Parent = tool
+	end
+end
+
+function tools.getActionTime(p)
+	local digTime = vars.DEFAULT_DIG_TIME
+	local mult = 1 - getBonus(p)
+	
+	return digTime * mult
+end
+
+function tools.playerAdded(p)
+	bonus[p] = {}
+	
+	for _, crntPlayer in ipairs(Players:GetPlayers()) do
+		if p == crntPlayer then
+			continue
+		end
+		
+		local friends = false
+		local r, e = pcall(function()
+			friends = crntPlayer:IsFriendsWith(p.UserId)
+		end)
+		if friends then
+			if bonus[crntPlayer] then
+				table.insert(bonus[crntPlayer], p)
+				network.send(crntPlayer, "setTool", getToolInfo(crntPlayer))
+			end
+			if bonus[p] then -- may have left during API call
+				table.insert(bonus[p], crntPlayer)
+				network.send(p, "setTool", getToolInfo(p))
+			end
+		end
+	end
+	
+	p.CharacterAdded:connect(function(c)
+		characterAdded(p, c)
+	end)
+end
+
+function tools.playerRemoving(p)
+	bonus[p] = nil
+	
+	for _, crntPlayer in ipairs(Players:GetPlayers()) do
+		if p == crntPlayer then
+			continue
+		end
+		
+		local idx = bonus[crntPlayer] and table.find(bonus[crntPlayer], p)
+		if idx then
+			table.remove(bonus[crntPlayer], idx)
+			network.send(crntPlayer, "setTool", getToolInfo(crntPlayer))
+		end
+	end
+end
+
+network.on("getTool", function(p)
+	return getToolInfo(p)
+end)
+
+return tools

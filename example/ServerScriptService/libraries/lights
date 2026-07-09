@@ -1,0 +1,209 @@
+local lights = {}
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local network = require(script.Parent.network)
+local vars = require(ReplicatedStorage.Shared.vars)
+
+local ReplicatedAssets = ReplicatedStorage.assets
+local Lights = workspace.Lights
+
+local GENERATE_ROPE = true
+
+local CONNECT_RANGE = 50
+local CONNECT_MIN = 2--1 -- in addition to the 2 lights themselves
+
+local ROPE_DIST = 6--15
+local ROPE_WIDTH = 0.055
+local ROPE_LENGTH_MULT = 1.005--1.02
+local ROPE_COLOR = BrickColor.Black() -- BrickColor.new("Smoky grey")
+
+local ROPE_LERP_MIN = 0.05--0.2
+local ROPE_LERP_MAX = 0.95--0.8
+local ROPE_LERP_PCT = ROPE_LERP_MAX - ROPE_LERP_MIN
+
+local function cast(pos)
+	local params = RaycastParams.new()
+	params.FilterDescendantsInstances = { workspace.Terrain }
+	params.FilterType = Enum.RaycastFilterType.Include
+	return workspace:Raycast(pos, Vector3.new(0, 10, 0), params)
+end
+
+local function buildReference(obj, f, name)
+	local v = Instance.new("ObjectValue")
+	v.Name = name or "_ropeRef"
+	v.Value = obj
+	v.Parent = f
+end
+
+local function connectLights(light1, light2)
+	local dist = (light1.PrimaryPart.Position - light2.PrimaryPart.Position).magnitude
+	local steps = math.max(CONNECT_MIN, math.ceil(dist / ROPE_DIST))
+	
+	local conns = {}
+	local success = true
+	
+	local f = Instance.new("Folder")
+	
+	for i = 1, steps do
+		local lerp = ROPE_LERP_MIN + ((i / steps) * ROPE_LERP_PCT)
+		local pos = light1.PrimaryPart.Position:Lerp(light2.PrimaryPart.Position, lerp)
+		local result = cast(pos)
+		
+		if result and result.Position then
+			local anchor = Instance.new("Part")
+			anchor.Name = "_anchor"
+			anchor.Shape = Enum.PartType.Cylinder
+			anchor.Anchored = true
+			anchor.CanCollide = false
+			anchor.CFrame = CFrame.new(result.Position, result.Position + result.Normal)
+			--anchor.Position = result.Position
+			anchor.Size = Vector3.new(0.07, 0.18, 0.18)
+			anchor.Color = light1.connect.Color
+			anchor.Parent = f
+			table.insert(conns, anchor)
+		else
+			success = false
+			break
+		end
+	end
+	
+	if not success then
+		f:Destroy()
+		return false
+	end
+	
+	table.insert(conns, 1, light1.connect)
+	table.insert(conns, light2.connect)
+	
+	for i = 1, #conns - 1 do
+		local a1 = Instance.new("Attachment")
+		a1.Parent = conns[i]
+		buildReference(a1, f)
+		
+		local a2 = Instance.new("Attachment")
+		a2.Parent = conns[i + 1]
+		buildReference(a2, f)
+		
+		local dist = (conns[i].Position - conns[i + 1].Position).magnitude
+		local rope = Instance.new("RopeConstraint")
+		rope.Attachment0 = a1
+		rope.Attachment1 = a2
+		rope.Visible = true
+		rope.Color = ROPE_COLOR
+		rope.Thickness = ROPE_WIDTH
+		rope.Length = dist * ROPE_LENGTH_MULT
+		rope.Parent = f
+	end
+	
+	buildReference(f, light1.connect)
+	buildReference(f, light2.connect)
+	buildReference(light1, f, "light1")
+	buildReference(light2, f, "light2")
+	
+	f.Parent = workspace.Ropes
+	return true
+end
+
+local function placeLight(pos, normal)
+	if not vars.isLightPositionValid(pos, normal) then
+		return false
+	end
+	
+	local light = ReplicatedAssets.light:Clone()
+	light:PivotTo(vars.getLightPivot(pos, normal))
+	light.Parent = workspace.Lights
+	
+	if GENERATE_ROPE then
+		local nearby = vars.getLightsInRange(pos, CONNECT_RANGE, light)
+		for _, lightInfo in ipairs(nearby) do
+			if connectLights(light, lightInfo.light) then
+				break
+			end
+		end
+	end
+	
+	return true
+end
+
+local function clearRope(f)
+	for _, c in ipairs(f:GetChildren()) do
+		if c.Name == "_ropeRef" then
+			c.Value:Destroy()
+		end
+	end
+	f:Destroy()
+end
+
+local function clearLight(light)
+	for _, c in ipairs(light.connect:GetChildren()) do
+		if c.Name == "_ropeRef" then -- folder ref
+			clearRope(c.Value)
+		end
+	end
+	light:Destroy()
+end
+
+local function fixRope(f)
+	if not f then
+		-- may have already been deleted
+		return
+	end
+	
+	local light1 = f:FindFirstChild("light1") and f.light1.Value
+	local light2 = f:FindFirstChild("light2") and f.light2.Value
+	if light1 and light2 then
+		clearRope(f)
+		connectLights(light1, light2)
+	end
+end
+
+function lights.fixLights(pos, digSize)
+	local params = OverlapParams.new()
+	params.FilterDescendantsInstances = { workspace.Lights, workspace.Ropes }
+	params.FilterType = Enum.RaycastFilterType.Include
+	local partsInRadius = workspace:GetPartBoundsInRadius(pos, digSize * 1.5, params)
+
+	local lightsInRadius = {}
+	local ropesInRadius = {}
+	for _, p in ipairs(partsInRadius) do
+		if p.Parent.Parent == workspace.Lights then
+			if not table.find(lightsInRadius, p.Parent) then
+				table.insert(lightsInRadius, p.Parent)
+			end
+		elseif p.Parent.Parent == workspace.Ropes then
+			if not table.find(ropesInRadius, p.Parent) then
+				table.insert(ropesInRadius, p.Parent)
+			end
+		end
+	end
+
+	for _, l in ipairs(lightsInRadius) do
+		local origin = l.PrimaryPart.CFrame:ToWorldSpace(CFrame.new(1, 0, 0)).Position
+		local direction = -l.PrimaryPart.CFrame.rightVector * 10
+		local params = RaycastParams.new()
+		params.FilterDescendantsInstances = { workspace.Terrain }
+		params.FilterType = Enum.RaycastFilterType.Include
+
+		local result = workspace:Raycast(origin, direction, params)
+		if result and result.Position then
+			l:PivotTo(vars.getLightPivot(result.Position, result.Normal))
+			for _, c in ipairs(l.connect:GetChildren()) do
+				if c.Name == "_ropeRef" and not table.find(ropesInRadius, c.Value) then
+					table.insert(ropesInRadius, c.Value)
+				end
+			end
+		else
+			clearLight(l)
+		end
+	end
+	
+	for _, f in ipairs(ropesInRadius) do
+		fixRope(f)
+	end
+end
+
+network.on("light", function(p, data)
+	return placeLight(data.pos, data.normal)
+end)
+
+return lights
