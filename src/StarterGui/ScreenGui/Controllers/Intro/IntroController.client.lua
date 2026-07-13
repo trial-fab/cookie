@@ -40,7 +40,9 @@ local mainGui = script:FindFirstAncestorOfClass("ScreenGui")
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local Net = require(shared:WaitForChild("Net"))
 local Attrs = require(shared:WaitForChild("Attrs"))
+local AudioSettings = require(shared:WaitForChild("AudioSettings"))
 local StoryConfig = require(shared:WaitForChild("StoryConfig"))
+local UiMotion = require(shared:WaitForChild("UiMotion"))
 
 ----------------------------------------------------------------------
 -- Tunables
@@ -170,7 +172,7 @@ end
 local function playSound(root, name)
 	local sound = root:FindFirstChild(name, true)
 	if sound and sound:IsA("Sound") then
-		sound:Play()
+		AudioSettings.playSfx(sound)
 	end
 end
 
@@ -390,10 +392,10 @@ end
 
 local function tweenLetterboxOut(topBar, bottomBar)
 	local info = TweenInfo.new(LETTERBOX_TWEEN_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
-	local topTween = TweenService:Create(topBar, info, {
+	local topTween = UiMotion.create(topBar, info, {
 		Position = UDim2.fromScale(0, -LETTERBOX_BAR_HEIGHT),
 	})
-	local bottomTween = TweenService:Create(bottomBar, info, {
+	local bottomTween = UiMotion.create(bottomBar, info, {
 		Position = UDim2.fromScale(0, 1 + LETTERBOX_BAR_HEIGHT),
 	})
 	topTween:Play()
@@ -434,12 +436,12 @@ local function playTitleReveal(playerGui)
 	scale.Parent = title
 
 	local inInfo = TweenInfo.new(TITLE_REVEAL_TIME, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-	local titleTween = TweenService:Create(title, inInfo, {
+	local titleTween = UiMotion.create(title, inInfo, {
 		Position = UDim2.fromScale(0.5, 0.44),
 		TextTransparency = 0,
 		TextStrokeTransparency = 0.28,
 	})
-	local scaleTween = TweenService:Create(scale, inInfo, {
+	local scaleTween = UiMotion.create(scale, inInfo, {
 		Scale = 1,
 	})
 	titleTween:Play()
@@ -449,7 +451,7 @@ local function playTitleReveal(playerGui)
 	task.wait(TITLE_HOLD_TIME)
 
 	local outInfo = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-	local fadeTween = TweenService:Create(title, outInfo, {
+	local fadeTween = UiMotion.create(title, outInfo, {
 		TextTransparency = 1,
 		TextStrokeTransparency = 1,
 		Position = UDim2.fromScale(0.5, 0.4),

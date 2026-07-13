@@ -1,5 +1,5 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
+local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local NumberFormat = require(shared:WaitForChild("NumberFormat"))
@@ -49,10 +49,10 @@ local function renderEarnings(building, amount)
 	label.Text = (amount > 0 and "+" or "") .. NumberFormat.abbreviate(amount)
 	label.Parent = billboard
 
-	local tween = TweenService:Create(billboard, TWEEN_INFO, {
+	local tween = UiMotion.create(billboard, TWEEN_INFO, {
 		StudsOffset = billboard.StudsOffset + Vector3.new(0, 2.4, 0),
 	})
-	local labelTween = TweenService:Create(label, TWEEN_INFO, {
+	local labelTween = UiMotion.create(label, TWEEN_INFO, {
 		TextTransparency = 1,
 	})
 

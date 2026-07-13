@@ -5,7 +5,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SocialService = game:GetService("SocialService")
-local TweenService = game:GetService("TweenService")
+local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(shared:WaitForChild("Attrs"))
@@ -202,7 +202,7 @@ function setVisible(value)
 	cancelTweens()
 	animationToken += 1
 	local token = animationToken
-	local animate = screenGui:GetAttribute(Attrs.AnimationsEnabled) ~= false
+	local animate = true -- Short envelope transition intentionally remains under Reduced Motion.
 
 	if value then
 		modal.Visible = true
@@ -227,8 +227,8 @@ function setVisible(value)
 		end
 
 		if animate then
-			activeTweenA = TweenService:Create(closedEnvelope, OPEN_TWEEN, { ImageTransparency = 1 })
-			activeTweenB = TweenService:Create(openEnvelope, OPEN_TWEEN, { ImageTransparency = 0 })
+			activeTweenA = UiMotion.create(closedEnvelope, OPEN_TWEEN, { ImageTransparency = 1 })
+			activeTweenB = UiMotion.create(openEnvelope, OPEN_TWEEN, { ImageTransparency = 0 })
 			activeTweenA:Play()
 			activeTweenB:Play()
 			activeTweenB.Completed:Once(function()
@@ -247,8 +247,8 @@ function setVisible(value)
 		setEnvelope(closedEnvelope.ImageTransparency, openEnvelope.ImageTransparency)
 
 		if animate then
-			activeTweenA = TweenService:Create(closedEnvelope, CLOSE_TWEEN, { ImageTransparency = 0 })
-			activeTweenB = TweenService:Create(openEnvelope, CLOSE_TWEEN, { ImageTransparency = 1 })
+			activeTweenA = UiMotion.create(closedEnvelope, CLOSE_TWEEN, { ImageTransparency = 0 })
+			activeTweenB = UiMotion.create(openEnvelope, CLOSE_TWEEN, { ImageTransparency = 1 })
 			activeTweenA:Play()
 			activeTweenB:Play()
 			activeTweenB.Completed:Once(function()

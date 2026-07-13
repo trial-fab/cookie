@@ -10,7 +10,7 @@
 -- must only snap back AFTER the close tween finishes (or immediately when no animation runs).
 -- The orchestrator calls markSellModeVisualResetPending() when it drops sell mode, and this
 -- module fires ctx.completeSellButtonVisual() at the right moment.
-local TweenService = game:GetService("TweenService")
+local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 
 local TOOLBAR_REVEAL_OPEN_INFO = TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 local TOOLBAR_REVEAL_CLOSE_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
@@ -148,11 +148,11 @@ function StoreToolbarLayout.new(ctx)
 		end
 
 		local tweenInfo = showToolBar and TOOLBAR_REVEAL_OPEN_INFO or TOOLBAR_REVEAL_CLOSE_INFO
-		local toolBarTween = TweenService:Create(toolBar, tweenInfo, {
+		local toolBarTween = UiMotion.create(toolBar, tweenInfo, {
 			Position = showToolBar and toolBarOpenPosition or toolBarClosedPosition,
 		})
 		local pagePosition, pageSize = getPageContainerLayout(showToolBar)
-		local pageTween = TweenService:Create(pageContainer, tweenInfo, {
+		local pageTween = UiMotion.create(pageContainer, tweenInfo, {
 			Position = pagePosition,
 			Size = pageSize,
 		})

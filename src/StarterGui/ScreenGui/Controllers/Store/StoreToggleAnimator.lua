@@ -15,12 +15,12 @@
 -- ctx: { screenGui, store, setStoreOpen }. setStoreOpen(open) is called from the button input
 -- (the controller flips the attribute, the watcher below plays the animation).
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(shared:WaitForChild("Attrs"))
 local GuiNames = require(shared:WaitForChild("GuiNames"))
+local UiMotion = require(shared:WaitForChild("UiMotion"))
 
 local StoreToggleAnimator = {}
 
@@ -215,6 +215,7 @@ function StoreToggleAnimator.new(ctx)
 	-- split positions, driving buildLabelClip's width in lockstep so the label unscrolls from the
 	-- centre exactly as the halves part. animate=false snaps instantly.
 	local function setSplitOpen(open, animate)
+		animate = animate == true
 		splitToken += 1
 		splitIsOpen = open
 		cancelSplitTweens()
@@ -225,7 +226,7 @@ function StoreToggleAnimator.new(ctx)
 				return
 			end
 			if animate then
-				local tween = TweenService:Create(object, info, goal)
+				local tween = UiMotion.create(object, info, goal)
 				table.insert(splitTweens, tween)
 				tween:Play()
 			else
@@ -249,7 +250,7 @@ function StoreToggleAnimator.new(ctx)
 		-- (lower ZIndex) through every hover/press/recoil/launch tween.
 		if buildModeCookieBackground and cookieBackgroundBasePosition and cookieBasePosition and goals.Position then
 			local yOffset = goals.Position.Y.Offset - cookieBasePosition.Y.Offset
-			local bgTween = TweenService:Create(buildModeCookieBackground, info, {
+			local bgTween = UiMotion.create(buildModeCookieBackground, info, {
 				Position = offsetCookieBackgroundPosition(yOffset),
 			})
 			table.insert(cookieTweens, bgTween)
@@ -263,7 +264,7 @@ function StoreToggleAnimator.new(ctx)
 			end)
 			bgTween:Play()
 		end
-		local tween = TweenService:Create(buildModeCookie, info, goals)
+		local tween = UiMotion.create(buildModeCookie, info, goals)
 		table.insert(cookieTweens, tween)
 		tween.Completed:Once(function()
 			for index, activeTween in ipairs(cookieTweens) do
@@ -323,7 +324,7 @@ function StoreToggleAnimator.new(ctx)
 		cancelPlacementTween()
 		local target = parked and getToggleParkedPosition() or toggleOnHomePosition
 		if animate then
-			placementTween = TweenService:Create(toggleOn, PLACEMENT_TWEEN_INFO, { Position = target })
+			placementTween = UiMotion.create(toggleOn, PLACEMENT_TWEEN_INFO, { Position = target })
 			placementTween:Play()
 		else
 			toggleOn.Position = target

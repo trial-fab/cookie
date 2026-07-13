@@ -1,9 +1,12 @@
 local screenGui = script:FindFirstAncestorOfClass("ScreenGui")
 
-local TweenService = game:GetService("TweenService")
+local GuiService = game:GetService("GuiService")
+local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
+local UserInputService = game:GetService("UserInputService")
 local ModalOutsideClose = require(script.Parent:WaitForChild("ModalOutsideClose"))
 local ModalCoordinator = require(script.Parent:WaitForChild("ModalCoordinator"))
 local shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local Attrs = require(shared:WaitForChild("Attrs"))
 local GuiNames = require(shared:WaitForChild("GuiNames"))
 local IconButton = require(shared:WaitForChild("IconButton"))
 local MobileScale = require(shared:WaitForChild("MobileScale"))
@@ -60,6 +63,8 @@ local pageCount = 0
 local currentPage = 1
 local helpVisible = false
 local activeTween = nil
+local previousSelection = nil
+local gamepadFocusOwned = false
 
 -- UIScale used for BOTH the pop-in/pop-out animation and the shared responsive scale
 -- (Roblox honours only one UIScale per object).
@@ -78,7 +83,10 @@ end
 -- Captured once before the first resolveModal call (which rewrites helpGui.Size on mobile).
 local designSize = Vector2.new(helpGui.Size.X.Offset, helpGui.Size.Y.Offset)
 local function restScale()
-	return MobileScale.resolveModal(helpGui, designSize)
+	return MobileScale.resolveModal(helpGui, designSize, {
+		mobileScale = 0.82,
+		nativeTextDesktop = true,
+	})
 end
 
 local function rebuildPages()
@@ -142,21 +150,55 @@ function setHelpVisible(value)
 	helpIcon.set(value, value and "CLOSE" or "HELP")
 
 	local scale = getAnimScale()
+	local animate = true -- Short modal transition intentionally remains under Reduced Motion.
 
 	if value then
 		showCurrentPage()
 		local rest = restScale()
-		scale.Scale = rest * 0.92
 		helpGui.Visible = true
-		activeTween = TweenService:Create(scale, scaleInfo, { Scale = rest })
-		activeTween:Play()
+		if UserInputService.PreferredInput == Enum.PreferredInput.Gamepad then
+			previousSelection = GuiService.SelectedObject
+			gamepadFocusOwned = true
+			task.defer(function()
+				if helpVisible then
+					GuiService.SelectedObject = pageForwardButton
+				end
+			end)
+		end
+		if animate then
+			scale.Scale = rest * 0.92
+			activeTween = UiMotion.create(scale, scaleInfo, { Scale = rest })
+			activeTween:Play()
+		else
+			scale.Scale = rest
+		end
 	else
-		activeTween = TweenService:Create(scale, scaleInfo, { Scale = restScale() * 0.92 })
-		activeTween.Completed:Once(function()
+		if gamepadFocusOwned then
+			gamepadFocusOwned = false
+			local restore = previousSelection
+			previousSelection = nil
+			if not (restore and restore.Parent and restore:IsA("GuiObject") and restore.Selectable) then
+				restore = showHelpButton
+			end
+			task.defer(function()
+				if restore and restore.Parent and restore:IsA("GuiObject") and restore.Selectable then
+					GuiService.SelectedObject = restore
+				end
+			end)
+		end
+		if animate then
+			activeTween = UiMotion.create(scale, scaleInfo, { Scale = restScale() * 0.92 })
+			activeTween.Completed:Once(function()
+				if not helpVisible then
+					helpGui.Visible = false
+					scale.Scale = restScale()
+				end
+			end)
+			activeTween:Play()
+		else
 			helpGui.Visible = false
 			scale.Scale = restScale()
-		end)
-		activeTween:Play()
+		end
 	end
 end
 
@@ -177,7 +219,7 @@ helpGui.Visible = false
 helpIcon.set(false, "HELP")
 
 if showHelpButton then
-	showHelpButton.MouseButton1Click:Connect(function()
+	showHelpButton.Activated:Connect(function()
 		setHelpVisible(not helpVisible)
 	end)
 else
@@ -197,12 +239,29 @@ ModalOutsideClose.bind({
 	end,
 })
 
-pageForwardButton.MouseButton1Click:Connect(function()
+pageForwardButton.Activated:Connect(function()
 	currentPage += 1
 	showCurrentPage()
 end)
 
-pageBackButton.MouseButton1Click:Connect(function()
+pageBackButton.Activated:Connect(function()
 	currentPage -= 1
 	showCurrentPage()
+end)
+
+UserInputService.InputBegan:Connect(function(input)
+	if not helpVisible then
+		return
+	end
+
+	local key = input.KeyCode
+	if key == Enum.KeyCode.ButtonB or key == Enum.KeyCode.Escape then
+		setHelpVisible(false)
+	elseif key == Enum.KeyCode.Right or key == Enum.KeyCode.DPadRight or key == Enum.KeyCode.ButtonR1 then
+		currentPage += 1
+		showCurrentPage()
+	elseif key == Enum.KeyCode.Left or key == Enum.KeyCode.DPadLeft or key == Enum.KeyCode.ButtonL1 then
+		currentPage -= 1
+		showCurrentPage()
+	end
 end)

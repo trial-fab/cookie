@@ -14,7 +14,7 @@ local PANEL_ALT_COLOR = Color3.fromRGB(28, 32, 42)
 local PANEL_SOFT_COLOR = Color3.fromRGB(36, 42, 54)
 local TEXT_COLOR = Color3.fromRGB(244, 247, 252)
 local MUTED_TEXT_COLOR = Color3.fromRGB(170, 178, 192)
-local ACCENT_COLOR = Color3.fromRGB(35, 215, 220)
+local ACCENT_COLOR = Color3.fromRGB(0, 170, 255)
 local ICON_BG = Color3.fromRGB(30, 32, 40)
 local DANGER_COLOR = Color3.fromRGB(185, 54, 55)
 local SHIELD_ON_COLOR = Color3.fromRGB(92, 200, 72)
@@ -86,6 +86,22 @@ local function updateIconButton(button)
 	if not button or not button:IsA("GuiButton") then
 		return
 	end
+
+	local baseColor = button:GetAttribute("BaseColor") or ICON_BG
+	local active = button:GetAttribute(Attrs.Active) == true
+	local shieldState = button:GetAttribute("ShieldState")
+	local backgroundColor = baseColor
+
+	if shieldState ~= nil then
+		backgroundColor = shieldState == true and SHIELD_ON_COLOR or SHIELD_OFF_COLOR
+	elseif active then
+		backgroundColor = ACCENT_COLOR
+	end
+
+	button.BackgroundColor3 = backgroundColor
+	if button:IsA("TextButton") and not button:GetAttribute(Attrs.IconOnly) then
+		button.TextColor3 = TEXT_COLOR
+	end
 end
 
 local function prepareIconButton(button, icon, _baseColor)
@@ -109,7 +125,7 @@ local function prepareIconButton(button, icon, _baseColor)
 	end
 
 	button:SetAttribute(Attrs.IconOnly, true)
-	button:SetAttribute("BaseColor", ICON_BG)
+	button:SetAttribute("BaseColor", _baseColor or ICON_BG)
 	button.AnchorPoint = Vector2.new(1, 0)
 	button.Size = UDim2.fromOffset(44, 44)
 	if button:IsA("TextButton") then
@@ -119,7 +135,7 @@ local function prepareIconButton(button, icon, _baseColor)
 		button.TextScaled = false
 	end
 	button.ZIndex = 20
-	styleButton(button, ICON_BG, 20)
+	styleButton(button, _baseColor or ICON_BG, 20)
 	updateIconButton(button)
 
 	local gridIcon = button:FindFirstChild("GridIcon")

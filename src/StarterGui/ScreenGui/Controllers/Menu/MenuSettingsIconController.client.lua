@@ -1,4 +1,4 @@
-local TweenService = game:GetService("TweenService")
+local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 local Attrs = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Attrs"))
 local GuiNames = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("GuiNames"))
 
@@ -57,7 +57,7 @@ hitbox.BorderSizePixel = 0
 hitbox.Text = ""
 hitbox.TextTransparency = 1
 hitbox.AutoButtonColor = false
-hitbox.Selectable = false
+hitbox.Selectable = true
 hitbox:SetAttribute(Attrs.IconOnly, true)
 hitbox.ZIndex = math.max(settingsFrame.ZIndex, settingsButton.ZIndex) + 10
 
@@ -94,7 +94,7 @@ local function tweenRotation(rotation, tweenInfo)
 	if activeTween then
 		activeTween:Cancel()
 	end
-	activeTween = TweenService:Create(settingsButton, tweenInfo, { Rotation = rotation })
+	activeTween = UiMotion.create(settingsButton, tweenInfo, { Rotation = rotation })
 	activeTween:Play()
 end
 

@@ -6,8 +6,10 @@
 -- Profile menu icon tints to 0,170,255 while the modal is open (active, not hover).
 -- Only one of Help/Settings/Profile is open at a time via ScreenGui.OpenModal.
 local Players = game:GetService("Players")
+local GuiService = game:GetService("GuiService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
+local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
+local UserInputService = game:GetService("UserInputService")
 local ModalOutsideClose = require(script.Parent:WaitForChild("ModalOutsideClose"))
 local ModalCoordinator = require(script.Parent:WaitForChild("ModalCoordinator"))
 
@@ -159,7 +161,10 @@ end
 -- Captured once before the first resolveModal call (which rewrites modal.Size on mobile).
 local designSize = Vector2.new(modal.Size.X.Offset, modal.Size.Y.Offset)
 local function restScale()
-	return MobileScale.resolveModal(modal, designSize)
+	return MobileScale.resolveModal(modal, designSize, {
+		mobileScale = 0.82,
+		nativeTextDesktop = true,
+	})
 end
 local function resolveButton()
 	local container = screenGui:FindFirstChild(GuiNames.Profile, true)
@@ -181,6 +186,9 @@ local modalSlot = ModalCoordinator.register(MY, function()
 end)
 
 local activeTween
+local previousSelection
+local gamepadFocusOwned = false
+
 function setVisible(value)
 	modal:SetAttribute(Attrs.Open, value)
 	local _, container = resolveButton()
@@ -194,22 +202,44 @@ function setVisible(value)
 	end
 
 	if activeTween then activeTween:Cancel(); activeTween = nil end
-	local animate = screenGui:GetAttribute(Attrs.AnimationsEnabled) ~= false
+	local animate = true -- Short modal transition intentionally remains under Reduced Motion.
 	local scale = getAnimScale()
 	if value then
 		modal.Visible = true
 		refresh()
+		if UserInputService.PreferredInput == Enum.PreferredInput.Gamepad then
+			previousSelection = GuiService.SelectedObject
+			gamepadFocusOwned = true
+			task.defer(function()
+				if modal:GetAttribute(Attrs.Open) then
+					GuiService.SelectedObject = body
+				end
+			end)
+		end
 		local rest = restScale()
 		if animate then
 			scale.Scale = rest * 0.92
-			activeTween = TweenService:Create(scale, scaleInfo, { Scale = rest })
+			activeTween = UiMotion.create(scale, scaleInfo, { Scale = rest })
 			activeTween:Play()
 		else
 			scale.Scale = rest
 		end
 	else
+		if gamepadFocusOwned then
+			gamepadFocusOwned = false
+			local restore = previousSelection
+			previousSelection = nil
+			if not (restore and restore.Parent and restore:IsA("GuiObject") and restore.Selectable) then
+				restore = select(1, resolveButton())
+			end
+			task.defer(function()
+				if restore and restore.Parent and restore:IsA("GuiObject") and restore.Selectable then
+					GuiService.SelectedObject = restore
+				end
+			end)
+		end
 		if animate then
-			activeTween = TweenService:Create(scale, scaleInfo, { Scale = restScale() * 0.92 })
+			activeTween = UiMotion.create(scale, scaleInfo, { Scale = restScale() * 0.92 })
 			activeTween.Completed:Once(function()
 				if not modal:GetAttribute(Attrs.Open) then modal.Visible = false end
 				scale.Scale = restScale()
@@ -241,11 +271,17 @@ task.defer(function()
 		repeat task.wait(0.1); button = select(1, resolveButton()) until button or tick() > deadline
 	end
 	if button then
-		button.MouseButton1Click:Connect(function()
+		button.Activated:Connect(function()
 			setVisible(not (modal:GetAttribute(Attrs.Open) == true))
 		end)
 	else
 		warn("ProfileController: Profile button not found")
+	end
+end)
+
+UserInputService.InputBegan:Connect(function(input)
+	if input.KeyCode == Enum.KeyCode.ButtonB and modal:GetAttribute(Attrs.Open) == true then
+		setVisible(false)
 	end
 end)
 

@@ -113,7 +113,6 @@ function StoreBuildingState.new(ctx)
 		if not row or target == "" then
 			return
 		end
-
 		local now = os.clock()
 		local scrambleCharacters = generateScrambleCharacters(target, 0)
 		nameRevealAnimations[upgradeId] = {

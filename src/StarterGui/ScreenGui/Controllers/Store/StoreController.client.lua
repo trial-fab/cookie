@@ -2,7 +2,6 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
@@ -39,6 +38,7 @@ local NumberFormat = require(shared:WaitForChild("NumberFormat"))
 local ProductionFormula = require(shared:WaitForChild("ProductionFormula"))
 local GridPlacement = require(shared:WaitForChild("GridPlacement"))
 local LiveCookieCount = require(shared:WaitForChild("LiveCookieCount"))
+local UiMotion = require(shared:WaitForChild("UiMotion"))
 local upgradeCountData = player:WaitForChild("UpgradeCountData")
 local cookiesValue = player:WaitForChild("leaderstats"):WaitForChild("Cookies")
 
@@ -203,10 +203,10 @@ local function setupSellButtonHover()
 
 	local function showHammer()
 		cancelActiveTweens()
-		local baseTween = TweenService:Create(sellButton, SELL_ICON_TWEEN_INFO, {
+		local baseTween = UiMotion.create(sellButton, SELL_ICON_TWEEN_INFO, {
 			ImageTransparency = 1,
 		})
-		local hammerTween = TweenService:Create(hammerOverlay, SELL_ICON_TWEEN_INFO, {
+		local hammerTween = UiMotion.create(hammerOverlay, SELL_ICON_TWEEN_INFO, {
 			ImageTransparency = 0,
 			ImageColor3 = SELL_ICON_ACTIVE_COLOR,
 			Rotation = 0,
@@ -225,7 +225,7 @@ local function setupSellButtonHover()
 		-- artwork. Only after that rotation finishes do we crossfade the build icon back in.
 		sellButton.ImageTransparency = 1
 		hammerOverlay.ImageTransparency = 0
-		local rotateTween = TweenService:Create(hammerOverlay, SELL_ICON_TWEEN_INFO, {
+		local rotateTween = UiMotion.create(hammerOverlay, SELL_ICON_TWEEN_INFO, {
 			Rotation = SELL_ICON_HOVER_ROTATION,
 			Position = UDim2.new(0.5, SELL_ICON_DIAGONAL_X_OFFSET, 0.5, SELL_ICON_DIAGONAL_Y_OFFSET),
 		})
@@ -237,10 +237,10 @@ local function setupSellButtonHover()
 			end
 
 			table.clear(activeTweens)
-			local baseTween = TweenService:Create(sellButton, SELL_ICON_TWEEN_INFO, {
+			local baseTween = UiMotion.create(sellButton, SELL_ICON_TWEEN_INFO, {
 				ImageTransparency = 0,
 			})
-			local hammerTween = TweenService:Create(hammerOverlay, SELL_ICON_TWEEN_INFO, {
+			local hammerTween = UiMotion.create(hammerOverlay, SELL_ICON_TWEEN_INFO, {
 				ImageTransparency = 1,
 				ImageColor3 = SELL_ICON_DEFAULT_COLOR,
 			})
@@ -728,7 +728,7 @@ local function updateUpgradeSubTabLayout()
 		setActiveUpgradeSubTab(UPGRADE_SECTION_BUILDING)
 	end
 
-	local tween = TweenService:Create(upgradeSubTabs, SELL_TAB_LAYOUT_TWEEN_INFO, {
+	local tween = UiMotion.create(upgradeSubTabs, SELL_TAB_LAYOUT_TWEEN_INFO, {
 		Size = showSubTabs and upgradeSubTabsExpandedSize or upgradeSubTabsCollapsedSize,
 	})
 	upgradeSubTabsTween = tween
@@ -767,7 +767,7 @@ local function updateRobuxSubTabLayout()
 		end
 	end
 
-	local tween = TweenService:Create(robuxSubTabs, SELL_TAB_LAYOUT_TWEEN_INFO, {
+	local tween = UiMotion.create(robuxSubTabs, SELL_TAB_LAYOUT_TWEEN_INFO, {
 		Size = showSubTabs and robuxSubTabsExpandedSize or robuxSubTabsCollapsedSize,
 	})
 	robuxSubTabsTween = tween
@@ -1180,6 +1180,8 @@ ctx.cookieStats = require(script.Parent.StoreCookieStats).new(ctx)
 local setupCookieStatsSlide = ctx.cookieStats.setup
 local updateStatsSlideHover = ctx.cookieStats.updateHover
 
+ctx.storeDescription = require(script.Parent.StoreDescription).new(ctx)
+
 -- Buildings-tab eye toggle: locks every card's stats open + the mouse-tracking iris.
 ctx.statsEye = require(script.Parent.StatsEyeController).new(ctx)
 
@@ -1272,6 +1274,7 @@ local function createRow(upgradeId, index)
 		end
 
 		setupCookieStatsSlide(row, upgradeId, activateRow)
+		ctx.storeDescription.setup(row, upgradeId)
 		catch.MouseButton1Click:Connect(activateRow)
 	else
 		warn("Store row missing Catch button for " .. upgradeId)

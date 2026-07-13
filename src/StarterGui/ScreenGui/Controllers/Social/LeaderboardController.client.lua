@@ -1,7 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local StarterGui = game:GetService("StarterGui")
-local TweenService = game:GetService("TweenService")
+local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 local UserInputService = game:GetService("UserInputService")
 local NumberFormat = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("NumberFormat"))
 local Attrs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Attrs"))
@@ -16,6 +16,10 @@ if screenGui:GetAttribute("LeaderboardControllerRunning") then
 	return
 end
 screenGui:SetAttribute("LeaderboardControllerRunning", true)
+
+local ModalCoordinator = require(
+	screenGui:WaitForChild("Controllers"):WaitForChild("Modals"):WaitForChild("ModalCoordinator")
+)
 
 local localPlayer = Players.LocalPlayer
 local panel = screenGui:WaitForChild("Leaderboard", 10)
@@ -45,6 +49,7 @@ local slideTween = nil
 -- On mobile the HUD takes over this top-right slot, so the board starts closed there (the HUD
 -- shows first, and opening the board hides it). On PC the authored spawn state is kept.
 local leaderboardOpen = panel.Visible and not MobileScale.shouldUseMobile(panel)
+screenGui:SetAttribute(Attrs.LeaderboardOpen, leaderboardOpen)
 
 local function getClosedPosition()
 	local hiddenX = panel.AnchorPoint.X * panel.AbsoluteSize.X + 16
@@ -75,6 +80,10 @@ local function setBoardToggleActive(active)
 end
 
 local function setLeaderboardVisible(visible, animate)
+	if visible and ModalCoordinator.isOpen() then
+		ModalCoordinator.overrideBackground(false, true)
+		return
+	end
 	leaderboardOpen = visible
 	setBoardToggleActive(visible)
 	-- Publish state so the bottom-right HUD (which shares this top-right slot on mobile) can hide
@@ -91,7 +100,7 @@ local function setLeaderboardVisible(visible, animate)
 		panel.Visible = true
 		if animate then
 			panel.Position = closedPosition
-			slideTween = TweenService:Create(panel, slideInfo, { Position = openPosition })
+			slideTween = UiMotion.create(panel, slideInfo, { Position = openPosition })
 			slideTween.Completed:Once(function()
 				if slideTween then
 					slideTween = nil
@@ -103,7 +112,7 @@ local function setLeaderboardVisible(visible, animate)
 		end
 	else
 		if animate then
-			slideTween = TweenService:Create(panel, slideInfo, { Position = closedPosition })
+			slideTween = UiMotion.create(panel, slideInfo, { Position = closedPosition })
 			slideTween.Completed:Once(function()
 				if not leaderboardOpen then
 					panel.Visible = false
@@ -123,6 +132,15 @@ end
 local function toggleLeaderboard()
 	setLeaderboardVisible(not leaderboardOpen, true)
 end
+
+-- ModalCoordinator and StoreToggleController close the board through its published
+-- attribute. Mirror external changes back into the controller's local animation state.
+screenGui:GetAttributeChangedSignal(Attrs.LeaderboardOpen):Connect(function()
+	local requestedOpen = screenGui:GetAttribute(Attrs.LeaderboardOpen) == true
+	if requestedOpen ~= leaderboardOpen then
+		setLeaderboardVisible(requestedOpen, true)
+	end
+end)
 
 -- Keep the mobile nudge in sync across orientation changes; re-pin if resting open.
 MobileScale.onViewportChanged(function()
@@ -327,7 +345,7 @@ task.spawn(function()
 	setLeaderboardVisible(leaderboardOpen, false)
 
 	if hitbox and hitbox:IsA("GuiButton") then
-		hitbox.MouseButton1Click:Connect(function()
+		hitbox.Activated:Connect(function()
 			toggleLeaderboard()
 		end)
 	end

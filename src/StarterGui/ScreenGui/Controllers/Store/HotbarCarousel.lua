@@ -20,7 +20,6 @@
 --
 -- ctx: { screenGui, store, setStoreOpen }.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
 local StarterGui = game:GetService("StarterGui")
 local UserInputService = game:GetService("UserInputService")
 
@@ -28,6 +27,7 @@ local shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(shared:WaitForChild("Attrs"))
 local GuiNames = require(shared:WaitForChild("GuiNames"))
 local MobileScale = require(shared:WaitForChild("MobileScale"))
+local UiMotion = require(shared:WaitForChild("UiMotion"))
 
 local HotbarCarousel = {}
 
@@ -133,7 +133,7 @@ function HotbarCarousel.new(ctx)
 		end
 		if pose.CornerRadii then
 			if animate then
-				TweenService:Create(corner, SPIN_INFO, pose.CornerRadii):Play()
+				UiMotion.create(corner, SPIN_INFO, pose.CornerRadii):Play()
 			else
 				for property, value in pairs(pose.CornerRadii) do
 					corner[property] = value
@@ -141,7 +141,7 @@ function HotbarCarousel.new(ctx)
 			end
 		elseif pose.CornerRadius then
 			if animate then
-				TweenService:Create(corner, SPIN_INFO, { CornerRadius = pose.CornerRadius }):Play()
+				UiMotion.create(corner, SPIN_INFO, { CornerRadius = pose.CornerRadius }):Play()
 			else
 				corner.CornerRadius = pose.CornerRadius
 			end
@@ -308,7 +308,7 @@ function HotbarCarousel.new(ctx)
 			mixerIcon.ImageTransparency = 1 -- icon out immediately; the bare coloured disc is the morph
 		end
 		local s, p = centerSquare(footprintPx())
-		local shrink = TweenService:Create(slotCenter, SHRINK_INFO, { Size = s, Position = p })
+		local shrink = UiMotion.create(slotCenter, SHRINK_INFO, { Size = s, Position = p })
 		activeSizeTween = shrink
 		shrink.Completed:Once(function(state)
 			if state ~= Enum.PlaybackState.Completed or token ~= morphToken then
@@ -317,7 +317,7 @@ function HotbarCarousel.new(ctx)
 			-- Start the disc fade BEFORE flipping the store open, and keep it as the active tween so the
 			-- StoreOpen reaction (onStoreOpenChanged) doesn't snap the disc transparent and preempt the
 			-- fade -- the cookie launches up into the fading disc.
-			local fade = TweenService:Create(slotCenter, FADE_INFO, { BackgroundTransparency = 1 })
+			local fade = UiMotion.create(slotCenter, FADE_INFO, { BackgroundTransparency = 1 })
 			activeSizeTween = fade
 			fade.Completed:Once(function()
 				if activeSizeTween == fade then
@@ -325,7 +325,7 @@ function HotbarCarousel.new(ctx)
 				end
 			end)
 			if centerStroke then
-				TweenService:Create(centerStroke, FADE_INFO, { Transparency = 1 }):Play()
+				UiMotion.create(centerStroke, FADE_INFO, { Transparency = 1 }):Play()
 			end
 			fade:Play()
 			if onComplete then
@@ -344,7 +344,7 @@ function HotbarCarousel.new(ctx)
 		local s, p = centerSquare(footprintPx())
 		slotCenter.Size, slotCenter.Position = s, p
 		setDiscOpacity(restBG, restStroke, restIcon)
-		local grow = TweenService:Create(slotCenter, GROW_INFO, { Size = fullSize, Position = fullPos })
+		local grow = UiMotion.create(slotCenter, GROW_INFO, { Size = fullSize, Position = fullPos })
 		activeSizeTween = grow
 		grow.Completed:Once(function(state)
 			if activeSizeTween == grow then
@@ -409,7 +409,7 @@ function HotbarCarousel.new(ctx)
 				badgeStroke.Thickness = pose.Badge.Stroke
 			end
 			if animate then
-				TweenService:Create(badge, SPIN_INFO, {
+				UiMotion.create(badge, SPIN_INFO, {
 					Position = pose.Badge.Position,
 					Size = pose.Badge.Size,
 				}):Play()
@@ -419,7 +419,7 @@ function HotbarCarousel.new(ctx)
 			end
 		end
 		if animate then
-			TweenService:Create(slot, SPIN_INFO, { Position = pose.Position, Size = pose.Size }):Play()
+			UiMotion.create(slot, SPIN_INFO, { Position = pose.Position, Size = pose.Size }):Play()
 		else
 			slot.Position = pose.Position
 			slot.Size = pose.Size

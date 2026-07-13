@@ -1,17 +1,14 @@
 -- StoreUpgradeNudge: a small callout on building rows whenever that building has
 -- an unlocked, unowned building upgrade available in the Upgrades tab.
 local Attrs = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Attrs"))
-local TweenService = game:GetService("TweenService")
+local ReminderPulse = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("ReminderPulse"))
+local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 
 local StoreUpgradeNudge = {}
 
 local NUDGE_NAME = "UpgradeNudge"
-local CIRCLE_IMAGE = "rbxassetid://107794869621542"
 local DEFAULT_TEMPLATE_STROKE_COLOR = Color3.fromRGB(0, 170, 255)
 local SELL_STROKE_COLOR = Color3.fromRGB(255, 75, 75)
-local PULSE_TWEEN_INFO = TweenInfo.new(1.05, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, -1, false, 0.15)
-local PULSE_START_TRANSPARENCY = 0.45
-local PULSE_TARGET_TRANSPARENCY = 1
 
 function StoreUpgradeNudge.new(ctx)
 	local UpgradeConfig = ctx.UpgradeConfig
@@ -20,6 +17,7 @@ function StoreUpgradeNudge.new(ctx)
 	local boundNudges = setmetatable({}, { __mode = "k" })
 	local targetUpgradeByNudge = setmetatable({}, { __mode = "k" })
 	local clickActionByNudge = setmetatable({}, { __mode = "k" })
+	local rowByNudge = setmetatable({}, { __mode = "k" })
 	local pulseTweensByNudge = setmetatable({}, { __mode = "k" })
 	local pulseBaseSizeByNudge = setmetatable({}, { __mode = "k" })
 	local baseStrokeColorByRow = setmetatable({}, { __mode = "k" })
@@ -103,17 +101,9 @@ function StoreUpgradeNudge.new(ctx)
 	local function stopPulse(nudge)
 		local tween = pulseTweensByNudge[nudge]
 		if tween then
-			tween:Cancel()
+			ReminderPulse.stop(tween)
 			pulseTweensByNudge[nudge] = nil
 		end
-	end
-
-	local function configureCircle(circle, color)
-		circle.Image = CIRCLE_IMAGE
-		circle.ImageColor3 = color
-		circle.BackgroundTransparency = 1
-		circle.AnchorPoint = Vector2.new(0.5, 0.5)
-		circle.Position = UDim2.fromScale(0.5, 0.5)
 	end
 
 	local function startPulse(row, nudge)
@@ -124,21 +114,31 @@ function StoreUpgradeNudge.new(ctx)
 		end
 
 		stopPulse(nudge)
-
+		local baseSize = pulseBaseSizeByNudge[nudge] or pulseCircle.Size
+		pulseBaseSizeByNudge[nudge] = baseSize
 		local color = getTemplateStrokeColor(row, nudge)
-		configureCircle(mainCircle, color)
-		configureCircle(pulseCircle, color)
-		mainCircle.ImageTransparency = 0
-		pulseCircle.ImageTransparency = PULSE_START_TRANSPARENCY
-		pulseCircle.Size = pulseBaseSizeByNudge[nudge] or pulseCircle.Size
-		pulseBaseSizeByNudge[nudge] = pulseCircle.Size
+		if UiMotion.isReduced(nudge) then
+			ReminderPulse.setStatic(mainCircle, pulseCircle, {
+				color = color,
+			})
+			return
+		end
 
-		local tween = TweenService:Create(pulseCircle, PULSE_TWEEN_INFO, {
-			ImageTransparency = PULSE_TARGET_TRANSPARENCY,
-			Size = UDim2.fromScale(1, 1),
+		local tween = ReminderPulse.start(mainCircle, pulseCircle, {
+			baseSize = baseSize,
+			color = color,
 		})
 		pulseTweensByNudge[nudge] = tween
-		tween:Play()
+	end
+
+	if screenGui then
+		screenGui:GetAttributeChangedSignal(Attrs.ReducedMotionEnabled):Connect(function()
+			for nudge, row in pairs(rowByNudge) do
+				if nudge.Parent and nudge.Visible and row.Parent then
+					startPulse(row, nudge)
+				end
+			end
+		end)
 	end
 
 	local function getAvailableUpgradeId(buildingId)
@@ -184,6 +184,7 @@ function StoreUpgradeNudge.new(ctx)
 		local nudge = findNudge(row)
 		if nudge then
 			stopPulse(nudge)
+			rowByNudge[nudge] = nil
 			targetUpgradeByNudge[nudge] = nil
 			clickActionByNudge[nudge] = nil
 			nudge.Visible = false
@@ -234,6 +235,7 @@ function StoreUpgradeNudge.new(ctx)
 		end
 
 		bindNudge(nudge)
+		rowByNudge[nudge] = row
 		targetUpgradeByNudge[nudge] = targetUpgradeId
 		clickActionByNudge[nudge] = clickAction
 		nudge.Visible = true

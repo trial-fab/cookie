@@ -15,11 +15,11 @@
 -- The continuous spin is driven by a looping Tween, NOT a per-frame Heartbeat/RenderStepped write:
 -- some clients throttle their update loop to ~0 fps when the scene is idle, which freezes manual
 -- per-frame Position/Rotation writes; an active Tween keeps the client rendering.
-local TweenService = game:GetService("TweenService")
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local Attrs = require(Shared:WaitForChild("Attrs"))
 local GuiNames = require(Shared:WaitForChild("GuiNames"))
 local IconButton = require(Shared:WaitForChild("IconButton"))
+local UiMotion = require(Shared:WaitForChild("UiMotion"))
 
 local screenGui = script:FindFirstAncestorOfClass("ScreenGui")
 if not screenGui then
@@ -94,9 +94,14 @@ end
 -- home, the spin simply continues forward from wherever it is.
 local function startSpin()
 	cancelActive()
+	if UiMotion.isReduced(cookie) then
+		spinning = false
+		cookie.Rotation = 0
+		return
+	end
 	spinning = true
 	local current = cookie.Rotation
-	activeTween = TweenService:Create(cookie, spinLoopInfo, { Rotation = current + 360 })
+	activeTween = UiMotion.create(cookie, spinLoopInfo, { Rotation = current + 360 })
 	activeTween:Play()
 end
 
@@ -113,7 +118,7 @@ local function settleToUpright()
 	local remaining = 360 - current
 	local duration = math.clamp(remaining / 360 * SPIN_PERIOD, 0.1, SPIN_PERIOD)
 	local info = TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-	local t = TweenService:Create(cookie, info, { Rotation = 360 })
+	local t = UiMotion.create(cookie, info, { Rotation = 360 })
 	activeTween = t
 	t:Play()
 	t.Completed:Once(function(state)
@@ -157,5 +162,14 @@ end)
 -- Active drives the colour only.
 wheelFrame:GetAttributeChangedSignal(Attrs.Active):Connect(updateColor)
 hitbox:GetAttributeChangedSignal(Attrs.Active):Connect(updateColor)
+screenGui:GetAttributeChangedSignal(Attrs.ReducedMotionEnabled):Connect(function()
+	if screenGui:GetAttribute(Attrs.ReducedMotionEnabled) == true then
+		cancelActive()
+		spinning = false
+		cookie.Rotation = 0
+	else
+		refresh()
+	end
+end)
 
 updateColor()

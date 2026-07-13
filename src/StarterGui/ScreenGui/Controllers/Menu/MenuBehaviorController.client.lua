@@ -4,7 +4,7 @@
 local screenGui = script:FindFirstAncestorOfClass("ScreenGui")
 if not screenGui then return end
 
-local TweenService = game:GetService("TweenService")
+local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 local Attrs = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Attrs"))
 local GuiNames = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("GuiNames"))
 local MobileScale = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("MobileScale"))
@@ -84,7 +84,7 @@ local function ensureToggleHitbox(toggleFrame)
 	hitbox.Text = ""
 	hitbox.TextTransparency = 1
 	hitbox.AutoButtonColor = false
-	hitbox.Selectable = false
+	hitbox.Selectable = true
 	hitbox:SetAttribute(Attrs.IconOnly, true)
 	hitbox.ZIndex = toggleFrame.ZIndex + 10
 
@@ -287,7 +287,7 @@ local function playIconTween(instance, tweenInfo, goals)
 	if previous then
 		previous:Cancel()
 	end
-	local tween = TweenService:Create(instance, tweenInfo, goals)
+	local tween = UiMotion.create(instance, tweenInfo, goals)
 	iconTweens[instance] = tween
 	tween.Completed:Once(function()
 		if iconTweens[instance] == tween then
@@ -347,7 +347,7 @@ local function setMenuOpen(open)
 	if activeTween then activeTween:Cancel() end
 	setIconOpen(open)
 	pill.ClipsDescendants = true
-	activeTween = TweenService:Create(pill, open and openInfo or closeInfo, {
+	activeTween = UiMotion.create(pill, open and openInfo or closeInfo, {
 		Size = open and openSize or closedSize,
 	})
 	activeTween:Play()

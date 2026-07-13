@@ -4,12 +4,12 @@ if not screenGui then
 	return
 end
 
-local TweenService = game:GetService("TweenService")
 local shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local Attrs = require(shared:WaitForChild("Attrs"))
 local GuiNames = require(shared:WaitForChild("GuiNames"))
 local IconButton = require(shared:WaitForChild("IconButton"))
 local StoreShell = require(shared:WaitForChild("StoreShell"))
+local UiMotion = require(shared:WaitForChild("UiMotion"))
 
 local store = StoreShell.getActive(screenGui)
 if not store then
@@ -119,10 +119,10 @@ local function setStoreVisible(value)
 		end
 		store.Visible = true
 		store.Position = getClosedPos()
-		activeTween = TweenService:Create(store, tweenInfo, { Position = getOpenPos() })
+		activeTween = UiMotion.create(store, tweenInfo, { Position = getOpenPos() })
 		activeTween:Play()
 	else
-		local tween = TweenService:Create(store, tweenInfo, { Position = getClosedPos() })
+		local tween = UiMotion.create(store, tweenInfo, { Position = getClosedPos() })
 		activeTween = tween
 		-- Hide once off-screen so the parked band can't intercept input.
 		tween.Completed:Connect(function(state)

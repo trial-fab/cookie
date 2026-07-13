@@ -34,6 +34,7 @@ local shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(shared:WaitForChild("Attrs"))
 local GuiNames = require(shared:WaitForChild("GuiNames"))
 local StoreShell = require(shared:WaitForChild("StoreShell"))
+local ModalCoordinator = require(script.Parent.Parent:WaitForChild("Modals"):WaitForChild("ModalCoordinator"))
 
 local player = Players.LocalPlayer
 local store = StoreShell.getActive(screenGui)
@@ -48,6 +49,10 @@ end
 local function setStoreOpen(open)
 	open = open == true
 	if open and not mixerUnlocked() then
+		return
+	end
+	if open and ModalCoordinator.isOpen() then
+		ModalCoordinator.overrideBackground(true, false)
 		return
 	end
 	if (screenGui:GetAttribute(Attrs.StoreOpen) == true) == open then
@@ -70,6 +75,17 @@ local HOTBAR_ITEM_KEYS = {
 if screenGui:GetAttribute(Attrs.StoreOpen) == nil then
 	screenGui:SetAttribute(Attrs.StoreOpen, false)
 end
+
+-- Direct StoreOpen writes (notably BuildViewController) still override an active
+-- modal session. Normal toggles route through setStoreOpen above.
+screenGui:GetAttributeChangedSignal(Attrs.StoreOpen):Connect(function()
+	if
+		screenGui:GetAttribute(Attrs.StoreOpen) == true
+		and ModalCoordinator.isOpen()
+	then
+		ModalCoordinator.overrideBackground(true, false)
+	end
+end)
 
 -- Seed the AutoBuildMode default device-aware (on for touch-only, off on PC) so the coupling
 -- works before the Settings row is opened. SettingsController owns it once the row exists; the

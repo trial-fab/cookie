@@ -1,7 +1,7 @@
 local screenGui = script:FindFirstAncestorOfClass("ScreenGui")
 if not screenGui then return end
 
-local TweenService = game:GetService("TweenService")
+local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 local Attrs = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Attrs"))
 local MobileScale = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("MobileScale"))
 
@@ -135,7 +135,7 @@ local function playIconTween(instance, tweenInfo, goals)
 	if previous then
 		previous:Cancel()
 	end
-	local tween = TweenService:Create(instance, tweenInfo, goals)
+	local tween = UiMotion.create(instance, tweenInfo, goals)
 	iconTweens[instance] = tween
 	tween.Completed:Once(function()
 		if iconTweens[instance] == tween then

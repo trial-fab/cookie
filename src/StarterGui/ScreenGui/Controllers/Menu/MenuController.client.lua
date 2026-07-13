@@ -10,7 +10,7 @@ if screenGui:GetAttribute(Attrs.UseGeneratedMenu) ~= true then
 	return
 end
 
-local TweenService = game:GetService("TweenService")
+local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 
 -- Recursive search: finds buttons even when pre-baked inside MenuPill.
 local function waitForDescendant(name)
@@ -198,7 +198,7 @@ local function setMenuOpen(open)
 
 	if activeTween then activeTween:Cancel() end
 	local targetW = open and PILL_W_OPEN or PILL_W_CLOSED
-	activeTween = TweenService:Create(pill, open and openInfo or closeInfo, {
+	activeTween = UiMotion.create(pill, open and openInfo or closeInfo, {
 		Size = UDim2.fromOffset(targetW, PILL_H),
 	})
 	activeTween:Play()

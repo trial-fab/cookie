@@ -133,16 +133,50 @@ end
 function MobileScale.onViewportChanged(callback)
 	callback()
 
+	local connections = {}
+	local cameraConnection = nil
+	local function add(connection)
+		table.insert(connections, connection)
+		return connection
+	end
+
 	local function bindCamera(camera)
+		if cameraConnection then
+			cameraConnection:Disconnect()
+			cameraConnection = nil
+		end
 		if camera then
-			camera:GetPropertyChangedSignal("ViewportSize"):Connect(callback)
+			cameraConnection = camera:GetPropertyChangedSignal("ViewportSize"):Connect(callback)
 		end
 	end
 
 	bindCamera(Workspace.CurrentCamera)
-	Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+	add(Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
 		bindCamera(Workspace.CurrentCamera)
 		callback()
+	end))
+
+	return {
+		destroy = function()
+			if cameraConnection then
+				cameraConnection:Disconnect()
+				cameraConnection = nil
+			end
+			for _, connection in ipairs(connections) do
+				connection:Disconnect()
+			end
+			table.clear(connections)
+		end,
+		Destroy = function(self)
+			self:destroy()
+		end,
+	}
+end
+
+local function bindViewport(gui, callback)
+	local handle = MobileScale.onViewportChanged(callback)
+	gui.Destroying:Once(function()
+		handle:destroy()
 	end)
 end
 
@@ -187,6 +221,9 @@ end
 --     native (1) — so the shrink happens on the Size, not the UIScale, and TEXT keeps its authored
 --     readable size instead of scaling down with everything. This is the documented best practice
 --     (fixed-size text, container reflows). `opts.mobileScale` can bump native size if desired.
+--   Desktop with `opts.nativeTextDesktop`: the same resize-to-fit strategy keeps UIScale at 1,
+--     so scrollable modals do not make every label smaller merely because the Studio window is
+--     below the design resolution.
 function MobileScale.resolveModal(gui, designSize, opts)
 	opts = opts or {}
 	if not (gui and gui:IsA("GuiObject")) then
@@ -213,6 +250,16 @@ function MobileScale.resolveModal(gui, designSize, opts)
 		return s
 	end
 
+	if opts.nativeTextDesktop and vp.X > 0 and vp.Y > 0 then
+		local availW = vp.X - 2 * SAFE_SIDE_MARGIN
+		local availH = bottomEdge - topEdge
+		gui.Size = UDim2.fromOffset(
+			math.floor(math.min(designSize.X, availW) + 0.5),
+			math.floor(math.min(designSize.Y, availH) + 0.5)
+		)
+		return 1
+	end
+
 	-- Desktop: restore the authored offset box and design-res scale it to fit.
 	gui.Size = UDim2.fromOffset(designSize.X, designSize.Y)
 	return MobileScale.fitScale(gui, opts)
@@ -232,7 +279,7 @@ function MobileScale.apply(gui, opts)
 		scale.Parent = gui
 	end
 
-	MobileScale.onViewportChanged(function()
+	bindViewport(gui, function()
 		-- opts.mobileScale: a fixed gentle scale on touch/small viewports (like the modals use),
 		-- instead of the continuous design-res shrink which can get aggressively small.
 		if opts and opts.mobileScale and shouldUseMobile(gui) then
@@ -262,7 +309,7 @@ function MobileScale.applyResolved(gui, opts)
 		scale.Parent = gui
 	end
 
-	MobileScale.onViewportChanged(function()
+	bindViewport(gui, function()
 		scale.Scale = MobileScale.resolveModal(gui, designSize, opts)
 	end)
 
@@ -300,7 +347,7 @@ function MobileScale.applyMobileScale(gui, opts)
 		scale.Parent = gui
 	end
 
-	MobileScale.onViewportChanged(function()
+	bindViewport(gui, function()
 		scale.Scale = MobileScale.mobileFactor(gui, opts)
 	end)
 

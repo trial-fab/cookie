@@ -6,9 +6,9 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TextService = game:GetService("TextService")
-local TweenService = game:GetService("TweenService")
 
 local NumberFormat = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("NumberFormat"))
+local UiMotion = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiMotion"))
 
 local LiveCookieCount = {}
 
@@ -63,7 +63,7 @@ function LiveCookieCount.bind(container, cookiesValue, options)
 		local targetWidth = math.ceil(textWidth) + chromeWidth
 		if targetWidth ~= lastWidth then
 			lastWidth = targetWidth
-			TweenService:Create(container, WIDTH_TWEEN, {
+			UiMotion.create(container, WIDTH_TWEEN, {
 				Size = UDim2.new(0, targetWidth, container.Size.Y.Scale, container.Size.Y.Offset),
 			}):Play()
 		end
@@ -81,7 +81,7 @@ function LiveCookieCount.bind(container, cookiesValue, options)
 		end
 
 		amount.TextColor3 = baseColor
-		local tween = TweenService:Create(amount, FLASH_TWEEN, { TextColor3 = shortageColor })
+		local tween = UiMotion.create(amount, FLASH_TWEEN, { TextColor3 = shortageColor })
 		activeFlashTween = tween
 		tween:Play()
 		tween.Completed:Connect(function()

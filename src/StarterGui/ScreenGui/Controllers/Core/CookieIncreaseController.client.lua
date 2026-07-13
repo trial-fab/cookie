@@ -1,5 +1,5 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
+local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 
 local Net = require(ReplicatedStorage.Shared.Net)
 
@@ -39,12 +39,12 @@ local function renderIncrease(payload)
 
 	clone.Parent = cookiePart
 
-	local movementTween = TweenService:Create(clone, TWEEN_INFO, {
+	local movementTween = UiMotion.create(clone, TWEEN_INFO, {
 		StudsOffset = startOffset + Vector3.new(0, RISE_DISTANCE, 0),
 	})
 	local fadeTween
 	if countLabel and countLabel:IsA("TextLabel") then
-		fadeTween = TweenService:Create(countLabel, TWEEN_INFO, {
+		fadeTween = UiMotion.create(countLabel, TWEEN_INFO, {
 			TextTransparency = 1,
 		})
 	end

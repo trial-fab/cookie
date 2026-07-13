@@ -31,17 +31,44 @@ local NONE = ""
 
 -- name -> onForeignOpen callback ("you are no longer the open modal").
 local registry = {}
+local suspendedSurfaces = nil
 
 local function current()
 	return screenGui:GetAttribute(Attrs.OpenModal) or NONE
+end
+
+local function suspendBackgroundSurfaces()
+	if not suspendedSurfaces then
+		suspendedSurfaces = {
+			storeOpen = screenGui:GetAttribute(Attrs.StoreOpen) == true,
+			leaderboardOpen = screenGui:GetAttribute(Attrs.LeaderboardOpen) == true,
+		}
+	end
+	screenGui:SetAttribute(Attrs.StoreOpen, false)
+	screenGui:SetAttribute(Attrs.LeaderboardOpen, false)
+end
+
+local function restoreBackgroundSurfaces()
+	local snapshot = suspendedSurfaces
+	if not snapshot then
+		return
+	end
+	suspendedSurfaces = nil
+	screenGui:SetAttribute(Attrs.StoreOpen, snapshot.storeOpen)
+	screenGui:SetAttribute(Attrs.LeaderboardOpen, snapshot.leaderboardOpen)
 end
 
 -- One shared observer drives every registered modal. When the slot changes, every
 -- registered modal that is *not* the current owner is told to close itself. Each
 -- callback self-guards on its own open state, so this is a no-op for modals that
 -- are already closed (matches the old per-controller `and modal:GetAttribute(Open)`).
+local lastOwner = current()
 screenGui:GetAttributeChangedSignal(Attrs.OpenModal):Connect(function()
 	local owner = current()
+	if owner == NONE and lastOwner ~= NONE then
+		restoreBackgroundSurfaces()
+	end
+	lastOwner = owner
 	for name, onForeignOpen in pairs(registry) do
 		if name ~= owner then
 			onForeignOpen()
@@ -59,8 +86,10 @@ function ModalCoordinator.register(name, onForeignOpen)
 
 	return {
 		-- Claim the single slot for this modal. Sibling modals are closed via the
-		-- shared observer above.
+		-- shared observer above. Capture Store/Leaderboard only on the first open so
+		-- switching between registered modals keeps both suspended under one session.
 		open = function()
+			suspendBackgroundSurfaces()
 			screenGui:SetAttribute(Attrs.OpenModal, name)
 		end,
 		-- Release the slot, but only if this modal still owns it. Safe to call from
@@ -81,6 +110,16 @@ end
 -- True while any registered modal holds the open slot.
 function ModalCoordinator.isOpen()
 	return current() ~= NONE
+end
+
+-- Replace the active modal session with an explicitly requested background surface.
+-- The saved pre-modal state is intentionally discarded: this is a new user choice,
+-- not the normal last-modal close path that restores the snapshot.
+function ModalCoordinator.overrideBackground(storeOpen, leaderboardOpen)
+	suspendedSurfaces = nil
+	screenGui:SetAttribute(Attrs.OpenModal, NONE)
+	screenGui:SetAttribute(Attrs.StoreOpen, storeOpen == true)
+	screenGui:SetAttribute(Attrs.LeaderboardOpen, leaderboardOpen == true)
 end
 
 return ModalCoordinator

@@ -4,7 +4,7 @@
 --
 -- ctx: { screenGui, store }. Self-wires to the BuildModeActive attribute and only BINDS to the
 -- Studio-authored BuildTitle (never builds it); degrades gracefully when it's absent.
-local TweenService = game:GetService("TweenService")
+local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Attrs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Attrs"))
 
@@ -98,7 +98,7 @@ function BuildTitleReveal.new(ctx)
 			if target.image ~= nil then
 				goals.ImageTransparency = hidden and 1 or target.image
 			end
-			local tween = TweenService:Create(object, info, goals)
+			local tween = UiMotion.create(object, info, goals)
 			table.insert(tweens, tween)
 			tween:Play()
 		end
@@ -118,7 +118,7 @@ function BuildTitleReveal.new(ctx)
 				return
 			end
 			cancelTweens()
-			local sizeTween = TweenService:Create(buildTitle, BUILD_TITLE_REVEAL_INFO, {
+			local sizeTween = UiMotion.create(buildTitle, BUILD_TITLE_REVEAL_INFO, {
 				Position = basePosition,
 				Size = baseSize,
 			})
@@ -141,7 +141,7 @@ function BuildTitleReveal.new(ctx)
 			return
 		end
 
-		local sizeTween = TweenService:Create(buildTitle, BUILD_TITLE_HIDE_INFO, {
+		local sizeTween = UiMotion.create(buildTitle, BUILD_TITLE_HIDE_INFO, {
 			Position = collapsedPosition(),
 			Size = collapsedSize(),
 		})

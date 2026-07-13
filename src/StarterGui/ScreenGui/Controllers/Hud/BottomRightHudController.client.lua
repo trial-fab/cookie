@@ -3,9 +3,11 @@
 -- Logic only. The HUD frame and labels are authored in Studio at
 -- StarterGui.ScreenGui.BottomRightHud, mirroring docs/bottom-right.png.
 
+local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
+local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
+local UserInputService = game:GetService("UserInputService")
 
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(shared:WaitForChild("Attrs"))
@@ -67,14 +69,87 @@ local levelLabel = findText("LevelLabel")
 local goldenAmount = findAmount("GoldenCookieCount") or findText("GoldenAmount")
 local friendBoostAmount = findAmount("FriendBoost") or findText("FriendBoostAmount")
 local xpBar = findGui("XpBar")
-local xpTrack = xpBar and (xpBar:FindFirstChild("Track", true) or xpBar) or nil
 local xpFill = xpBar and xpBar:FindFirstChild("Fill", true) or nil
 local xpHoverHitbox = xpBar and xpBar:FindFirstChild("HoverHitbox", true) or nil
-local xpTooltip = xpBar and xpBar:FindFirstChild("Tooltip", true) or nil
+local xpText = xpBar and xpBar:FindFirstChild("Tooltip", true) or nil
 local liveCookieCount = findGui("LiveCookieCount")
 
-if xpTooltip and xpTooltip:IsA("GuiObject") then
-	xpTooltip.Visible = false
+if xpText and (xpText:IsA("TextLabel") or xpText:IsA("TextButton")) then
+	local shownTransparency = xpText.TextTransparency
+	local shownStrokeTransparency = xpText.TextStrokeTransparency
+	local fadeTween
+	local touchShown = false
+	xpText.TextTransparency = 1
+	xpText.TextStrokeTransparency = 1
+	local hoverTarget = xpHoverHitbox and xpHoverHitbox:IsA("GuiObject") and xpHoverHitbox or xpBar
+	if UserInputService.TouchEnabled then
+		hoverTarget.AnchorPoint = Vector2.new(0.5, 0.5)
+		hoverTarget.Position = UDim2.fromScale(0.5, 0.5)
+		hoverTarget.Size = UDim2.new(1, 0, 0, 36)
+	end
+	local function fadeTo(textTransparency, strokeTransparency)
+		if fadeTween then
+			fadeTween:Cancel()
+		end
+		fadeTween = UiMotion.create(xpText, TweenInfo.new(0.12), {
+			TextTransparency = textTransparency,
+			TextStrokeTransparency = strokeTransparency,
+		})
+		fadeTween:Play()
+	end
+	hoverTarget.MouseEnter:Connect(function()
+		if UserInputService.PreferredInput ~= Enum.PreferredInput.KeyboardAndMouse then
+			return
+		end
+		fadeTo(shownTransparency, shownStrokeTransparency)
+	end)
+	hoverTarget.MouseLeave:Connect(function()
+		if UserInputService.PreferredInput ~= Enum.PreferredInput.KeyboardAndMouse then
+			return
+		end
+		fadeTo(1, 1)
+	end)
+	if hoverTarget:IsA("GuiButton") then
+		hoverTarget.Activated:Connect(function(input)
+			if
+				UserInputService.PreferredInput == Enum.PreferredInput.Touch
+				or (input and input.UserInputType == Enum.UserInputType.Touch)
+			then
+				touchShown = not touchShown
+				fadeTo(touchShown and shownTransparency or 1, touchShown and shownStrokeTransparency or 1)
+			end
+		end)
+		hoverTarget.SelectionGained:Connect(function()
+			if UserInputService.PreferredInput == Enum.PreferredInput.Gamepad then
+				fadeTo(shownTransparency, shownStrokeTransparency)
+			end
+		end)
+		hoverTarget.SelectionLost:Connect(function()
+			if UserInputService.PreferredInput == Enum.PreferredInput.Gamepad then
+				fadeTo(1, 1)
+			end
+		end)
+	end
+	UserInputService.InputBegan:Connect(function(input)
+		if input.UserInputType ~= Enum.UserInputType.Touch or not touchShown then
+			return
+		end
+		local point = Vector2.new(input.Position.X, input.Position.Y)
+		if not screenGui.IgnoreGuiInset then
+			point -= GuiService:GetGuiInset()
+		end
+		local position = hoverTarget.AbsolutePosition
+		local size = hoverTarget.AbsoluteSize
+		if
+			point.X < position.X
+			or point.X > position.X + size.X
+			or point.Y < position.Y
+			or point.Y > position.Y + size.Y
+		then
+			touchShown = false
+			fadeTo(1, 1)
+		end
+	end)
 end
 
 if friendBoostAmount then
@@ -95,7 +170,7 @@ local function setXpFill(progress)
 	if fillTween then
 		fillTween:Cancel()
 	end
-	fillTween = TweenService:Create(xpFill, fillTweenInfo, {
+	fillTween = UiMotion.create(xpFill, fillTweenInfo, {
 		Size = UDim2.new(progress, 0, xpFill.Size.Y.Scale, xpFill.Size.Y.Offset),
 	})
 	fillTween:Play()
@@ -112,13 +187,8 @@ local function renderXp()
 	end
 
 	local currentXpText = NumberFormat.exact(info.currentXp) .. "/" .. NumberFormat.exact(info.neededXp) .. " XP"
-	if xpTooltip and (xpTooltip:IsA("TextLabel") or xpTooltip:IsA("TextButton")) then
-		xpTooltip.Text = currentXpText
-	elseif xpTooltip then
-		local tooltipLabel = xpTooltip:FindFirstChildWhichIsA("TextLabel", true)
-		if tooltipLabel then
-			tooltipLabel.Text = currentXpText
-		end
+	if xpText then
+		xpText.Text = currentXpText
 	end
 
 	setXpFill(info.progress)
@@ -128,26 +198,6 @@ local function renderGoldenCookies()
 	if goldenAmount then
 		goldenAmount.Text = NumberFormat.exact(player:GetAttribute(Attrs.GoldenCookies) or 0)
 	end
-end
-
-local function setTooltipVisible(visible)
-	if not (xpTooltip and xpTooltip:IsA("GuiObject")) then
-		return
-	end
-	xpTooltip.Visible = visible
-end
-
-local hoverTarget = xpHoverHitbox
-if not (hoverTarget and hoverTarget:IsA("GuiObject")) then
-	hoverTarget = xpTrack
-end
-if hoverTarget and hoverTarget:IsA("GuiObject") then
-	hoverTarget.MouseEnter:Connect(function()
-		setTooltipVisible(true)
-	end)
-	hoverTarget.MouseLeave:Connect(function()
-		setTooltipVisible(false)
-	end)
 end
 
 player:GetAttributeChangedSignal(Attrs.Xp):Connect(renderXp)

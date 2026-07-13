@@ -6,7 +6,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
+local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local NumberFormat = require(shared:WaitForChild("NumberFormat"))
@@ -79,7 +79,7 @@ local function show(payload)
 
 	overlay.Visible = true
 	card.Position = cardOpenPosition + UDim2.fromScale(0, 0.04)
-	TweenService:Create(card, TWEEN_INFO, { Position = cardOpenPosition }):Play()
+	UiMotion.create(card, TWEEN_INFO, { Position = cardOpenPosition }):Play()
 end
 
 Net.on(Net.Names.OfflineEarningsClaim, show)

@@ -4,6 +4,9 @@ local Workspace = game:GetService("Workspace")
 
 local VisualConfig = require(script.Parent.AutoclickVisualConfig)
 local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
+local Attrs = require(ReplicatedStorage.Shared.Attrs)
+
+local screenGui = script:FindFirstAncestorOfClass("ScreenGui")
 
 -- Mouse COUNT tracks the Power line; click CADENCE tracks the Speed line, so
 -- more Power = more mice and more Speed = faster clicking (matches AutoclickService).
@@ -120,6 +123,13 @@ local function rebuild(state)
 		icon.Visible = true
 		icon.AnchorPoint = Vector2.new(0.5, 0.5)
 		icon.Size = UDim2.fromOffset(VisualConfig.IconSizePixels, VisualConfig.IconSizePixels)
+		if screenGui and screenGui:GetAttribute(Attrs.ReducedMotionEnabled) == true then
+			local angle = math.rad(VisualConfig.StartAngleDegrees)
+				+ ((index - 1) / math.max(1, count)) * 2 * math.pi
+			local radius = VisualConfig.OrbitRadiusScale
+			icon.Position = UDim2.fromScale(0.5 + math.cos(angle) * radius, 0.5 + math.sin(angle) * radius)
+			icon.Rotation = math.deg(angle) + VisualConfig.RotationOffsetDegrees
+		end
 		clone.Parent = state.surfacePart
 		table.insert(state.clones, clone)
 		state.clickStates[clone] = {
@@ -352,7 +362,42 @@ local function startNextClockwiseClick(state, now)
 	end
 end
 
+local function applyStaticLayout()
+	local startAngle = math.rad(VisualConfig.StartAngleDegrees)
+	local radius = VisualConfig.OrbitRadiusScale
+	for _, state in pairs(statesBySheet) do
+		local count = #state.clones
+		state.nextClickIndex = 1
+		state.nextClickAt = 0
+		for index, surfaceGui in ipairs(state.clones) do
+			local clickState = state.clickStates[surfaceGui]
+			if clickState then
+				clickState.phase = "idle"
+				clickState.startedAt = 0
+			end
+			local icon = surfaceGui:FindFirstChild(ICON_NAME, true)
+			if icon and icon:IsA("GuiObject") then
+				local angle = startAngle + ((index - 1) / math.max(1, count)) * 2 * math.pi
+				icon.Position = UDim2.fromScale(0.5 + math.cos(angle) * radius, 0.5 + math.sin(angle) * radius)
+				icon.Rotation = math.deg(angle) + VisualConfig.RotationOffsetDegrees
+			end
+		end
+	end
+end
+
+if screenGui then
+	screenGui:GetAttributeChangedSignal(Attrs.ReducedMotionEnabled):Connect(function()
+		elapsed = 0
+		if screenGui:GetAttribute(Attrs.ReducedMotionEnabled) == true then
+			applyStaticLayout()
+		end
+	end)
+end
+
 RunService.RenderStepped:Connect(function(dt)
+	if screenGui and screenGui:GetAttribute(Attrs.ReducedMotionEnabled) == true then
+		return
+	end
 	elapsed += dt
 	local revolutionSeconds = math.max(0.01, VisualConfig.RevolutionSeconds)
 	local orbitDirection = VisualConfig.OrbitDirection < 0 and -1 or 1

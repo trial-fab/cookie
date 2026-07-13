@@ -8,7 +8,7 @@
 -- for the drag state machine and registers the global touch handlers that route to it.
 -- Exposes setup(row, upgradeId, activateRow) (called from createRow) and updateHover()
 -- (called from the RenderStepped tick).
-local TweenService = game:GetService("TweenService")
+local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 local UserInputService = game:GetService("UserInputService")
 local GuiService = game:GetService("GuiService")
 local HapticService = game:GetService("HapticService")
@@ -82,6 +82,13 @@ function StoreCookieStats.new(ctx)
 		if previewFrame and not previewFrame:IsA("GuiObject") then
 			previewFrame = nil
 		end
+		local hoverExclusions = {}
+		for _, name in ipairs({ "info", "InfoHitbox", "Description" }) do
+			local object = findDescendantIgnoreCase(row, name)
+			if object and object:IsA("GuiObject") then
+				table.insert(hoverExclusions, object)
+			end
+		end
 
 		-- Capture the authored (revealed) position/anchor before applyState first moves it, and
 		-- derive the centered (hidden) counterpart. Anchor and position scale interpolate
@@ -130,6 +137,7 @@ function StoreCookieStats.new(ctx)
 
 		local fadeToken = 0
 		local function setStatsOpacity(show, animate)
+			animate = animate == true
 			fadeToken += 1
 			local token = fadeToken
 
@@ -141,7 +149,7 @@ function StoreCookieStats.new(ctx)
 				if entry.object.Parent then
 					local target = show and entry.base or 1
 					if animate then
-						TweenService:Create(entry.object, STATS_FADE_TWEEN_INFO, { [entry.prop] = target }):Play()
+						UiMotion.create(entry.object, STATS_FADE_TWEEN_INFO, { [entry.prop] = target }):Play()
 					else
 						entry.object[entry.prop] = target
 					end
@@ -177,7 +185,7 @@ function StoreCookieStats.new(ctx)
 			local targetPosition = shifted and previewShiftedPosition or previewCenteredPosition
 			local targetAnchor = shifted and previewShiftedAnchor or previewCenteredAnchor
 			if animate then
-				activePreviewTween = TweenService:Create(previewFrame, PREVIEW_SLIDE_TWEEN_INFO, {
+				activePreviewTween = UiMotion.create(previewFrame, PREVIEW_SLIDE_TWEEN_INFO, {
 					Position = targetPosition,
 					AnchorPoint = targetAnchor,
 				})
@@ -454,6 +462,7 @@ function StoreCookieStats.new(ctx)
 
 		table.insert(statsSlideControllers, {
 			Row = row,
+			HoverExclusions = hoverExclusions,
 			SetHovered = function(hovered)
 				local areStatsHidden = statsAreHidden()
 				if hovered and not isHovering and areStatsHidden and ctx.startLockedBuildingNameReveal then
@@ -553,9 +562,19 @@ function StoreCookieStats.new(ctx)
 			return
 		end
 
-		local pointerPosition = UserInputService:GetMouseLocation() - GuiService:GetGuiInset()
+		local pointerPosition = UserInputService:GetMouseLocation()
+		if not screenGui.IgnoreGuiInset then
+			pointerPosition -= GuiService:GetGuiInset()
+		end
 		for _, controller in ipairs(statsSlideControllers) do
-			controller.SetHovered(isPointInsideGuiObject(pointerPosition, controller.Row))
+			local excluded = false
+			for _, object in ipairs(controller.HoverExclusions) do
+				if isPointInsideGuiObject(pointerPosition, object) then
+					excluded = true
+					break
+				end
+			end
+			controller.SetHovered(not excluded and isPointInsideGuiObject(pointerPosition, controller.Row))
 		end
 	end
 

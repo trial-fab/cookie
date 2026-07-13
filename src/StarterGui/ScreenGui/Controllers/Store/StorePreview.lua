@@ -12,6 +12,7 @@ function StorePreview.new(ctx)
 	local buildingPreviews = ctx.buildingPreviews
 	local formatCount = ctx.format.formatCount
 	local placeholderIcon = ctx.placeholderIcon
+	local screenGui = ctx.screenGui
 
 	-- Preview models slowly spin in place like a microwave turntable. Each built model
 	-- registers its rest pivot + bounding-box centre; the render loop rotates it about
@@ -125,6 +126,9 @@ function StorePreview.new(ctx)
 	-- clock-based (getAngle), so a skipped model resumes at the correct angle when it scrolls
 	-- back into view — no visible pop.
 	local function spinPreviews(clipFrame)
+		if screenGui and screenGui:GetAttribute(Attrs.ReducedMotionEnabled) == true then
+			return
+		end
 		local clipPos = clipFrame and clipFrame.AbsolutePosition
 		local clipSize = clipFrame and clipFrame.AbsoluteSize
 
@@ -333,19 +337,27 @@ function StorePreview.new(ctx)
 	end
 
 	-- Renders a building model into a viewport as a STATIC (non-spinning) front-facing shot,
-	-- zoomed a little tighter than the spinning building cards. Never registered in
-	-- previewSpinners, so the render loop leaves it alone. Only rebuilds when the target changes.
+	-- zoomed a little tighter than normal building cards. BuildingUpgrade rows always use it;
+	-- building cards reuse it while Reduced Motion is on. Never registered in previewSpinners,
+	-- so the render loop leaves it alone. Only rebuilds when the target or style changes.
 	-- Frame chrome (background, border, size, position) is Studio's; this sets only the lighting
 	-- and 3D contents. targetConfig.PreviewYaw (degrees) dials a building's front per-building.
-	local function renderStaticBuilding(viewport, sourceModel, targetName, targetConfig)
-		if viewport:GetAttribute(Attrs.UpgradeId) == targetName and viewport.CurrentCamera then
+	local function renderStaticBuilding(viewport, sourceModel, targetName, targetConfig, silhouette)
+		silhouette = silhouette == true
+		if viewport:GetAttribute(Attrs.UpgradeId) == targetName
+			and viewport:GetAttribute("PreviewMode") == "Static"
+			and viewport:GetAttribute("Silhouette") == silhouette
+			and viewport.CurrentCamera then
 			return
 		end
+		previewSpinners[viewport] = nil
 		for _, child in ipairs(viewport:GetChildren()) do
 			child:Destroy()
 		end
 		viewport.CurrentCamera = nil
 		viewport:SetAttribute(Attrs.UpgradeId, targetName)
+		viewport:SetAttribute("PreviewMode", "Static")
+		viewport:SetAttribute("Silhouette", silhouette)
 		viewport.Ambient = Color3.fromRGB(170, 180, 190)
 		viewport.LightColor = Color3.fromRGB(255, 245, 220)
 		viewport.LightDirection = Vector3.new(-0.4, -0.8, -0.35)
@@ -357,6 +369,9 @@ function StorePreview.new(ctx)
 		local model = sourceModel:Clone()
 		model.Name = "PreviewModel"
 		setPreviewModelState(model)
+		if silhouette then
+			applyPreviewSilhouette(model)
+		end
 		-- The "Front" marker (if any) sits at the camera's vantage point: the camera goes to its
 		-- position and looks at the building's centre, so its placement controls both the front
 		-- angle and the zoom distance. It is removed here so it never inflates the box or renders.
@@ -413,7 +428,7 @@ function StorePreview.new(ctx)
 		if icon and icon:IsA("GuiObject") then
 			icon.Visible = false
 		end
-		renderStaticBuilding(viewport, sourceModel, targetName, targetConfig)
+		renderStaticBuilding(viewport, sourceModel, targetName, targetConfig, false)
 	end
 
 	local function ensureViewport(row, config)
@@ -439,27 +454,42 @@ function StorePreview.new(ctx)
 
 		-- Rebuild when the target changes or when the silhouette state flips (first buy).
 		local wantSilhouette = ctx.isBuildingLocked(row.Name, config)
-		if viewport:GetAttribute(Attrs.UpgradeId) == row.Name and viewport:GetAttribute("Silhouette") == wantSilhouette and viewport.CurrentCamera then
+		local reducedMotion = screenGui and screenGui:GetAttribute(Attrs.ReducedMotionEnabled) == true
+		local wantedMode = reducedMotion and "Static" or "Spinning"
+		if viewport:GetAttribute(Attrs.UpgradeId) == row.Name
+			and viewport:GetAttribute("PreviewMode") == wantedMode
+			and viewport:GetAttribute("Silhouette") == wantSilhouette
+			and viewport.CurrentCamera then
+			return
+		end
+
+		local templateName = config.TemplateName or config.DisplayName
+		local sourceModel = templateName and buildingPreviews:FindFirstChild(templateName)
+		if not sourceModel then
+			-- No 3D preview model yet: show the "?" placeholder so the card still reads.
+			clearViewport(row)
+			setPreviewPlaceholder(viewport, true)
+			return
+		end
+		setPreviewPlaceholder(viewport, false)
+		viewport.BackgroundTransparency = 1
+		viewport.BorderSizePixel = 0
+		if reducedMotion then
+			-- Reuse the same fixed, front-facing composition as BuildingUpgrade rows.
+			-- Locked buildings keep their existing dark silhouette treatment.
+			renderStaticBuilding(viewport, sourceModel, row.Name, config, wantSilhouette)
 			return
 		end
 
 		clearViewport(row)
 		viewport:SetAttribute(Attrs.UpgradeId, row.Name)
+		viewport:SetAttribute("PreviewMode", "Spinning")
 		viewport:SetAttribute("Silhouette", wantSilhouette)
 		viewport.BackgroundTransparency = 1
 		viewport.BorderSizePixel = 0
 		viewport.Ambient = Color3.fromRGB(170, 180, 190)
 		viewport.LightColor = Color3.fromRGB(255, 245, 220)
 		viewport.LightDirection = Vector3.new(-0.4, -0.8, -0.35)
-
-		local templateName = config.TemplateName or config.DisplayName
-		local sourceModel = templateName and buildingPreviews:FindFirstChild(templateName)
-		if not sourceModel then
-			-- No 3D preview model yet: show the "?" placeholder so the card still reads.
-			setPreviewPlaceholder(viewport, true)
-			return
-		end
-		setPreviewPlaceholder(viewport, false)
 
 		local world = Instance.new("WorldModel")
 		world.Name = "PreviewWorld"
@@ -499,6 +529,14 @@ function StorePreview.new(ctx)
 	previewInteraction.clearViewport = clearViewport
 	previewInteraction.spinPreviews = spinPreviews
 	previewInteraction.ensureViewport = ensureViewport
+
+	if screenGui then
+		screenGui:GetAttributeChangedSignal(Attrs.ReducedMotionEnabled):Connect(function()
+			for upgradeId, row in pairs(ctx.rowsByUpgradeId) do
+				ensureViewport(row, UpgradeConfig[upgradeId])
+			end
+		end)
+	end
 
 	return previewInteraction
 end

@@ -17,7 +17,6 @@
 -- still being authored slice by slice.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 
 local ModalOutsideClose = require(script.Parent:WaitForChild("ModalOutsideClose"))
@@ -48,6 +47,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Net = require(Shared:WaitForChild("Net"))
 local Attrs = require(Shared:WaitForChild("Attrs"))
 local GuiNames = require(Shared:WaitForChild("GuiNames"))
+local UiMotion = require(Shared:WaitForChild("UiMotion"))
 local NumberFormat = require(Shared:WaitForChild("NumberFormat"))
 local MobileScale = require(Shared:WaitForChild("MobileScale"))
 local WheelConfig = require(Shared:WaitForChild("WheelConfig"))
@@ -353,6 +353,14 @@ local function startIdle()
 		end
 
 		if myGen ~= idleGen then return end -- a stop/restart slipped in while we built cells
+		if UiMotion.isReduced(strip) then
+			-- Reduced Motion keeps the reel populated as a stationary preview. It must remain
+			-- non-running so a player-triggered spin can replace these cells immediately.
+			idleRunning = false
+			idleTween = nil
+			idleSegmentStartX = strip.Position.X.Offset
+			return
+		end
 
 		local stripY = strip.Position.Y
 		-- Rebuild a fresh window at the origin (used on start if empty, and as a self-heal if a
@@ -384,7 +392,7 @@ local function startIdle()
 
 			local fromX = strip.Position.X.Offset
 			idleSegmentStartX = fromX
-			idleTween = TweenService:Create(
+			idleTween = UiMotion.create(
 				strip,
 				TweenInfo.new(pitch / IDLE_SPEED, Enum.EasingStyle.Linear),
 				{ Position = UDim2.new(0, fromX - pitch, stripY.Scale, stripY.Offset) }
@@ -462,7 +470,7 @@ local function spinReel(result, onComplete)
 	local startOffset = pitch -- begin a hair in so motion reads left-to-right
 
 	strip.Position = UDim2.new(0, startOffset, strip.Position.Y.Scale, strip.Position.Y.Offset)
-	reelTween = TweenService:Create(
+	reelTween = UiMotion.create(
 		strip,
 		TweenInfo.new(2.6, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
 		{ Position = UDim2.new(0, endOffset, strip.Position.Y.Scale, strip.Position.Y.Offset) }
@@ -839,7 +847,9 @@ end
 -- Captured once before the first resolveModal call (which rewrites modal.Size on mobile).
 local designSize = Vector2.new(modal.Size.X.Offset, modal.Size.Y.Offset)
 local function restScale()
-	return MobileScale.resolveModal(modal, designSize)
+	-- Match the other main modals on smaller desktop Studio viewports without
+	-- changing Wheel's established mobile scale.
+	return MobileScale.resolveModal(modal, designSize, { nativeTextDesktop = true })
 end
 
 -- The launcher icon's open-state look (gold WheelCookie) is owned entirely by
@@ -880,7 +890,7 @@ function setVisible(value)
 	end
 
 	if activeTween then activeTween:Cancel(); activeTween = nil end
-	local animate = screenGui:GetAttribute(Attrs.AnimationsEnabled) ~= false
+	local animate = true -- Short modal transition intentionally remains under Reduced Motion.
 	local scale = getAnimScale()
 	if value then
 		setTab("Spin")
@@ -891,7 +901,7 @@ function setVisible(value)
 		local rest = restScale()
 		if animate then
 			scale.Scale = rest * 0.92
-			activeTween = TweenService:Create(scale, scaleInfo, { Scale = rest })
+			activeTween = UiMotion.create(scale, scaleInfo, { Scale = rest })
 			activeTween:Play()
 		else
 			scale.Scale = rest
@@ -899,7 +909,7 @@ function setVisible(value)
 	else
 		stopIdle()
 		if animate then
-			activeTween = TweenService:Create(scale, scaleInfo, { Scale = restScale() * 0.92 })
+			activeTween = UiMotion.create(scale, scaleInfo, { Scale = restScale() * 0.92 })
 			activeTween.Completed:Once(function()
 				if not modal:GetAttribute(Attrs.Open) then modal.Visible = false end
 				scale.Scale = restScale()
@@ -910,6 +920,13 @@ function setVisible(value)
 		end
 	end
 end
+
+screenGui:GetAttributeChangedSignal(Attrs.ReducedMotionEnabled):Connect(function()
+	stopIdle()
+	if modal:GetAttribute(Attrs.Open) == true then
+		startIdle()
+	end
+end)
 
 modal.Visible = false
 modal:SetAttribute(Attrs.Open, false)
@@ -939,7 +956,7 @@ task.defer(function()
 		repeat task.wait(0.1); button = select(1, resolveButton()) until button or tick() > deadline
 	end
 	if button then
-		button.MouseButton1Click:Connect(function()
+		button.Activated:Connect(function()
 			setVisible(not (modal:GetAttribute(Attrs.Open) == true))
 		end)
 	else

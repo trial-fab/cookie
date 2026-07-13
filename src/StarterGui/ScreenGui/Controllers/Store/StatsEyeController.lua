@@ -25,7 +25,7 @@
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local GuiService = game:GetService("GuiService")
-local TweenService = game:GetService("TweenService")
+local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 
 -- Radius of the circle the iris looks along, as a fraction of the icon size. Bleed is masked in
 -- Studio (frames above the iris, below the eyeball), so this is a pure look-distance dial: make
@@ -167,8 +167,8 @@ function StatsEyeController.new(ctx)
 		if ctx.cookieStats then
 			ctx.cookieStats.setLockAll(on)
 		end
-		TweenService:Create(lines, LOCK_TWEEN_INFO, { ImageTransparency = on and 0 or 1 }):Play()
-		TweenService:Create(middle, LOCK_TWEEN_INFO, { ImageColor3 = on and ACTIVE_COLOR or IDLE_COLOR }):Play()
+		UiMotion.create(lines, LOCK_TWEEN_INFO, { ImageTransparency = on and 0 or 1 }):Play()
+		UiMotion.create(middle, LOCK_TWEEN_INFO, { ImageColor3 = on and ACTIVE_COLOR or IDLE_COLOR }):Play()
 	end
 
 	if toggle:IsA("GuiButton") then

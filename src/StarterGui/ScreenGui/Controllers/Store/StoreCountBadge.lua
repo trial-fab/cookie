@@ -4,7 +4,7 @@
 -- group. The row's AffordBar is pinned to cookieCost's width in every state so the fill
 -- always builds up across the cost from the left edge to the right edge; it never widens to
 -- include the count badge.
-local TweenService = game:GetService("TweenService")
+local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 
 local COUNT_BADGE_IN_INFO = TweenInfo.new(0.34, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
 local COUNT_BADGE_OUT_INFO = TweenInfo.new(0.28, Enum.EasingStyle.Quint, Enum.EasingDirection.InOut)
@@ -132,7 +132,7 @@ function StoreCountBadge.new(_ctx)
 	end
 
 	local function playTween(badge, object, tweenInfo, goal)
-		local tween = TweenService:Create(object, tweenInfo, goal)
+		local tween = UiMotion.create(object, tweenInfo, goal)
 		table.insert(badge.tweens, tween)
 		tween:Play()
 		return tween

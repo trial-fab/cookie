@@ -16,7 +16,7 @@
 -- ctx deps: getOwnedCount, getUpgradeCost, UpgradeConfig, cookiesValue, setText,
 -- rowsByUpgradeId, isSellMode, isBuildingLocked.
 
-local TweenService = game:GetService("TweenService")
+local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 
 -- The fade is applied as a SOLID pre-blended colour (= what one 0.6-transparent blue over the
 -- dark panel composites to), not stacked transparency, so overlapping filler frames read as one
@@ -252,7 +252,7 @@ function StoreAffordance.new(ctx)
 				blueAccentTweensByRow[row] = tweens
 			end
 
-			local tween = TweenService:Create(object, BLUE_ACCENT_TWEEN_INFO, goal)
+			local tween = UiMotion.create(object, BLUE_ACCENT_TWEEN_INFO, goal)
 			table.insert(tweens, tween)
 			tween:Play()
 			return
@@ -439,7 +439,7 @@ function StoreAffordance.new(ctx)
 
 		textObject.TextColor3 = NUMBER_FLASH_COLOR
 		local token = state.token
-		state.tween = TweenService:Create(textObject, NUMBER_FLASH_TWEEN, { TextColor3 = state.baseColor })
+		state.tween = UiMotion.create(textObject, NUMBER_FLASH_TWEEN, { TextColor3 = state.baseColor })
 		state.tween:Play()
 		state.tween.Completed:Connect(function(playbackState)
 			if numberFlashStateByText[textObject] ~= state or token ~= state.token then
@@ -488,7 +488,7 @@ function StoreAffordance.new(ctx)
 		end
 
 		scale.Scale = 1
-		TweenService:Create(scale, REQUIREMENT_PREVIEW_PULSE_TWEEN, { Scale = REQUIREMENT_PREVIEW_PULSE_SCALE }):Play()
+		UiMotion.create(scale, REQUIREMENT_PREVIEW_PULSE_TWEEN, { Scale = REQUIREMENT_PREVIEW_PULSE_SCALE }):Play()
 	end
 
 	-- Returns the name of the explanatory widget ("Requirement" / "cookieCost") when a buy

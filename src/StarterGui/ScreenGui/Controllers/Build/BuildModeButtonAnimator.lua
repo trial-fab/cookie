@@ -20,11 +20,11 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ContentProvider = game:GetService("ContentProvider")
-local TweenService = game:GetService("TweenService")
 
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(shared:WaitForChild("Attrs"))
 local IconButton = require(shared:WaitForChild("IconButton"))
+local UiMotion = require(shared:WaitForChild("UiMotion"))
 
 local BuildModeButtonAnimator = {}
 
@@ -322,7 +322,6 @@ function BuildModeButtonAnimator.new(container)
 	if not container or not container:IsA("GuiObject") then
 		return nil
 	end
-
 	local visual = resolveVisual(container)
 	local iconLayer = resolveIconLayer(container)
 	local hitbox = nil
@@ -466,6 +465,26 @@ function BuildModeButtonAnimator.new(container)
 		dotLayer.ImageTransparency = 1
 	end
 
+	local function snapToActive(active)
+		sequenceToken += 1
+		cancelActiveTween()
+		inTransition = false
+		if visual then
+			visual.Rotation = 0
+			visual.Size = active and activeSize or restSize
+			setImage(SHUTTER_OPEN)
+			visual.ImageTransparency = 0
+		end
+		if iconLayer then
+			if active and camBigSize then
+				iconLayer.Size = camBigSize
+			elseif not active and camRestSize then
+				iconLayer.Size = camRestSize
+			end
+		end
+		applyFlashState(active)
+	end
+
 	-- ACTIVATE: "zoom into the shutter". The closed shutter grows from its authored size to activeSize
 	-- while spinning one full turn and stepping closed -> medium -> open, then HOLDS open. The camera
 	-- enlarges behind it at the same pace so the opening lens reads as zooming in.
@@ -473,7 +492,6 @@ function BuildModeButtonAnimator.new(container)
 		if not visual then
 			return
 		end
-
 		sequenceToken += 1
 		local token = sequenceToken
 		cancelActiveTween()
@@ -490,14 +508,14 @@ function BuildModeButtonAnimator.new(container)
 		visual.ImageTransparency = 0
 
 		-- Grow the shutter to the active size while spinning one full turn open.
-		local grow = trackTween(TweenService:Create(visual, ACTIVATE_INFO, {
+		local grow = trackTween(UiMotion.create(visual, ACTIVATE_INFO, {
 			Size = activeSize,
 			Rotation = SHUTTER_SPIN,
 		}))
 
 		-- Zoom the camera up at the same pace.
 		if iconLayer and camBigSize then
-			trackTween(TweenService:Create(iconLayer, ACTIVATE_INFO, { Size = camBigSize })):Play()
+			trackTween(UiMotion.create(iconLayer, ACTIVATE_INFO, { Size = camBigSize })):Play()
 		end
 
 		-- Step the iris closed -> medium -> open as it grows, then hold open. Timed against the eased
@@ -531,7 +549,6 @@ function BuildModeButtonAnimator.new(container)
 		if not visual then
 			return
 		end
-
 		sequenceToken += 1
 		local token = sequenceToken
 		cancelActiveTween()
@@ -547,14 +564,14 @@ function BuildModeButtonAnimator.new(container)
 		visual.ImageTransparency = 0
 
 		-- Shrink the shutter from the active size back to the authored size while spinning one full turn.
-		local shrink = trackTween(TweenService:Create(visual, DEACTIVATE_INFO, {
+		local shrink = trackTween(UiMotion.create(visual, DEACTIVATE_INFO, {
 			Size = restSize,
 			Rotation = SHUTTER_SPIN,
 		}))
 
 		-- Shrink the camera back to its authored size at the same pace.
 		if iconLayer and camRestSize then
-			trackTween(TweenService:Create(iconLayer, DEACTIVATE_INFO, { Size = camRestSize })):Play()
+			trackTween(UiMotion.create(iconLayer, DEACTIVATE_INFO, { Size = camRestSize })):Play()
 		end
 
 		-- Close the iris open -> medium -> closed as it shrinks. Timed against the eased visual
@@ -606,7 +623,6 @@ function BuildModeButtonAnimator.new(container)
 		if not visual then
 			return
 		end
-
 		-- Rotation is the source of truth for the current position; capture it BEFORE cancelling (so
 		-- Cancel's reset can't move it) and restore it after.
 		local rotFrom = visual.Rotation
@@ -637,7 +653,7 @@ function BuildModeButtonAnimator.new(container)
 		local duration = HOVER_TURN_TIME * distance / 2
 
 		-- Constant-rate spin to the target angle; hang the settle off its Completed.
-		local spin = trackTween(TweenService:Create(
+		local spin = trackTween(UiMotion.create(
 			visual,
 			TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out),
 			{ Rotation = rotTo }
@@ -690,31 +706,7 @@ function BuildModeButtonAnimator.new(container)
 			end
 		elseif lastActive == nil then
 			-- First apply: snap to the resting state for the current build mode with no animation.
-			cancelActiveTween()
-			if active then
-				-- Snap straight to the held ON state: open shutter scaled up, camera zoomed.
-				if visual then
-					visual.Rotation = 0
-					visual.Size = activeSize
-					setImage(SHUTTER_OPEN)
-					visual.ImageTransparency = 0
-				end
-				if iconLayer and camBigSize then
-					iconLayer.Size = camBigSize
-				end
-			else
-				-- Snap to the idle OPEN rest (rotation 0 == hover position t=0).
-				if visual then
-					visual.Rotation = 0
-					visual.Size = restSize
-					setImage(SHUTTER_OPEN)
-					visual.ImageTransparency = 0
-				end
-				if iconLayer and camRestSize then
-					iconLayer.Size = camRestSize
-				end
-			end
-			applyFlashState(active)
+			snapToActive(active)
 		end
 		lastActive = active
 	end

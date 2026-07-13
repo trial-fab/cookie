@@ -19,7 +19,14 @@ return {
 	LeaderboardOpen = "LeaderboardOpen",
 	Hovering = "Hovering",
 	OpenModal = "OpenModal",
-	AnimationsEnabled = "AnimationsEnabled",
+	-- Accessibility/performance preference: pauses selected continuous decorative motion while
+	-- leaving ordinary UI transitions and gameplay/world animation intact.
+	ReducedMotionEnabled = "ReducedMotionEnabled",
+	MusicEnabled = "MusicEnabled",
+	SfxEnabled = "SfxEnabled",
+	-- Optional Studio-authored Sound attribute. Set to "Music" or "SoundEffect" to
+	-- route the Sound through the matching settings-controlled SoundGroup.
+	AudioCategory = "AudioCategory",
 	HideStatus = "HideStatus",
 	UiStyleWired = "UiStyleWired",
 

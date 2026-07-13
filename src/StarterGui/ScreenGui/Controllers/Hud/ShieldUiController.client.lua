@@ -2,7 +2,6 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local StarterGui = game:GetService("StarterGui")
 local TextService = game:GetService("TextService")
-local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
@@ -15,6 +14,7 @@ local shared = ReplicatedStorage:WaitForChild("Shared")
 local Net = require(shared:WaitForChild("Net"))
 local NumberFormat = require(shared:WaitForChild("NumberFormat"))
 local PvpConfig = require(shared:WaitForChild("PvpConfig"))
+local UiMotion = require(shared:WaitForChild("UiMotion"))
 
 local shieldFrame = screenGui:WaitForChild("Shield", 10)
 if not shieldFrame or not shieldFrame:IsA("GuiObject") then
@@ -203,10 +203,10 @@ local function setStatusStrokeEnabled(enabled)
 	if enabled then
 		statusStroke.Enabled = true
 		statusStroke.Transparency = 1
-		strokeTween = TweenService:Create(statusStroke, OPEN_TWEEN, { Transparency = 0 })
+		strokeTween = UiMotion.create(statusStroke, OPEN_TWEEN, { Transparency = 0 })
 		strokeTween:Play()
 	else
-		strokeTween = TweenService:Create(statusStroke, CLOSE_TWEEN, { Transparency = 1 })
+		strokeTween = UiMotion.create(statusStroke, CLOSE_TWEEN, { Transparency = 1 })
 		strokeTween.Completed:Once(function()
 			if statusStroke.Transparency >= 1 then
 				statusStroke.Enabled = false
@@ -249,7 +249,7 @@ local function setStatusMode(mode, force)
 	end
 
 	statusBox.Visible = true
-	statusTween = TweenService:Create(statusBox, tweenInfo, {
+	statusTween = UiMotion.create(statusBox, tweenInfo, {
 		Size = targetSize,
 		Position = targetPosition,
 	})

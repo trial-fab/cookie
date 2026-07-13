@@ -12,7 +12,7 @@
 -- CookieIncrease billboards).
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
+local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local NumberFormat = require(shared:WaitForChild("NumberFormat"))
@@ -50,12 +50,12 @@ local tweenInfo = TweenInfo.new(RISE_TIME, Enum.EasingStyle.Quad, Enum.EasingDir
 local function fade(toast)
 	local function fadeOne(obj)
 		if obj:IsA("TextLabel") or obj:IsA("TextButton") then
-			TweenService:Create(obj, tweenInfo, { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
+			UiMotion.create(obj, tweenInfo, { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
 		elseif obj:IsA("ImageLabel") or obj:IsA("ImageButton") then
-			TweenService:Create(obj, tweenInfo, { ImageTransparency = 1 }):Play()
+			UiMotion.create(obj, tweenInfo, { ImageTransparency = 1 }):Play()
 		end
 		if obj:IsA("GuiObject") and obj.BackgroundTransparency < 1 then
-			TweenService:Create(obj, tweenInfo, { BackgroundTransparency = 1 }):Play()
+			UiMotion.create(obj, tweenInfo, { BackgroundTransparency = 1 }):Play()
 		end
 	end
 	fadeOne(toast)
@@ -83,7 +83,7 @@ local function show(amount)
 	toast.Visible = true
 	toast.Parent = container
 
-	TweenService:Create(toast, tweenInfo, { Position = toast.Position + RISE }):Play()
+	UiMotion.create(toast, tweenInfo, { Position = toast.Position + RISE }):Play()
 	fade(toast)
 
 	task.delay(LIFETIME, function()
