@@ -148,6 +148,23 @@ MonetizationConfig.Items = {
 		Enabled = false,
 		LayoutOrder = 30,
 	},
+	{
+		-- Dormant until a real game-pass ID, price, and store presentation are approved.
+		-- Once configured, MonetizationService grants InstantWheelSpinEnabled on join/purchase.
+		Id = "InstantWheelSpinPass",
+		Kind = "GamePass",
+		Category = "Passes",
+		ProductId = nil,
+		DisplayName = "Instant Wheel Spins",
+		Description = "Skip the wheel reel animation after a result is rolled.",
+		Price = nil,
+		PriceText = "Coming Soon",
+		Icon = "",
+		Giftable = true,
+		Enabled = false,
+		StoreVisible = false,
+		LayoutOrder = 40,
+	},
 }
 
 local function sortByLayoutOrder(left, right)

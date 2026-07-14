@@ -9,6 +9,7 @@ return {
 	SellUpgrade = "SellUpgrade",
 	SellAll = "SellAll",
 	ClaimDailyReward = "ClaimDailyReward",
+	SelectGooSkin = "SelectGooSkin",
 
 	-- client -> server (fire-and-forget actions; RemoteEvent)
 	DamageBuilding = "DamageBuilding",
@@ -30,5 +31,6 @@ return {
 	OfflineEarningsClaim = "OfflineEarningsClaim",
 	SpinResult = "SpinResult",
 	SkinInventoryChanged = "SkinInventoryChanged",
+	GooSkinInventoryChanged = "GooSkinInventoryChanged",
 	StoryStateChanged = "StoryStateChanged",
 }

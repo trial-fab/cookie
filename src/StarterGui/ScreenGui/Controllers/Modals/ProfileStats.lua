@@ -6,6 +6,8 @@ local Attrs = require(Shared:WaitForChild("Attrs"))
 local NumberFormat = require(Shared:WaitForChild("NumberFormat"))
 local PlayerMetricConfig = require(Shared:WaitForChild("PlayerMetricConfig"))
 local XpConfig = require(Shared:WaitForChild("XpConfig"))
+local GooSkinConfig = require(Shared:WaitForChild("GooSkinConfig"))
+local SkinFeatureConfig = require(Shared:WaitForChild("SkinFeatureConfig"))
 
 local ProfileStats = {}
 
@@ -125,7 +127,17 @@ function ProfileStats.bind(ctx)
 		setFirstNumber({ "LoginStreak", "CurrentLoginStreak" }, abbreviate(player:GetAttribute(Attrs.LoginStreak)))
 		setFirstNumber({ "BestLoginStreak" }, abbreviate(readMetric(Attrs.BestLoginStreak)))
 		setFirstNumber({ "LongestSession" }, formatDuration(readMetric(Attrs.LongestSessionSeconds)))
-		setFirstNumber({ "SkinsOwned" }, tostring(countJsonDictionary(Attrs.OwnedSkinsJson)))
+		local gooUnlocked = math.max(0, countJsonDictionary(Attrs.OwnedGooSkinsJson) - 1)
+		local gooUnlockable = math.max(0, #GooSkinConfig.Definitions - 1)
+		local skinProgress = ("%d/%d unlocked"):format(gooUnlocked, gooUnlockable)
+		if SkinFeatureConfig.BuildingSkinsEnabled then
+			skinProgress = ("Goo %d/%d • Buildings %d"):format(
+				gooUnlocked,
+				gooUnlockable,
+				countJsonDictionary(Attrs.OwnedSkinsJson)
+			)
+		end
+		setFirstNumber({ "SkinsOwned" }, skinProgress)
 		setFirstNumber(
 			{ "AchievementsEarned", "AchievementCount" },
 			tostring(countJsonDictionary(Attrs.AchievementsJson))
@@ -148,6 +160,7 @@ function ProfileStats.bind(ctx)
 	player:GetAttributeChangedSignal(Attrs.Xp):Connect(render)
 	player:GetAttributeChangedSignal(Attrs.LoginStreak):Connect(render)
 	player:GetAttributeChangedSignal(Attrs.OwnedSkinsJson):Connect(render)
+	player:GetAttributeChangedSignal(Attrs.OwnedGooSkinsJson):Connect(render)
 	player:GetAttributeChangedSignal(Attrs.AchievementsJson):Connect(render)
 	for _, attribute in ipairs(PlayerMetricConfig.PersistentAttributes) do
 		player:GetAttributeChangedSignal(attribute):Connect(render)

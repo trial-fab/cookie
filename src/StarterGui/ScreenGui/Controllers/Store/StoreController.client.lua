@@ -64,7 +64,8 @@ local toolBar = store:FindFirstChild("ToolBar")
 local sellButtonRoot = toolBar and toolBar:FindFirstChild("SellButton", true)
 local sellButton = sellButtonRoot
 if sellButtonRoot and not sellButtonRoot:IsA("GuiButton") then
-	sellButton = sellButtonRoot:FindFirstChild("buildImage", true) or sellButtonRoot:FindFirstChildWhichIsA("GuiButton", true)
+	sellButton = sellButtonRoot:FindFirstChild("buildImage", true)
+		or sellButtonRoot:FindFirstChildWhichIsA("GuiButton", true)
 end
 local categoryButton = findDescendantByNames(store, { "BuildingButton", "CategoryButton", "MoveUpgrade" })
 local statusLabel = findDescendantByNames(store, { "Status", "Message", "Result" })
@@ -138,7 +139,7 @@ local function setTabActive(button, isActive, activeColor)
 	button:SetAttribute(Attrs.Active, isActive)
 	button.BackgroundColor3 = activeColor or TAB_BG_COLOR
 	button.BackgroundTransparency = activeColor
-		and (isActive and SECTION_TAB_ACTIVE_TRANSPARENCY or SECTION_TAB_INACTIVE_TRANSPARENCY)
+			and (isActive and SECTION_TAB_ACTIVE_TRANSPARENCY or SECTION_TAB_INACTIVE_TRANSPARENCY)
 		or (isActive and ACTIVE_TAB_BG_TRANSPARENCY or INACTIVE_TAB_BG_TRANSPARENCY)
 
 	local activeFrame = button:FindFirstChild("Active") or button:FindFirstChild("ActiveLine")
@@ -264,8 +265,7 @@ local function setupSellButtonHover()
 			hammerOverlay.ImageTransparency = isSellMode and 0 or 1
 			hammerOverlay.ImageColor3 = isSellMode and SELL_ICON_ACTIVE_COLOR or SELL_ICON_DEFAULT_COLOR
 			hammerOverlay.Rotation = isSellMode and 0 or SELL_ICON_HOVER_ROTATION
-			hammerOverlay.Position = isSellMode
-				and UDim2.fromScale(0.5, 0.5)
+			hammerOverlay.Position = isSellMode and UDim2.fromScale(0.5, 0.5)
 				or UDim2.new(0.5, SELL_ICON_DIAGONAL_X_OFFSET, 0.5, SELL_ICON_DIAGONAL_Y_OFFSET)
 			return
 		end
@@ -276,7 +276,6 @@ local function setupSellButtonHover()
 			showBuildIcon()
 		end
 	end
-
 end
 
 setupSellButtonHover()
@@ -307,14 +306,13 @@ local CATEGORY_ORDER = { "Building", "Robux", "Upgrade" }
 local upgradeNudge = nil
 local countBadge = nil
 local buildingTab = tabButtons.Building
-local buildingTabFullSize = buildingTab
-	and UDim2.new(0, 100, buildingTab.Size.Y.Scale, buildingTab.Size.Y.Offset)
+local buildingTabFullSize = buildingTab and UDim2.new(0, 100, buildingTab.Size.Y.Scale, buildingTab.Size.Y.Offset)
 	or nil
 
 -- Robux subtab reveal sizes: authored width is the expanded state; collapse to zero width.
 local robuxSubTabsExpandedSize = robuxSubTabs and robuxSubTabs:IsA("GuiObject") and robuxSubTabs.Size or nil
 local robuxSubTabsCollapsedSize = robuxSubTabsExpandedSize
-	and UDim2.new(0, 0, robuxSubTabsExpandedSize.Y.Scale, robuxSubTabsExpandedSize.Y.Offset)
+		and UDim2.new(0, 0, robuxSubTabsExpandedSize.Y.Scale, robuxSubTabsExpandedSize.Y.Offset)
 	or nil
 if robuxSubTabs and robuxSubTabsCollapsedSize then
 	robuxSubTabs.Size = robuxSubTabsCollapsedSize
@@ -325,7 +323,7 @@ local robuxSubTabsTarget = nil
 
 local upgradeSubTabsExpandedSize = upgradeSubTabs and upgradeSubTabs:IsA("GuiObject") and upgradeSubTabs.Size or nil
 local upgradeSubTabsCollapsedSize = upgradeSubTabsExpandedSize
-	and UDim2.new(0, 0, upgradeSubTabsExpandedSize.Y.Scale, upgradeSubTabsExpandedSize.Y.Offset)
+		and UDim2.new(0, 0, upgradeSubTabsExpandedSize.Y.Scale, upgradeSubTabsExpandedSize.Y.Offset)
 	or nil
 if upgradeSubTabs and upgradeSubTabsCollapsedSize then
 	upgradeSubTabs.Size = upgradeSubTabsCollapsedSize
@@ -353,7 +351,6 @@ if not storeScale then
 	storeScale.Name = "UIScale"
 	storeScale.Parent = store
 end
-
 
 -- Shared context handed to every extracted Store module. Holds instance/service refs,
 -- read-only getters for cross-module mutable state (sellMode/currentCategory live as
@@ -454,7 +451,10 @@ local function setText(row, childName, text)
 	if not label then
 		local targetName = string.lower(childName)
 		for _, descendant in ipairs(row:GetDescendants()) do
-			if string.lower(descendant.Name) == targetName and (descendant:IsA("TextLabel") or descendant:IsA("TextButton")) then
+			if
+				string.lower(descendant.Name) == targetName
+				and (descendant:IsA("TextLabel") or descendant:IsA("TextButton"))
+			then
 				label = descendant
 				break
 			end
@@ -595,8 +595,15 @@ end
 local function getSortedUpgradeIds()
 	local ids = {}
 	for upgradeId, config in pairs(UpgradeConfig) do
-		if config.StoreVisible ~= false and not PvpConfig.IsUpgradePaused(upgradeId) and getUpgradeCategory(config) == currentCategory then
-			if config.TemplateKind ~= "BuildingUpgrade" or ctx.buildingState.isBuildingUpgradeRevealed(upgradeId, config) then
+		if
+			config.StoreVisible ~= false
+			and not PvpConfig.IsUpgradePaused(upgradeId)
+			and getUpgradeCategory(config) == currentCategory
+		then
+			if
+				config.TemplateKind ~= "BuildingUpgrade"
+				or ctx.buildingState.isBuildingUpgradeRevealed(upgradeId, config)
+			then
 				-- Sell mode shows only buildings the player actually owns, so the list
 				-- reads as "your stuff to sell" rather than the full catalogue.
 				local sellableOnly = sellMode and currentCategory == "Building"
@@ -709,7 +716,14 @@ local function setActiveUpgradeSubTab(sectionId)
 end
 
 local function updateUpgradeSubTabLayout()
-	if not (upgradeSubTabs and upgradeSubTabs:IsA("GuiObject") and upgradeSubTabsExpandedSize and upgradeSubTabsCollapsedSize) then
+	if
+		not (
+			upgradeSubTabs
+			and upgradeSubTabs:IsA("GuiObject")
+			and upgradeSubTabsExpandedSize
+			and upgradeSubTabsCollapsedSize
+		)
+	then
 		return
 	end
 
@@ -742,7 +756,9 @@ end
 
 -- Reveals/hides the Robux subcategory chips with the same clip+Size tween used by the sell tab.
 local function updateRobuxSubTabLayout()
-	if not (robuxSubTabs and robuxSubTabs:IsA("GuiObject") and robuxSubTabsExpandedSize and robuxSubTabsCollapsedSize) then
+	if
+		not (robuxSubTabs and robuxSubTabs:IsA("GuiObject") and robuxSubTabsExpandedSize and robuxSubTabsCollapsedSize)
+	then
 		return
 	end
 
@@ -856,9 +872,15 @@ local function updateRow(upgradeId)
 		effectText = effectText or "LEVEL"
 
 		if not nextLevel then
-			local maxText = config.TemplateKind == "BuildingUpgrade" and ("MAX " .. formatMultiplier(cumulativeMultiplier)) or "MAXED"
+			local maxText = config.TemplateKind == "BuildingUpgrade"
+					and ("MAX " .. formatMultiplier(cumulativeMultiplier))
+				or "MAXED"
 			setText(row, "UpgradeLabel", maxText)
-			setText(row, "Cost", sellMode and config.Sellable ~= false and formatNumber(getSellRefund(upgradeId, levelsOwned)) or "MAXED")
+			setText(
+				row,
+				"Cost",
+				sellMode and config.Sellable ~= false and formatNumber(getSellRefund(upgradeId, levelsOwned)) or "MAXED"
+			)
 			previewInteraction.setRequirementUi(row, nil, nil)
 			ctx.affordance.updateRowAffordability(upgradeId)
 			return
@@ -867,7 +889,8 @@ local function updateRow(upgradeId)
 		local requiredId, requiredCount, ownedCount = ctx.affordance.getLockedRequirement(upgradeId, config, nextLevel)
 		previewInteraction.setRequirementUi(row, requiredId, requiredCount, ownedCount)
 
-		local unlocked = config.TemplateKind ~= "BuildingUpgrade" or getOwnedCount(config.TargetBuilding) >= (nextLevel.UnlockCount or 0)
+		local unlocked = config.TemplateKind ~= "BuildingUpgrade"
+			or getOwnedCount(config.TargetBuilding) >= (nextLevel.UnlockCount or 0)
 		setText(row, "UpgradeLabel", (unlocked and "NEXT " or "LOCKED ") .. effectText)
 
 		if sellMode and config.Sellable == false then
@@ -912,7 +935,11 @@ local function updateRow(upgradeId)
 	if not ctx.buildingState.isNameRevealing(upgradeId) then
 		setText(row, "UpgradeName", buildingLocked and ctx.buildingState.getAlienBuildingName(upgradeId) or displayName)
 	end
-	setText(row, "UpgradeLabel", config.TemplateKind == "Building" and "BUILDING" or config.TemplateKind == "Gear" and "GEAR" or "UPGRADE")
+	setText(
+		row,
+		"UpgradeLabel",
+		config.TemplateKind == "Building" and "BUILDING" or config.TemplateKind == "Gear" and "GEAR" or "UPGRADE"
+	)
 	-- Repeatable stat upgrades (uncapped stacking stats like Clicking Power / Health +2) read
 	-- as levels, matching the "Lv N" leveled upgrades. Binary unlock stats (MaxCount == 1) keep
 	-- a plain count. This branch only runs for non-Levels configs, so leveled Stat upgrades never
@@ -1688,5 +1715,15 @@ end
 player.ChildAdded:Connect(function(child)
 	if child.Name == "EquippedSkinData" then
 		watchEquippedSkinData(child)
+	end
+end)
+
+-- Goo skins apply their strongest owned bonus universally, so every visible producer row
+-- needs refreshed when that one attribute changes.
+player:GetAttributeChangedSignal(Attrs.GooSkinMultiplier):Connect(function()
+	for upgradeId, row in pairs(rowsByUpgradeId) do
+		if row.Visible then
+			updateRow(upgradeId)
+		end
 	end
 end)

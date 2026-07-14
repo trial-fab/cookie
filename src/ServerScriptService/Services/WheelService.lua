@@ -1,296 +1,145 @@
--- WheelService — the GC sink and skin economy (economy-rebalance-spec §7).
---
--- A spin costs 75 GC (the only golden-cookie sink). The deduct-and-roll is a
--- single atomic, non-yielding transaction so a player can never spin without
--- paying or pay without spinning. Rewards are cosmetics only: building skins
--- (multiplier-bearing) and limited cosmetic buildings. Duplicates auto-convert
--- to a 30 GC refund. One skin equips per building type; equipped skins feed the
--- ×skinMult layer of the production formula (the single sanctioned crossover,
--- invariant 2 — capped at ×1.5).
-
-local HttpService = game:GetService("HttpService")
+-- Server-authoritative wheel transaction. Goo skins are active; building skins are retained
+-- behind their own disabled service for a future combined collection.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local WheelConfig = require(ReplicatedStorage.Shared.WheelConfig)
-local GoldenCookieService = require(script.Parent.GoldenCookieService)
-local PlayerMetricsService = require(script.Parent.PlayerMetricsService)
+local BuildingSkinConfig = require(ReplicatedStorage.Shared.BuildingSkinConfig)
+local GooSkinConfig = require(ReplicatedStorage.Shared.GooSkinConfig)
+local GooSkinAssets = require(ReplicatedStorage.Shared.GooSkinAssets)
 local Net = require(ReplicatedStorage.Shared.Net)
+local SkinFeatureConfig = require(ReplicatedStorage.Shared.SkinFeatureConfig)
+local WheelConfig = require(ReplicatedStorage.Shared.WheelConfig)
+local BuildingSkinService = require(script.Parent.BuildingSkinService)
+local GoldenCookieService = require(script.Parent.GoldenCookieService)
+local GooSkinService = require(script.Parent.GooSkinService)
+local PlayerMetricsService = require(script.Parent.PlayerMetricsService)
 
 local WheelService = {}
-
-local EQUIPPED_SKIN_DATA = "EquippedSkinData"
-local OWNED_SKINS_ATTRIBUTE = "OwnedSkinsJson"
-local EQUIPPED_SKINS_ATTRIBUTE = "EquippedSkinsJson"
-
 local random = Random.new()
-
--- Server-side mirrors of each player's inventory, seeded from persistent data in
--- SetupPlayer. The JSON attributes (read back by PlayerDataService at save time)
--- are kept in lockstep with these tables.
-local ownedByPlayer = {}
-local equippedByPlayer = {}
-
-local function encodeJson(value)
-	local ok, result = pcall(function()
-		return HttpService:JSONEncode(type(value) == "table" and value or {})
-	end)
-	return ok and result or "{}"
-end
-
-local function decodeJson(value)
-	if type(value) ~= "table" then
-		return {}
-	end
-	return value
-end
-
--- ── Per-player skin-multiplier values (read by ProductionFormula) ────────────
-
-local function getEquippedSkinDataFolder(player)
-	local folder = player:FindFirstChild(EQUIPPED_SKIN_DATA)
-	if folder then
-		return folder
-	end
-
-	folder = Instance.new("Configuration")
-	folder.Name = EQUIPPED_SKIN_DATA
-	folder.Parent = player
-	return folder
-end
-
-local function setBuildingSkinMultiplier(player, buildingId, multiplier)
-	local folder = getEquippedSkinDataFolder(player)
-	local value = folder:FindFirstChild(buildingId)
-
-	if multiplier <= 1 then
-		-- ×1 contributes nothing; drop the value so the folder only holds real skins.
-		if value then
-			value:Destroy()
-		end
-		return
-	end
-
-	if not value or not value:IsA("NumberValue") then
-		if value then
-			value:Destroy()
-		end
-		value = Instance.new("NumberValue")
-		value.Name = buildingId
-		value.Parent = folder
-	end
-
-	value.Value = multiplier
-end
-
-local function rebuildEquippedSkinData(player)
-	local folder = getEquippedSkinDataFolder(player)
-	folder:ClearAllChildren()
-
-	for buildingId, skinId in pairs(equippedByPlayer[player] or {}) do
-		local multiplier = WheelConfig.GetSkinMultiplier(skinId)
-		if multiplier > 1 then
-			setBuildingSkinMultiplier(player, buildingId, multiplier)
-		end
-	end
-end
-
--- ── Attribute sync ───────────────────────────────────────────────────────────
-
-local function syncOwnedAttribute(player)
-	player:SetAttribute(OWNED_SKINS_ATTRIBUTE, encodeJson(ownedByPlayer[player] or {}))
-end
-
-local function syncEquippedAttribute(player)
-	player:SetAttribute(EQUIPPED_SKINS_ATTRIBUTE, encodeJson(equippedByPlayer[player] or {}))
-end
-
-local function fireInventoryChanged(player)
-	Net.fireClient(Net.Names.SkinInventoryChanged, player, ownedByPlayer[player] or {}, equippedByPlayer[player] or {})
-end
-
--- ── Setup / teardown ─────────────────────────────────────────────────────────
+local configurationReady = false
 
 function WheelService.SetupPlayer(player, persistent)
-	persistent = type(persistent) == "table" and persistent or {}
-
-	local owned = {}
-	for skinId, value in pairs(decodeJson(persistent.OwnedSkins)) do
-		if value and WheelConfig.GetSkinDef(skinId) then
-			owned[skinId] = true
-		end
-	end
-
-	local equipped = {}
-	for buildingId, skinId in pairs(decodeJson(persistent.EquippedSkins)) do
-		local def = WheelConfig.GetSkinDef(skinId)
-		-- Only restore equips that are still owned and still match their building.
-		if def and not def.IsLimited and def.BuildingId == buildingId and owned[skinId] then
-			equipped[buildingId] = skinId
-		end
-	end
-
-	ownedByPlayer[player] = owned
-	equippedByPlayer[player] = equipped
-
-	rebuildEquippedSkinData(player)
-	syncOwnedAttribute(player)
-	syncEquippedAttribute(player)
+	BuildingSkinService.SetupPlayer(player, persistent)
+	GooSkinService.SetupPlayer(player, persistent)
 end
 
-local function forgetPlayer(player)
-	ownedByPlayer[player] = nil
-	equippedByPlayer[player] = nil
-end
-
--- ── Equip ────────────────────────────────────────────────────────────────────
-
--- Equips (or, with skinId nil, unequips) a skin for its building. Only one skin
--- per building type — equipping replaces the current one. Validates ownership and
--- that the skin actually belongs to the building.
 function WheelService.EquipSkin(player, buildingId, skinId)
-	local equipped = equippedByPlayer[player]
-	local owned = ownedByPlayer[player]
-	if not equipped or not owned then
-		return false
-	end
-
-	if skinId == nil then
-		if buildingId == nil then
-			return false
-		end
-		if equipped[buildingId] == nil then
-			return false
-		end
-		equipped[buildingId] = nil
-		setBuildingSkinMultiplier(player, buildingId, 1)
-		syncEquippedAttribute(player)
-		fireInventoryChanged(player)
-		return true
-	end
-
-	local def = WheelConfig.GetSkinDef(skinId)
-	if not def or def.IsLimited or not def.BuildingId then
-		return false
-	end
-
-	if buildingId ~= nil and buildingId ~= def.BuildingId then
-		return false
-	end
-
-	if not owned[skinId] then
-		return false
-	end
-
-	local targetBuilding = def.BuildingId
-	equipped[targetBuilding] = skinId
-	setBuildingSkinMultiplier(player, targetBuilding, WheelConfig.GetSkinMultiplier(skinId))
-	syncEquippedAttribute(player)
-	fireInventoryChanged(player)
-	return true
+	return BuildingSkinService.EquipSkin(player, buildingId, skinId)
 end
 
--- ── Grant ────────────────────────────────────────────────────────────────────
-
--- Adds a skin to a player's owned inventory (idempotent). Returns true if newly granted,
--- false if already owned / unknown / player not set up. Used by Spin and by
--- DailyRewardService (the day-7 mythical reward) so granting stays in one place.
 function WheelService.GrantSkin(player, skinId)
-	local owned = ownedByPlayer[player]
-	if not owned or type(skinId) ~= "string" or not WheelConfig.GetSkinDef(skinId) then
-		return false
+	if GooSkinConfig.GetSkinDef(skinId) then
+		return GooSkinService.GrantSkin(player, skinId)
 	end
-	if owned[skinId] then
-		return false
+	if BuildingSkinConfig.GetSkinDef(skinId) then
+		return BuildingSkinService.GrantSkin(player, skinId)
 	end
-
-	owned[skinId] = true
-	syncOwnedAttribute(player)
-	fireInventoryChanged(player)
-	return true
+	return false
 end
-
--- ── Spin ─────────────────────────────────────────────────────────────────────
 
 local function rollReward()
 	local rarityId = WheelConfig.RollRarity(random)
-
-	if rarityId == WheelConfig.LimitedRarityId then
-		local pool = WheelConfig.LimitedBuildings
-		local buildingName = pool[random:NextInteger(1, #pool)]
-		return WheelConfig.MakeLimitedSkinId(buildingName)
+	local pool = WheelConfig.GetRollableGooSkins(rarityId)
+	if #pool == 0 then
+		return nil, ("No rollable goo skins configured for %s"):format(rarityId)
 	end
-
-	local buildings = WheelConfig.EligibleBuildings
-	local buildingId = buildings[random:NextInteger(1, #buildings)]
-	return WheelConfig.MakeSkinId(buildingId, rarityId)
+	return pool[random:NextInteger(1, #pool)]
 end
 
--- Atomic spin transaction: deduct 75 GC, roll, then award the skin or refund a
--- duplicate. Nothing in this function yields, so the deduct and the award commit
--- together. Returns a result table (also fired to the client via SpinResult).
+local function validateConfiguration()
+	local errors = GooSkinConfig.ValidateDefinitions()
+	local seenRarities = {}
+	local assetErrors, assetWarnings = GooSkinAssets.Validate()
+	for _, message in ipairs(assetErrors) do
+		table.insert(errors, message)
+	end
+	for _, message in ipairs(assetWarnings) do
+		warn("WheelService config warning: " .. message)
+	end
+	for _, rarity in ipairs(WheelConfig.Rarities) do
+		if type(rarity.Id) ~= "string" or rarity.Id == "" or seenRarities[rarity.Id] then
+			table.insert(errors, ("Wheel rarity ID must be nonempty and unique: %s"):format(tostring(rarity.Id)))
+		end
+		seenRarities[rarity.Id] = true
+		if type(rarity.Weight) ~= "number" or rarity.Weight <= 0 then
+			table.insert(errors, ("Wheel rarity %s must have a positive weight"):format(tostring(rarity.Id)))
+		end
+	end
+	for _, message in ipairs(errors) do
+		warn("WheelService config error: " .. message)
+	end
+	return #errors == 0
+end
+
 function WheelService.Spin(player)
-	local owned = ownedByPlayer[player]
-	if not owned then
+	if not SkinFeatureConfig.GooSkinsEnabled then
+		return { Success = false, Reason = "Disabled" }
+	end
+	if not configurationReady then
+		return { Success = false, Reason = "ConfigurationUnavailable" }
+	end
+	if not GooSkinService.GetOwned(player) then
 		return { Success = false, Reason = "NotReady" }
 	end
 
+	-- Prepare a valid, server-private outcome first. A bad config cannot consume GC, and
+	-- an outcome prepared for a player who cannot pay is simply discarded without leaking.
+	local ok, def, rollError = pcall(rollReward)
+	if not ok then
+		warn("WheelService roll failed: " .. tostring(def))
+		return { Success = false, Reason = "ConfigurationUnavailable" }
+	end
+	if not def then
+		warn("WheelService roll failed: " .. tostring(rollError))
+		return { Success = false, Reason = "ConfigurationUnavailable" }
+	end
 	if not GoldenCookieService.TrySpend(player, WheelConfig.SpinCost) then
 		return { Success = false, Reason = "NotEnoughGoldenCookies" }
 	end
 	PlayerMetricsService.RecordWheelSpin(player)
 
-	local skinId = rollReward()
-	local def = WheelConfig.GetSkinDef(skinId)
-
-	local result = {
-		Success = true,
-		SkinId = skinId,
-		RarityId = def and def.RarityId,
-		BuildingId = def and def.BuildingId,
-		DisplayName = def and def.DisplayName,
-		Multiplier = def and def.Multiplier,
-		IsLimited = def and def.IsLimited or false,
-		IsDuplicate = false,
-		RefundGC = 0,
-	}
-
-	if owned[skinId] then
-		result.IsDuplicate = true
-		result.RefundGC = WheelConfig.DuplicateRefundGC
+	local owned = GooSkinService.GetOwned(player)
+	local duplicate = owned[def.Id] == true
+	if duplicate then
 		GoldenCookieService.AddGoldenCookies(player, WheelConfig.DuplicateRefundGC, "refund")
 	else
-		WheelService.GrantSkin(player, skinId)
+		GooSkinService.GrantSkin(player, def.Id)
 	end
 
-	return result
+	return {
+		Success = true,
+		SkinId = def.Id,
+		SkinKind = def.Kind,
+		RarityId = def.RarityId,
+		DisplayName = def.DisplayName,
+		Multiplier = def.Multiplier,
+		IsLimited = def.IsLimited == true,
+		IsDuplicate = duplicate,
+		RefundGC = duplicate and WheelConfig.DuplicateRefundGC or 0,
+	}
 end
 
 function WheelService.Init()
-	local Names = Net.Names
-
-	-- Pre-create the server->client push channels so a client that boots first finds them
-	-- immediately instead of hanging at WaitForChild until the first spin / inventory sync.
-	Net.event(Names.SpinResult)
-	Net.event(Names.SkinInventoryChanged)
-
-	Net.on(Names.RequestSpin, function(player)
-		local result = WheelService.Spin(player)
-		Net.fireClient(Names.SpinResult, player, result)
+	configurationReady = validateConfiguration()
+	GooSkinService.Init()
+	Net.event(Net.Names.SpinResult)
+	Net.event(Net.Names.SkinInventoryChanged)
+	Net.on(Net.Names.RequestSpin, function(player)
+		Net.fireClient(Net.Names.SpinResult, player, WheelService.Spin(player))
 	end)
-
-	Net.on(Names.EquipSkin, function(player, buildingId, skinId)
+	Net.on(Net.Names.EquipSkin, function(player, buildingId, skinId)
 		if buildingId ~= nil and type(buildingId) ~= "string" then
 			return
 		end
 		if skinId ~= nil and type(skinId) ~= "string" then
 			return
 		end
-		WheelService.EquipSkin(player, buildingId, skinId)
+		BuildingSkinService.EquipSkin(player, buildingId, skinId)
 	end)
-
-	Players.PlayerRemoving:Connect(forgetPlayer)
-
+	Players.PlayerRemoving:Connect(function(player)
+		GooSkinService.ForgetPlayer(player)
+		BuildingSkinService.ForgetPlayer(player)
+	end)
 	print("WheelService initialized")
 end
 

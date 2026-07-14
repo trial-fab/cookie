@@ -11,6 +11,7 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local BoostService = require(ServerScriptService.Services.BoostService)
+local Attrs = require(ReplicatedStorage.Shared.Attrs)
 local MonetizationConfig = require(ReplicatedStorage.Shared.MonetizationConfig)
 
 local MonetizationService = {}
@@ -23,6 +24,9 @@ local receiptStore = DataStoreService:GetDataStore("ReceiptHistory_v1")
 local grantByItemId = {
 	ServerBoost = function()
 		BoostService.Activate(2, 300)
+	end,
+	InstantWheelSpinPass = function(player)
+		player:SetAttribute(Attrs.InstantWheelSpinEnabled, true)
 	end,
 	-- StarterCookiePack / CookieVault grants land when those products are enabled.
 }

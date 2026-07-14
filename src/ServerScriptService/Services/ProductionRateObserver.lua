@@ -1,5 +1,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Attrs = require(ReplicatedStorage.Shared.Attrs)
 
 local ProductionRateObserver = {}
 
@@ -74,6 +75,9 @@ function ProductionRateObserver.Init(refreshCallback)
 end
 
 function ProductionRateObserver.ObservePlayer(player)
+	player:GetAttributeChangedSignal(Attrs.GooSkinMultiplier):Connect(function()
+		refreshDeferred(player)
+	end)
 	task.spawn(function()
 		local upgradeCountData = player:WaitForChild("UpgradeCountData", 30)
 		if not upgradeCountData or not player.Parent then

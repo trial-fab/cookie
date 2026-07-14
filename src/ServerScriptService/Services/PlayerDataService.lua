@@ -45,6 +45,8 @@ local DEFAULT_PERSISTENT_DATA = {
 	GoldenCookies = 0,
 	OwnedSkins = {},
 	EquippedSkins = {},
+	OwnedGooSkins = {},
+	SelectedGooSkin = "Goo::Default",
 	LoginStreak = 0,
 	LastLoginDay = 0,
 	Achievements = {},
@@ -144,6 +146,8 @@ local function migrateFlatData(data)
 		GoldenCookies = data.GoldenCookies,
 		OwnedSkins = data.OwnedSkins,
 		EquippedSkins = data.EquippedSkins,
+		OwnedGooSkins = data.OwnedGooSkins,
+		SelectedGooSkin = data.SelectedGooSkin,
 		LoginStreak = data.LoginStreak,
 		LastLoginDay = data.LastLoginDay,
 		Achievements = data.Achievements,
@@ -447,8 +451,7 @@ function PlayerDataService.Load(player)
 	-- the Studio "Replay Chapter 1" button when they intentionally want the full sequence.
 	-- Also repair the short-lived bad state produced by the first story build:
 	-- IntroSeen=true + StoryStep="Meteor" is impossible in the intended flow.
-	local hasAccidentalMeteorState = data.Persistent.IntroSeen == true
-		and data.Persistent.StoryStep == "Meteor"
+	local hasAccidentalMeteorState = data.Persistent.IntroSeen == true and data.Persistent.StoryStep == "Meteor"
 	if (not isBrandNewAccount and not hadStoryProgress) or introWasSeen and hasAccidentalMeteorState or not ok then
 		data.Persistent.IntroSeen = true
 		data.Persistent.StoryChapter = "GooArrival"
@@ -580,8 +583,14 @@ function PlayerDataService.UpdateFromPlayerValues(player)
 
 	persistent.OwnedSkins = decodeJsonTable(player:GetAttribute(Attrs.OwnedSkinsJson)) or persistent.OwnedSkins
 	persistent.EquippedSkins = decodeJsonTable(player:GetAttribute(Attrs.EquippedSkinsJson)) or persistent.EquippedSkins
+	persistent.OwnedGooSkins = decodeJsonTable(player:GetAttribute(Attrs.OwnedGooSkinsJson)) or persistent.OwnedGooSkins
+	local selectedGooSkin = player:GetAttribute(Attrs.SelectedGooSkinId)
+	if typeof(selectedGooSkin) == "string" then
+		persistent.SelectedGooSkin = selectedGooSkin
+	end
 	persistent.Achievements = decodeJsonTable(player:GetAttribute(Attrs.AchievementsJson)) or persistent.Achievements
-	persistent.UnlockedBuildings = decodeJsonTable(player:GetAttribute(Attrs.UnlockedBuildingsJson)) or persistent.UnlockedBuildings
+	persistent.UnlockedBuildings = decodeJsonTable(player:GetAttribute(Attrs.UnlockedBuildingsJson))
+		or persistent.UnlockedBuildings
 	PlayerMetricsService.WritePersistentData(player, persistent)
 
 	return data
@@ -647,7 +656,10 @@ function PlayerDataService.Save(player, force)
 			return saveBlob
 		end)
 	end)
-	local didWrite = ok and type(savedBlob) == "table" and savedBlob.sessionId == SERVER_SESSION_ID and savedBlob.lastSaveTime == saveTime
+	local didWrite = ok
+		and type(savedBlob) == "table"
+		and savedBlob.sessionId == SERVER_SESSION_ID
+		and savedBlob.lastSaveTime == saveTime
 
 	if didWrite then
 		lastSaveAtByPlayer[player] = os.clock()

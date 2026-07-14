@@ -22,6 +22,9 @@ return {
 	-- Accessibility/performance preference: pauses selected continuous decorative motion while
 	-- leaving ordinary UI transitions and gameplay/world animation intact.
 	ReducedMotionEnabled = "ReducedMotionEnabled",
+	-- Server-granted game-pass entitlement. Unlike Reduced Motion, this is the only state
+	-- allowed to skip the wheel animation entirely.
+	InstantWheelSpinEnabled = "InstantWheelSpinEnabled",
 	MusicEnabled = "MusicEnabled",
 	SfxEnabled = "SfxEnabled",
 	-- Optional Studio-authored Sound attribute. Set to "Music" or "SoundEffect" to
@@ -95,5 +98,8 @@ return {
 	UnlockedBuildingsJson = "UnlockedBuildingsJson",
 	OwnedSkinsJson = "OwnedSkinsJson",
 	EquippedSkinsJson = "EquippedSkinsJson",
+	OwnedGooSkinsJson = "OwnedGooSkinsJson",
+	SelectedGooSkinId = "SelectedGooSkinId",
+	GooSkinMultiplier = "GooSkinMultiplier",
 	AchievementsJson = "AchievementsJson",
 }

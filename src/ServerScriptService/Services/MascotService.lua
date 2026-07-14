@@ -138,6 +138,7 @@ local function createController(model)
 	local motionToken = 0
 	local busy = 0
 	local visible = true
+	local alive = true
 
 	local originalFront = eyes.Position - body.Position
 	originalFront = Vector3.new(originalFront.X, 0, originalFront.Z)
@@ -146,6 +147,9 @@ local function createController(model)
 	local controller = {}
 
 	function controller.applyPose(rootCFrame)
+		if not alive or not model.Parent then
+			return
+		end
 		currentRootCFrame = rootCFrame
 		root.CFrame = rootCFrame
 		local bodyBase = rootCFrame * originalBodyLocalCFrame
@@ -172,8 +176,7 @@ local function createController(model)
 		if faceDirection.Magnitude > 0.001 then
 			local squashAlpha = math.max(0, (originalBodySize.Y - currentBodySize.Y) / originalBodySize.Y)
 			local stretchAlpha = math.max(0, (currentBodySize.Y - originalBodySize.Y) / originalBodySize.Y)
-			eyeAnchor += faceDirection.Unit
-				* (settings.eyeSurfacePadding + settings.eyeSquashForward * squashAlpha - settings.eyeStretchBackward * stretchAlpha)
+			eyeAnchor += faceDirection.Unit * (settings.eyeSurfacePadding + settings.eyeSquashForward * squashAlpha - settings.eyeStretchBackward * stretchAlpha)
 		end
 		local eyesBase = rootCFrame * originalEyesLocalCFrame
 		eyes.CFrame = CFrame.new(eyeAnchor) * (eyesBase - eyesBase.Position) * eyesFromAnchor
@@ -202,12 +205,29 @@ local function createController(model)
 
 	function controller.setVisible(nextVisible)
 		visible = nextVisible
+		local dizzyBirds = model:FindFirstChild("DizzyBirds")
 		for _, descendant in ipairs(model:GetDescendants()) do
 			if descendant:IsA("BasePart") then
 				if descendant:GetAttribute("MascotBaseTransparency") == nil then
 					descendant:SetAttribute("MascotBaseTransparency", descendant.Transparency)
 				end
 				descendant.Transparency = nextVisible and descendant:GetAttribute("MascotBaseTransparency") or 1
+			elseif
+				not (dizzyBirds and descendant:IsDescendantOf(dizzyBirds))
+				and (
+					descendant:IsA("ParticleEmitter")
+					or descendant:IsA("Sparkles")
+					or descendant:IsA("Light")
+					or descendant:IsA("Beam")
+					or descendant:IsA("Trail")
+					or descendant:IsA("Fire")
+					or descendant:IsA("Smoke")
+				)
+			then
+				if descendant:GetAttribute("MascotBaseEnabled") == nil then
+					descendant:SetAttribute("MascotBaseEnabled", descendant.Enabled)
+				end
+				descendant.Enabled = nextVisible and descendant:GetAttribute("MascotBaseEnabled") or false
 			end
 		end
 	end
@@ -284,19 +304,27 @@ local function createController(model)
 		local takeoff = math.min(settings.hopDuration * 0.22, 0.2)
 		local landing = math.min(settings.hopDuration * 0.18, 0.16)
 		controller.tweenShape(
-			Vector3.new(originalBodySize.X * 0.78, originalBodySize.Y * (1 + settings.stretchAmount), originalBodySize.Z * 0.78),
+			Vector3.new(
+				originalBodySize.X * 0.78,
+				originalBodySize.Y * (1 + settings.stretchAmount),
+				originalBodySize.Z * 0.78
+			),
 			originalBodySize.Y * settings.stretchAmount * 0.28,
 			takeoff
 		)
 		tweenValue("CFrameValue", facingCFrame, destination, settings.hopDuration, function(flatCFrame)
 			local moved = flatCFrame.Position - facingCFrame.Position
 			local alpha = flatDirection.Magnitude > 0.001
-				and math.clamp(Vector3.new(moved.X, 0, moved.Z).Magnitude / flatDirection.Magnitude, 0, 1)
+					and math.clamp(Vector3.new(moved.X, 0, moved.Z).Magnitude / flatDirection.Magnitude, 0, 1)
 				or 1
 			controller.applyPose(flatCFrame + Vector3.new(0, math.sin(alpha * math.pi) * settings.hopHeight, 0))
 		end)
 		controller.tweenShape(
-			Vector3.new(originalBodySize.X * (1 + settings.squashAmount), originalBodySize.Y * 0.72, originalBodySize.Z * (1 + settings.squashAmount)),
+			Vector3.new(
+				originalBodySize.X * (1 + settings.squashAmount),
+				originalBodySize.Y * 0.72,
+				originalBodySize.Z * (1 + settings.squashAmount)
+			),
 			-originalBodySize.Y * settings.squashAmount * 0.18,
 			landing
 		)
@@ -334,8 +362,20 @@ local function createController(model)
 			tween.Completed:Wait()
 		end
 		activeRainbowTween = nil
-		body.Color = defaultBodyColor
+		if alive and body.Parent then
+			body.Color = defaultBodyColor
+		end
 		busy -= 1
+	end
+
+	function controller.destroy()
+		alive = false
+		motionToken += 1
+		rainbowFlashToken += 1
+		if activeRainbowTween then
+			activeRainbowTween:Cancel()
+			activeRainbowTween = nil
+		end
 	end
 
 	function controller.startRainbowRipple()
@@ -443,11 +483,8 @@ local function createController(model)
 
 				local airAlpha = math.clamp((alpha - 0.22) / 0.7, 0, 1)
 				local heightAlpha = math.sin(airAlpha * math.pi)
-				currentBodySize = Vector3.new(
-					originalBodySize.X * xzScale,
-					originalBodySize.Y * yScale,
-					originalBodySize.Z * xzScale
-				)
+				currentBodySize =
+					Vector3.new(originalBodySize.X * xzScale, originalBodySize.Y * yScale, originalBodySize.Z * xzScale)
 				currentEyesOffsetY = eyeOffsetScale
 				controller.applyPose(baseCFrame + Vector3.new(0, heightAlpha * jumpHeight, 0))
 			end)
@@ -496,6 +533,10 @@ function MascotService.Register(model)
 end
 
 function MascotService.Unregister(model)
+	local controller = controllers[model]
+	if controller then
+		controller.destroy()
+	end
 	controllers[model] = nil
 end
 

@@ -4,7 +4,7 @@
 -- are claimed in-tab now, not auto-granted. Rewards are golden cookies per day (GC is the
 -- playtime currency — invariant 1; cookies are intentionally NOT awarded here, they would
 -- bend the production curve and need sim validation). The final day of the cycle also grants
--- a Mythical building skin — the week-streak payoff.
+-- the Mythical Celestial goo skin — the week-streak payoff.
 --
 -- This module is shared so the client renders exactly the cycle the server (DailyRewardService)
 -- awards. Values are a tunable design knob — adjust freely; the gating/streak logic is in
@@ -12,14 +12,14 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local WheelConfig = require(ReplicatedStorage.Shared.WheelConfig)
+local GooSkinConfig = require(ReplicatedStorage.Shared.GooSkinConfig)
 
 local DailyRewardConfig = {}
 
 DailyRewardConfig.CycleLength = 7
 
 -- One entry per day of the streak cycle. `Gc` = golden cookies awarded that day. The final
--- day additionally grants the Mythical building skin via `SkinId`.
+-- day additionally grants the Mythical goo skin via `SkinId`.
 DailyRewardConfig.Cycle = {
 	{ Gc = 10 },
 	{ Gc = 12 },
@@ -27,7 +27,7 @@ DailyRewardConfig.Cycle = {
 	{ Gc = 18 },
 	{ Gc = 22 },
 	{ Gc = 26 },
-	{ Gc = 30, SkinId = WheelConfig.MakeSkinId("Cookie Factory", WheelConfig.MythicalRarityId) },
+	{ Gc = 30, SkinId = GooSkinConfig.DailySkinId },
 }
 
 -- A streak number maps to a 1..CycleLength slot. After a full week the cycle repeats from day

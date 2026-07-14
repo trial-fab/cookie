@@ -2,6 +2,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local UpgradeConfig = require(script.Parent.UpgradeConfig)
 local WheelConfig = require(script.Parent.WheelConfig)
+local Attrs = require(script.Parent.Attrs)
+local SkinFeatureConfig = require(script.Parent.SkinFeatureConfig)
 
 local ProductionFormula = {}
 
@@ -66,7 +68,10 @@ end
 -- The equipped skin's multiplier is published per building as a NumberValue in
 -- the player's EquippedSkinData folder by WheelService (replicates to the client,
 -- so store previews and the server tick agree). Absent value = no skin = ×1.
-function ProductionFormula.GetSkinMultiplier(player, buildingId)
+function ProductionFormula.GetBuildingSkinMultiplier(player, buildingId)
+	if not SkinFeatureConfig.BuildingSkinsEnabled then
+		return 1
+	end
 	local multiplier = 1
 
 	local skinData = player and player:FindFirstChild("EquippedSkinData")
@@ -76,6 +81,24 @@ function ProductionFormula.GetSkinMultiplier(player, buildingId)
 	end
 
 	return math.clamp(multiplier, 0, MAX_SKIN_MULTIPLIER)
+end
+
+function ProductionFormula.GetGooSkinMultiplier(player)
+	if not SkinFeatureConfig.GooSkinsEnabled then
+		return 1
+	end
+	local multiplier = player and player:GetAttribute(Attrs.GooSkinMultiplier)
+	return math.clamp(type(multiplier) == "number" and multiplier or 1, 1, MAX_SKIN_MULTIPLIER)
+end
+
+-- Goo is universal; a future building-specific skin may override it for its building, but
+-- bonuses never stack. This preserves a stable ceiling and lets both cosmetic families live
+-- together later.
+function ProductionFormula.GetSkinMultiplier(player, buildingId)
+	return math.max(
+		ProductionFormula.GetGooSkinMultiplier(player),
+		ProductionFormula.GetBuildingSkinMultiplier(player, buildingId)
+	)
 end
 
 function ProductionFormula.GetEventMultiplier()

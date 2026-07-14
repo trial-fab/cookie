@@ -73,7 +73,7 @@ def fmt_time(seconds):
 
 
 def simulate(click_rate=CLICK_RATE, autoclick=True, seed_bank=0.0,
-             label="active (3 clicks/s)"):
+             label="active (3 clicks/s)", skin_multiplier=1.0, verbose=True):
     owned = [0] * len(BUILDINGS)
     upgrades = [0] * len(BUILDINGS)  # upgrade levels bought per building
     click_level = 0
@@ -82,9 +82,12 @@ def simulate(click_rate=CLICK_RATE, autoclick=True, seed_bank=0.0,
     bank = float(seed_bank)  # idle players need a tiny seed to place building #1
     t = 0.0
     first_buy = {}
+    first_buy_building_cps = {}
 
     def b_cps(i):
-        return BUILDINGS[i][2] * (2 ** upgrades[i])
+        # Goo's strongest-owned multiplier applies universally to buildings. It
+        # therefore affects both live production and the buildings-only offline rate.
+        return BUILDINGS[i][2] * (2 ** upgrades[i]) * skin_multiplier
 
     def building_cps():
         return sum(owned[i] * b_cps(i) for i in range(len(BUILDINGS)))
@@ -98,8 +101,9 @@ def simulate(click_rate=CLICK_RATE, autoclick=True, seed_bank=0.0,
     def income():
         return cps() + click_rate * (2 ** click_level)
 
-    print(f"\n=== {label} ===")
-    print(f"{'event':<28}{'time':>8}{'cost':>16}{'CpS after':>14}{'auto%bld':>10}")
+    if verbose:
+        print(f"\n=== {label}; goo x{skin_multiplier:.2f} ===")
+        print(f"{'event':<28}{'time':>8}{'cost':>16}{'CpS after':>14}{'auto%bld':>10}")
 
     def ratio():
         b = building_cps()
@@ -158,35 +162,63 @@ def simulate(click_rate=CLICK_RATE, autoclick=True, seed_bank=0.0,
             name = BUILDINGS[idx][0]
             if name not in first_buy:
                 first_buy[name] = t
-                print(f"{name:<28}{fmt_time(t):>8}{cost:>16,.0f}"
-                      f"{cps():>14,.1f}{ratio():>9.0f}%")
+                first_buy_building_cps[name] = building_cps()
+                if verbose:
+                    print(f"{name:<28}{fmt_time(t):>8}{cost:>16,.0f}"
+                          f"{cps():>14,.1f}{ratio():>9.0f}%")
         elif kind == "u":
             upgrades[idx] += 1
             tag = f"{BUILDINGS[idx][0]} upgrade x{2 ** upgrades[idx]}"
-            print(f"{tag:<28}{fmt_time(t):>8}{cost:>16,.0f}"
-                  f"{cps():>14,.1f}{ratio():>9.0f}%")
+            if verbose:
+                print(f"{tag:<28}{fmt_time(t):>8}{cost:>16,.0f}"
+                      f"{cps():>14,.1f}{ratio():>9.0f}%")
         elif kind == "c":
             click_level += 1
-            print(f"{'Clicking Power lv' + str(click_level):<28}"
-                  f"{fmt_time(t):>8}{cost:>16,.0f}{cps():>14,.1f}{ratio():>9.0f}%")
+            if verbose:
+                print(f"{'Clicking Power lv' + str(click_level):<28}"
+                      f"{fmt_time(t):>8}{cost:>16,.0f}{cps():>14,.1f}{ratio():>9.0f}%")
         elif kind == "ap":
             auto_power += 1
             tag = f"Autoclick Power lv{auto_power} ({auto_cps():,.0f}/s)"
-            print(f"{tag:<28}{fmt_time(t):>8}{cost:>16,.0f}"
-                  f"{cps():>14,.1f}{ratio():>9.0f}%")
+            if verbose:
+                print(f"{tag:<28}{fmt_time(t):>8}{cost:>16,.0f}"
+                      f"{cps():>14,.1f}{ratio():>9.0f}%")
         elif kind == "as":
             auto_speed += 1
             tag = f"Autoclick Speed lv{auto_speed} ({AUTO_SPEED_VAL[auto_speed]}/s)"
-            print(f"{tag:<28}{fmt_time(t):>8}{cost:>16,.0f}"
-                  f"{cps():>14,.1f}{ratio():>9.0f}%")
+            if verbose:
+                print(f"{tag:<28}{fmt_time(t):>8}{cost:>16,.0f}"
+                      f"{cps():>14,.1f}{ratio():>9.0f}%")
 
         if BUILDINGS[-1][0] in first_buy:
             break
 
     total_buildings = sum(owned)
-    print(f"\nfinal: t={fmt_time(t)}  CpS={cps():,.0f}  placed={total_buildings}  "
-          f"auto={auto_cps():,.0f}/s (P{auto_power} S{auto_speed})")
-    return first_buy
+    if verbose:
+        print(f"\nfinal: t={fmt_time(t)}  CpS={cps():,.0f}  placed={total_buildings}  "
+              f"auto={auto_cps():,.0f}/s (P{auto_power} S{auto_speed})")
+    return {
+        "first_buy": first_buy,
+        "first_buy_building_cps": first_buy_building_cps,
+        "final_time": t,
+    }
+
+
+def print_skin_multiplier_spot_check():
+    """Compare milestone timing and the base 8h offline claim across candidate caps."""
+    multipliers = [1.00, 1.50, 1.75, 2.00, 2.25, 2.50]
+    milestones = ["Cookie Factory", "Cookie Bank", "Research Facility", "Portal", "Time Machine"]
+    print("\n=== universal goo multiplier spot-check (active 3 clicks/s) ===")
+    print(f"{'goo':>6}" + "".join(f"{name[:10]:>12}" for name in milestones)
+          + f"{'8h offline @Portal':>22}")
+    for multiplier in multipliers:
+        result = simulate(skin_multiplier=multiplier, verbose=False)
+        times = result["first_buy"]
+        portal_cps = result["first_buy_building_cps"].get("Portal", 0)
+        offline_claim = portal_cps * 0.5 * 8 * 3600
+        print(f"x{multiplier:>4.2f}"
+              + "".join(f"{fmt_time(times[name]):>12}" for name in milestones)
+              + f"{offline_claim:>22,.0f}")
 
 
 if __name__ == "__main__":
@@ -194,3 +226,4 @@ if __name__ == "__main__":
     simulate(click_rate=0.5, label="casual (0.5 clicks/s)")
     simulate(click_rate=0.0, seed_bank=15,
              label="idle (0 clicks/s; buildings + autoclick only)")
+    print_skin_multiplier_spot_check()

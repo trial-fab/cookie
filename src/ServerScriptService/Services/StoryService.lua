@@ -12,11 +12,13 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(Shared:WaitForChild("Attrs"))
 local Net = require(Shared:WaitForChild("Net"))
 local StoryConfig = require(Shared:WaitForChild("StoryConfig"))
+local GooSkinAssets = require(Shared:WaitForChild("GooSkinAssets"))
 
 local StoryService = {}
 local mascotByPlayer = {}
 local transitioningByPlayer = {}
 local transitionVersionByPlayer = {}
+local skinConnectionByPlayer = {}
 
 local function beginTransition(player)
 	local version = (transitionVersionByPlayer[player] or 0) + 1
@@ -39,7 +41,14 @@ local function getStep(player)
 	return player:GetAttribute(Attrs.StoryStep) or StoryConfig.STEPS.Meteor
 end
 
-local function getStoryTemplate()
+local function getStoryTemplate(player)
+	local selectedId = player and player:GetAttribute(Attrs.SelectedGooSkinId)
+	local selected = GooSkinAssets.Resolve(selectedId)
+	if selected then
+		return selected
+	end
+
+	-- Authoring fallback while the shared skin asset library is being synced into a place.
 	local assets = ServerStorage:FindFirstChild("StoryAssets")
 	local template = assets and assets:FindFirstChild("GooAlienTemplate")
 	if template and template:IsA("Model") then
@@ -113,10 +122,11 @@ local function spawnMascot(player)
 
 	local old = sheet:FindFirstChild("GooAlien")
 	if old then
+		MascotService.Unregister(old)
 		old:Destroy()
 	end
 
-	local template = getStoryTemplate()
+	local template = getStoryTemplate(player)
 	if not template then
 		warn("StoryService: ServerStorage.StoryAssets.GooAlienTemplate is missing.")
 		return nil
@@ -132,6 +142,37 @@ local function spawnMascot(player)
 	return mascot
 end
 
+local function finishHealing(player)
+	if getStep(player) ~= StoryConfig.STEPS.Healing or transitioningByPlayer[player] then
+		return
+	end
+	local transitionVersion = beginTransition(player)
+	task.spawn(function()
+		local mascot = mascotByPlayer[player]
+		if mascot then
+			MascotService.SetDizzy(mascot, false)
+			MascotService.PlayRainbow(mascot)
+		end
+		if not transitionIsCurrent(player, transitionVersion) then
+			return
+		end
+
+		-- A cosmetic selection may replace the full model during the rainbow yield. Always
+		-- reacquire the current mascot before the hop instead of retaining a stale instance.
+		mascot = mascotByPlayer[player]
+		local sheet = SheetService.GetPlayerSheet(player)
+		local idleAnchor = getAnchor(sheet, "AlienIdleAnchor")
+		if mascot and idleAnchor then
+			MascotService.SetDizzy(mascot, false)
+			MascotService.HopToAuthoredAnchor(mascot, idleAnchor)
+		end
+		if transitionIsCurrent(player, transitionVersion) and getStep(player) == StoryConfig.STEPS.Healing then
+			setStep(player, StoryConfig.STEPS.Lore)
+		end
+		finishTransition(player, transitionVersion)
+	end)
+end
+
 function StoryService.SetupPlayer(player)
 	player:SetAttribute(Attrs.StoryChapter, StoryConfig.CHAPTER_ID)
 	if player:GetAttribute(Attrs.StoryStep) == nil then
@@ -144,6 +185,21 @@ function StoryService.SetupPlayer(player)
 		player:SetAttribute(Attrs.MixerUnlocked, false)
 	end
 	spawnMascot(player)
+	if skinConnectionByPlayer[player] then
+		skinConnectionByPlayer[player]:Disconnect()
+	end
+	skinConnectionByPlayer[player] = player:GetAttributeChangedSignal(Attrs.SelectedGooSkinId):Connect(function()
+		-- Cosmetic selection is independent from the best-owned production bonus. Replacing the
+		-- full authored model also makes healing settle toward that skin's DefaultBodyColor.
+		spawnMascot(player)
+		if
+			getStep(player) == StoryConfig.STEPS.Healing
+			and (player:GetAttribute(Attrs.StoryHealingClicks) or 0) >= StoryConfig.HEALING_CLICKS
+			and not transitioningByPlayer[player]
+		then
+			finishHealing(player)
+		end
+	end)
 	broadcastState(player)
 end
 
@@ -152,10 +208,7 @@ function StoryService.OnCookieClicked(player)
 		return
 	end
 
-	local clicks = math.min(
-		StoryConfig.HEALING_CLICKS,
-		(player:GetAttribute(Attrs.StoryHealingClicks) or 0) + 1
-	)
+	local clicks = math.min(StoryConfig.HEALING_CLICKS, (player:GetAttribute(Attrs.StoryHealingClicks) or 0) + 1)
 	player:SetAttribute(Attrs.StoryHealingClicks, clicks)
 
 	local mascot = mascotByPlayer[player]
@@ -164,25 +217,7 @@ function StoryService.OnCookieClicked(player)
 	end
 
 	if clicks >= StoryConfig.HEALING_CLICKS then
-		local transitionVersion = beginTransition(player)
-		task.spawn(function()
-			if mascot then
-				MascotService.SetDizzy(mascot, false)
-				MascotService.PlayRainbow(mascot)
-				if not transitionIsCurrent(player, transitionVersion) then
-					return
-				end
-				local sheet = SheetService.GetPlayerSheet(player)
-				local idleAnchor = getAnchor(sheet, "AlienIdleAnchor")
-				if idleAnchor then
-					MascotService.HopToAuthoredAnchor(mascot, idleAnchor)
-				end
-			end
-			if transitionIsCurrent(player, transitionVersion) and getStep(player) == StoryConfig.STEPS.Healing then
-				setStep(player, StoryConfig.STEPS.Lore)
-			end
-			finishTransition(player, transitionVersion)
-		end)
+		finishHealing(player)
 	else
 		broadcastState(player)
 	end
@@ -245,6 +280,9 @@ local function handleAction(player, action)
 		end
 		if transitionIsCurrent(player, transitionVersion) and getStep(player) == StoryConfig.STEPS.Meteor then
 			setStep(player, StoryConfig.STEPS.Healing)
+			-- If a cosmetic swap occurred during RevealFromSquash's yield, apply the new
+			-- step to the replacement model instead of leaving it in the hidden Meteor pose.
+			setMascotPresentation(player)
 		end
 		finishTransition(player, transitionVersion)
 	elseif action == "CompleteLore" and getStep(player) == StoryConfig.STEPS.Lore then
@@ -278,6 +316,10 @@ function StoryService.Init()
 			MascotService.Unregister(mascot)
 		end
 		mascotByPlayer[player] = nil
+		if skinConnectionByPlayer[player] then
+			skinConnectionByPlayer[player]:Disconnect()
+		end
+		skinConnectionByPlayer[player] = nil
 		transitioningByPlayer[player] = nil
 		transitionVersionByPlayer[player] = nil
 	end)

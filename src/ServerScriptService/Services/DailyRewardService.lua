@@ -3,7 +3,7 @@
 -- Replaces the old silent login bonus that lived in GoldenCookieService.OnPlayerSetup: the
 -- player now claims their reward in the Daily tab instead of it being auto-granted at join.
 -- Gating is once per UTC day; consecutive days grow the streak, a missed day resets it.
--- Rewards (GC per day, plus a Mythical building skin on the final cycle day) come from the
+-- Rewards (GC per day, plus the Mythical Celestial goo skin on the final cycle day) come from the
 -- shared DailyRewardConfig so client and server agree.
 --
 -- Persistence is free: the LoginStreak / LastLoginDay attributes this reads and writes are
