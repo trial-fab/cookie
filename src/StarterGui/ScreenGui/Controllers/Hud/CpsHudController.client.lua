@@ -2,6 +2,7 @@
 -- spec §9). Logic only: the CpsHud pill is authored in Studio (StarterGui.ScreenGui
 -- → CpsHud.Inner.Value). This binds to it and drives the text from the live CpS the
 -- server replicates onto the player as the `Cps` attribute (ProductionService.RefreshCps).
+-- The rate includes placed buildings and in-session autoclick income.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -36,7 +37,7 @@ end
 local function render()
 	local cps = player:GetAttribute(Attrs.Cps)
 	cps = typeof(cps) == "number" and cps or 0
-	label.Text = NumberFormat.abbreviate(cps) .. " /s"
+	label.Text = NumberFormat.rate(cps) .. " /s"
 end
 
 player:GetAttributeChangedSignal(Attrs.Cps):Connect(render)

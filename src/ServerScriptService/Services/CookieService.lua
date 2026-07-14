@@ -8,6 +8,7 @@ local Net = require(ReplicatedStorage.Shared.Net)
 local NumberFormat = require(ReplicatedStorage.Shared.NumberFormat)
 local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
 local GoldenCookieService = require(ServerScriptService.Services.GoldenCookieService)
+local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
 local StoryService = require(ServerScriptService.Services.StoryService)
 local XpService = require(ServerScriptService.Services.XpService)
 
@@ -124,13 +125,15 @@ function CookieService.RefreshCookiesPerClickDisplay(player)
 	return false
 end
 
-function CookieService.AddCookies(player, amount)
+function CookieService.AddCookies(player, amount, source)
 	local cookies = getCookiesValue(player)
 	if not cookies then
 		return false
 	end
 
-	cookies.Value = math.max(0, cookies.Value + amount)
+	local previous = cookies.Value
+	cookies.Value = math.max(0, previous + amount)
+	PlayerMetricsService.RecordCookieDelta(player, cookies.Value - previous, source)
 	return true
 end
 
@@ -147,8 +150,10 @@ function CookieService.HandleClick(player, options)
 		return false, 0
 	end
 
-	local added = CookieService.AddCookies(player, amount)
+	local cookieSource = automated and PlayerMetricsService.CookieSources.Autoclick or PlayerMetricsService.CookieSources.Manual
+	local added = CookieService.AddCookies(player, amount, cookieSource)
 	if added and not automated then
+		PlayerMetricsService.RecordManualClick(player)
 		-- §6: golden-cookie drop rolls fire only for validated manual clicks.
 		-- Autoclicks pass automated = true and never reach this branch.
 		GoldenCookieService.RollClickDrop(player)
@@ -320,8 +325,8 @@ local function handleStealClick(cookiePart, sheet, attacker, owner)
 
 	local gainedAmount = math.floor(stealAmount * 0.8)
 
-	CookieService.AddCookies(attacker, gainedAmount)
-	CookieService.AddCookies(owner, -stealAmount)
+	CookieService.AddCookies(attacker, gainedAmount, PlayerMetricsService.CookieSources.Theft)
+	CookieService.AddCookies(owner, -stealAmount, PlayerMetricsService.CookieSources.TheftLoss)
 	markStealAmount(sheet, stealAmount)
 
 	displayIncrease(cookiePart, "*stolen* " .. NumberFormat.abbreviate(stealAmount))

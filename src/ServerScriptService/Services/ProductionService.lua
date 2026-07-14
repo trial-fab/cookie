@@ -3,7 +3,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 
 local CookieService = require(ServerScriptService.Services.CookieService)
+local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
+local ProductionRateObserver = require(ServerScriptService.Services.ProductionRateObserver)
 local SheetService = require(ServerScriptService.Services.SheetService)
+local AutoclickFormula = require(ReplicatedStorage.Shared.AutoclickFormula)
 local ProductionFormula = require(ReplicatedStorage.Shared.ProductionFormula)
 local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
 local Net = require(ReplicatedStorage.Shared.Net)
@@ -144,11 +147,13 @@ function ProductionService.GetCps(player)
 	return totalCps
 end
 
--- Replicate the player's live CpS to the client (§9 HUD metric). A plain
--- attribute replicates automatically; the CpsHud controller reads it. Refreshed
--- every production tick and on demand after placement/setup.
+-- Replicate total in-session passive CpS to clients: placed-building production
+-- plus autoclick income. GetCps intentionally remains buildings-only because
+-- OfflineEarningsService excludes autoclicks from away-time rewards.
 function ProductionService.RefreshCps(player)
-	player:SetAttribute(Attrs.Cps, ProductionService.GetCps(player))
+	local liveCps = ProductionService.GetCps(player) + AutoclickFormula.GetLiveCps(player)
+	player:SetAttribute(Attrs.Cps, liveCps)
+	PlayerMetricsService.RecordCps(player, liveCps)
 end
 
 local function startPlayerLoop(player)
@@ -158,6 +163,7 @@ local function startPlayerLoop(player)
 
 	runningByPlayer[player] = true
 	carryByPlayer[player] = carryByPlayer[player] or {}
+	ProductionRateObserver.ObservePlayer(player)
 
 	task.spawn(function()
 		while runningByPlayer[player] and player.Parent do
@@ -169,7 +175,7 @@ local function startPlayerLoop(player)
 
 			local cookiesGained, payload = computeTick(player, PRODUCTION_TICK_SECONDS)
 			if cookiesGained ~= 0 then
-				CookieService.AddCookies(player, cookiesGained)
+				CookieService.AddCookies(player, cookiesGained, PlayerMetricsService.CookieSources.Building)
 			end
 
 			if #payload > 0 then
@@ -190,6 +196,7 @@ function ProductionService.Init()
 	-- Pre-create the server->client push channel so a client that boots first finds it
 	-- immediately instead of hanging at WaitForChild until the first production tick.
 	Net.event(Net.Names.ProductionEarnings)
+	ProductionRateObserver.Init(ProductionService.RefreshCps)
 
 	Players.PlayerAdded:Connect(startPlayerLoop)
 	Players.PlayerRemoving:Connect(stopPlayerLoop)

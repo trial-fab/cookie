@@ -19,6 +19,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 
 local Net = require(ReplicatedStorage.Shared.Net)
+local PlayerMetricsService = require(script.Parent.PlayerMetricsService)
 
 local GoldenCookieService = {}
 
@@ -75,16 +76,18 @@ function GoldenCookieService.SetGoldenCookies(player, amount)
 	player:SetAttribute(GC_ATTRIBUTE, math.max(0, math.floor(amount)))
 end
 
--- Adds GC to a player's balance and notifies the client (for toasts/UI). `source`
--- is informational only ("click" / "spawn" / "login" / "refund").
+-- Adds GC to a player's balance, records non-refund lifetime earnings, and
+-- notifies the client (for toasts/UI).
 function GoldenCookieService.AddGoldenCookies(player, amount, source)
 	amount = math.floor(tonumber(amount) or 0)
 	if amount == 0 then
 		return GoldenCookieService.GetGoldenCookies(player)
 	end
 
-	local newTotal = math.max(0, GoldenCookieService.GetGoldenCookies(player) + amount)
+	local previousTotal = GoldenCookieService.GetGoldenCookies(player)
+	local newTotal = math.max(0, previousTotal + amount)
 	player:SetAttribute(GC_ATTRIBUTE, newTotal)
+	PlayerMetricsService.RecordGoldenCookiesEarned(player, newTotal - previousTotal, source)
 
 	if amount > 0 then
 		Net.fireClient(Net.Names.GoldenCookieEarned, player, amount, source or "unknown", newTotal)
@@ -107,6 +110,7 @@ function GoldenCookieService.TrySpend(player, amount)
 	end
 
 	player:SetAttribute(GC_ATTRIBUTE, balance - amount)
+	PlayerMetricsService.RecordGoldenCookiesSpent(player, amount)
 	return true
 end
 

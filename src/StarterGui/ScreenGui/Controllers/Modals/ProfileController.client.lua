@@ -8,10 +8,11 @@
 local Players = game:GetService("Players")
 local GuiService = game:GetService("GuiService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 local UserInputService = game:GetService("UserInputService")
 local ModalOutsideClose = require(script.Parent:WaitForChild("ModalOutsideClose"))
 local ModalCoordinator = require(script.Parent:WaitForChild("ModalCoordinator"))
+local ModalPageTransition = require(script.Parent:WaitForChild("ModalPageTransition"))
+local ProfileStats = require(script.Parent:WaitForChild("ProfileStats"))
 
 local MY = "Profile"
 local ACTIVE_COLOR = Color3.fromRGB(0, 170, 255)
@@ -39,9 +40,24 @@ local Attrs = require(Shared:WaitForChild("Attrs"))
 local GuiNames = require(Shared:WaitForChild("GuiNames"))
 local UpgradeConfig = require(Shared:WaitForChild("UpgradeConfig"))
 local MobileScale = require(Shared:WaitForChild("MobileScale"))
+local ProductionFormula = require(Shared:WaitForChild("ProductionFormula"))
 
-local scaleInfo = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local body = modal:WaitForChild("Body")
+local function waitForDescendant(parent, name, timeout)
+	local found = parent:FindFirstChild(name, true)
+	local deadline = tick() + (timeout or 10)
+	while not found and tick() < deadline do
+		task.wait(0.05)
+		found = parent:FindFirstChild(name, true)
+	end
+	return found
+end
+
+-- Body may be nested inside the Studio-authored Frame used as the single swipe target.
+local body = waitForDescendant(modal, "Body", 10)
+if not body then
+	warn("ProfileController disabled: ProfileModal descendant Body not found")
+	return
+end
 
 local function abbreviate(n)
 	n = typeof(n) == "number" and n or 0
@@ -50,8 +66,12 @@ end
 
 local function setNumber(frameName, text)
 	local f = body:FindFirstChild(frameName, true)
-	local lbl = f and (f:FindFirstChild("Number") or f:FindFirstChild("Value"))
-	if lbl and lbl:IsA("TextLabel") then lbl.Text = text end
+	local lbl = f and (f:FindFirstChild("Number", true) or f:FindFirstChild("Value", true))
+	if lbl and (lbl:IsA("TextLabel") or lbl:IsA("TextButton")) then
+		lbl.Text = text
+		return true
+	end
+	return false
 end
 
 -- ── Live data ──
@@ -75,6 +95,14 @@ local function countBuildings()
 	return total
 end
 
+local profileStats = ProfileStats.bind({
+	player = player,
+	body = body,
+	isVisible = function()
+		return modal.Visible
+	end,
+})
+
 -- Avatar thumbnail (set once).
 do
 	local avatar = body:FindFirstChild("Avatar", true)
@@ -90,19 +118,24 @@ end
 local function refresh()
 	if not modal.Visible then return end
 	local cookies = leaderstats and leaderstats:FindFirstChild("Cookies")
+	-- Cps is the total live passive rate replicated by ProductionService:
+	-- buildings + autoclicks, including active world/server boosts.
 	local cps = tonumber(player:GetAttribute(Attrs.Cps)) or 0
 	local perClick = player:FindFirstChild("CookiesGainedPerClick")
+	local livePerClick = (perClick and perClick.Value or 0) * ProductionFormula.GetEventMultiplier()
 	local buildings = countBuildings()
 	local playTime = leaderstats and leaderstats:FindFirstChild("Play Time")
 
 	setNumber("Cookies", abbreviate(cookies and cookies.Value or 0))
-	setNumber("Cps", abbreviate(cps))
-	setNumber("PerClick", abbreviate(perClick and perClick.Value or 0))
+	setNumber("Cps", NumberFormat.rate(cps))
+	setNumber("PerClick", abbreviate(livePerClick))
 	setNumber("Golden", abbreviate(player:GetAttribute(Attrs.GoldenCookies)))
 
 	setNumber("Buildings", tostring(buildings))
-	setNumber("Cpm", abbreviate(cps * 60))
+	setNumber("Cpm", NumberFormat.rate(cps * 60))
 	setNumber("PlayTime", playTime and tostring(playTime.Value) or "00:00")
+
+	profileStats.refresh()
 
 	local pill = body:FindFirstChild("BuildingsPill", true)
 	local pillVal = pill and pill:FindFirstChild("Value")
@@ -148,16 +181,17 @@ local function setIconActive(active)
 end
 
 -- ── Open / close (+ single-open coordination) ──
-local function getAnimScale()
+local function getResponsiveScale()
 	local s = modal:FindFirstChild("AnimScale")
 	if not s or not s:IsA("UIScale") then
-		s = Instance.new("UIScale"); s.Name = "AnimScale"; s.Scale = 1; s.Parent = modal
+		s = modal:FindFirstChildOfClass("UIScale")
+		if not s then
+			s = Instance.new("UIScale"); s.Name = "AnimScale"; s.Scale = 1; s.Parent = modal
+		end
 	end
 	return s
 end
--- Resting scale: the shared continuous responsive factor (1 at 1080p, smaller on phones).
--- The open/close pop is expressed RELATIVE to this so both compose on the single AnimScale
--- UIScale (Roblox honours only one UIScale per object).
+-- Resting scale is responsive layout only; opening and closing never animate it.
 -- Captured once before the first resolveModal call (which rewrites modal.Size on mobile).
 local designSize = Vector2.new(modal.Size.X.Offset, modal.Size.Y.Offset)
 local function restScale()
@@ -190,6 +224,7 @@ local previousSelection
 local gamepadFocusOwned = false
 
 function setVisible(value)
+	local previousOwner = ModalCoordinator.current()
 	modal:SetAttribute(Attrs.Open, value)
 	local _, container = resolveButton()
 	if container then container:SetAttribute(Attrs.Active, value) end
@@ -202,8 +237,10 @@ function setVisible(value)
 	end
 
 	if activeTween then activeTween:Cancel(); activeTween = nil end
-	local animate = true -- Short modal transition intentionally remains under Reduced Motion.
-	local scale = getAnimScale()
+	local scale = getResponsiveScale()
+	local rest = restScale()
+	local restPosition = modal.Position
+	scale.Scale = rest
 	if value then
 		modal.Visible = true
 		refresh()
@@ -216,13 +253,10 @@ function setVisible(value)
 				end
 			end)
 		end
-		local rest = restScale()
-		if animate then
-			scale.Scale = rest * 0.92
-			activeTween = UiMotion.create(scale, scaleInfo, { Scale = rest })
-			activeTween:Play()
-		else
-			scale.Scale = rest
+		local switched
+		activeTween, switched = ModalPageTransition.open(screenGui, modal, previousOwner, MY, restPosition)
+		if not switched then
+			activeTween = ModalPageTransition.openSession(scale, rest)
 		end
 	else
 		if gamepadFocusOwned then
@@ -238,15 +272,22 @@ function setVisible(value)
 				end
 			end)
 		end
-		if animate then
-			activeTween = UiMotion.create(scale, scaleInfo, { Scale = restScale() * 0.92 })
-			activeTween.Completed:Once(function()
-				if not modal:GetAttribute(Attrs.Open) then modal.Visible = false end
-				scale.Scale = restScale()
-			end)
-			activeTween:Play()
-		else
-			modal.Visible = false
+		local function finishClose()
+			if not modal:GetAttribute(Attrs.Open) then
+				modal.Visible = false
+			end
+		end
+		local switched
+		activeTween, switched = ModalPageTransition.close(
+			screenGui,
+			modal,
+			MY,
+			ModalCoordinator.current(),
+			restPosition,
+			finishClose
+		)
+		if not switched then
+			activeTween = ModalPageTransition.closeSession(scale, rest, finishClose)
 		end
 	end
 end
@@ -254,14 +295,10 @@ end
 modal.Visible = false
 modal:SetAttribute(Attrs.Open, false)
 
--- Keep the resting scale right across viewport/orientation changes. Skip while a pop tween
--- is mid-flight (it lands on restScale() itself) so we don't snap over the animation.
+-- Keep responsive layout stable without snapping a page during a swipe.
 MobileScale.onViewportChanged(function()
-	local rest = restScale() -- also re-lays out size + position for the current viewport
-	-- Skip only while a pop is actually animating; a finished tween lingers non-nil and must not
-	-- block live re-scaling when the window is resized.
 	if activeTween and activeTween.PlaybackState == Enum.PlaybackState.Playing then return end
-	getAnimScale().Scale = rest
+	getResponsiveScale().Scale = restScale()
 end)
 
 task.defer(function()

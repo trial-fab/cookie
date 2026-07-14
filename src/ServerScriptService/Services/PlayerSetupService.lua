@@ -11,6 +11,7 @@ local UpgradeService = require(ServerScriptService.Services.UpgradeService)
 local WheelService = require(ServerScriptService.Services.WheelService)
 local ProductionService = require(ServerScriptService.Services.ProductionService)
 local OfflineEarningsService = require(ServerScriptService.Services.OfflineEarningsService)
+local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
 local StoryService = require(ServerScriptService.Services.StoryService)
 local Net = require(ReplicatedStorage.Shared.Net)
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
@@ -85,12 +86,15 @@ end
 local function startPlaytimeClock(player)
 	local realPlayTime = player:WaitForChild("RealPlayTime")
 	local playTime = player:WaitForChild("leaderstats"):WaitForChild("Play Time")
+	local sessionSeconds = 0
 
 	task.spawn(function()
 		while player.Parent do
 			task.wait(1)
 
 			realPlayTime.Value += 1
+			sessionSeconds += 1
+			PlayerMetricsService.RecordSessionDuration(player, sessionSeconds)
 
 			local totalSeconds = realPlayTime.Value
 			local seconds = totalSeconds % 60
@@ -123,8 +127,10 @@ local function setupPlayer(player)
 	print("Setting up player:", player.Name)
 
 	local data = PlayerDataService.Load(player)
+	local run = data.Run or data
 
 	createPlayerValues(player, data)
+	PlayerMetricsService.SetupPlayer(player, data.Persistent or {}, run)
 
 	-- §7 skin inventory. Runs after createPlayerValues so the skin attributes already
 	-- exist. The daily login bonus is no longer auto-granted here — it's a claim-based
@@ -137,8 +143,10 @@ local function setupPlayer(player)
 
 	SheetService.AssignSheet(player)
 	StoryService.SetupPlayer(player)
-	local run = data.Run or data
-	UpgradeService.SetupPlayer(player, type(run.Placements) == "table" and run.Placements or { [DEFAULT_DIMENSION] = {} })
+	UpgradeService.SetupPlayer(
+		player,
+		type(run.Placements) == "table" and run.Placements or { [DEFAULT_DIMENSION] = {} }
+	)
 	ShieldService.SetupPlayer(player)
 
 	-- §9 offline earnings: run after buildings are placed (UpgradeService.SetupPlayer

@@ -14,6 +14,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local WheelConfig = require(ReplicatedStorage.Shared.WheelConfig)
 local GoldenCookieService = require(script.Parent.GoldenCookieService)
+local PlayerMetricsService = require(script.Parent.PlayerMetricsService)
 local Net = require(ReplicatedStorage.Shared.Net)
 
 local WheelService = {}
@@ -237,6 +238,7 @@ function WheelService.Spin(player)
 	if not GoldenCookieService.TrySpend(player, WheelConfig.SpinCost) then
 		return { Success = false, Reason = "NotEnoughGoldenCookies" }
 	end
+	PlayerMetricsService.RecordWheelSpin(player)
 
 	local skinId = rollReward()
 	local def = WheelConfig.GetSkinDef(skinId)

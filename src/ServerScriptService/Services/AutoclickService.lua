@@ -3,9 +3,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 
 local CookieService = require(ServerScriptService.Services.CookieService)
+local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
 local SheetService = require(ServerScriptService.Services.SheetService)
+local AutoclickFormula = require(ReplicatedStorage.Shared.AutoclickFormula)
 local NumberFormat = require(ReplicatedStorage.Shared.NumberFormat)
-local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
 
 local AutoclickService = {}
 
@@ -15,66 +16,39 @@ local AutoclickService = {}
 -- (speed is an economic multiplier here, not a change to the real loop rate).
 -- Autoclicks never roll golden-cookie drops (we add cookies directly, bypassing
 -- CookieService.HandleClick) and are excluded from offline earnings.
-local POWER_UPGRADE_ID = "Autoclicker"
-local SPEED_UPGRADE_ID = "Autoclick Speed"
-local BASE_SPEED = 2 -- clicks/s before any Autoclick Speed level (matches config EffectText)
 local TICK_SECONDS = 0.5
 local POPUP_COLOR = Color3.fromRGB(0, 170, 255)
 local initialized = false
 
-local function getUpgradeLevel(player, upgradeId)
-	local upgradeCountData = player:FindFirstChild("UpgradeCountData")
-	local countValue = upgradeCountData and upgradeCountData:FindFirstChild(upgradeId)
-	if not countValue or not countValue:IsA("IntValue") then
-		return 0
-	end
-
-	local config = UpgradeConfig[upgradeId]
-	local maxLevel = config and config.Levels and #config.Levels or 0
-	return math.clamp(countValue.Value, 0, maxLevel)
-end
-
 -- Cookies per single auto-click (the Power line).
 function AutoclickService.GetPower(player)
-	local config = UpgradeConfig[POWER_UPGRADE_ID]
-	local level = getUpgradeLevel(player, POWER_UPGRADE_ID)
-	local levelConfig = config and config.Levels and config.Levels[level]
-	local power = levelConfig and tonumber(levelConfig.AutoclickPayout) or 0
-	return math.max(0, power)
+	return AutoclickFormula.GetPower(player)
 end
 
 -- Auto-clicks per second (the Speed line); BASE_SPEED until a level is owned.
 function AutoclickService.GetSpeed(player)
-	local config = UpgradeConfig[SPEED_UPGRADE_ID]
-	local level = getUpgradeLevel(player, SPEED_UPGRADE_ID)
-	local levelConfig = config and config.Levels and config.Levels[level]
-	local speed = levelConfig and tonumber(levelConfig.AutoclickSpeed) or BASE_SPEED
-	return math.max(BASE_SPEED, speed)
+	return AutoclickFormula.GetSpeed(player)
 end
 
 -- Total idle cookies/second, before the per-tick split (excludes the event
 -- multiplier so callers/tests can reason about the base rate).
 function AutoclickService.GetCookiesPerSecond(player)
-	local power = AutoclickService.GetPower(player)
-	if power <= 0 then
-		return 0
-	end
-	return power * AutoclickService.GetSpeed(player)
+	return AutoclickFormula.GetBaseCps(player)
 end
 
 function AutoclickService.StepPlayer(player)
-	local perSecond = AutoclickService.GetCookiesPerSecond(player)
+	local perSecond = AutoclickFormula.GetLiveCps(player)
 	if perSecond <= 0 then
 		return false, 0
 	end
 
-	-- Frenzy/world-event multipliers apply to idle income too (§4c).
-	local payout = math.floor(perSecond * TICK_SECONDS * CookieService.GetClickEventMultiplier() + 0.5)
+	-- Frenzy/world-event multipliers are included in the shared live formula.
+	local payout = math.floor(perSecond * TICK_SECONDS + 0.5)
 	if payout <= 0 then
 		return false, 0
 	end
 
-	local added = CookieService.AddCookies(player, payout)
+	local added = CookieService.AddCookies(player, payout, PlayerMetricsService.CookieSources.Autoclick)
 	if added then
 		local sheet = SheetService.GetPlayerSheet(player)
 		local cookie = sheet and sheet:FindFirstChild("Cookie")

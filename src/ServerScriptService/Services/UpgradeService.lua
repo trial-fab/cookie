@@ -8,6 +8,7 @@ local HttpService = game:GetService("HttpService")
 local ProximityPromptService = game:GetService("ProximityPromptService")
 
 local CookieService = require(ServerScriptService.Services.CookieService)
+local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
 local StoryService = require(ServerScriptService.Services.StoryService)
 local SheetService = require(ServerScriptService.Services.SheetService)
 local XpService = require(ServerScriptService.Services.XpService)
@@ -1135,23 +1136,25 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame)
 			return false, applyMessage or "Upgrade could not be applied."
 		end
 
-		CookieService.AddCookies(player, -cost)
+		CookieService.AddCookies(player, -cost, PlayerMetricsService.CookieSources.Purchase)
 		return true, "Purchased " .. (config.DisplayName or upgradeId) .. "."
 	end
 
 	-- Deduct BEFORE applying: grantTool can yield (WaitForChild), and paying after a
 	-- yield lets two overlapped purchases both pass the funds check above. Refund if
 	-- the apply then fails.
-	CookieService.AddCookies(player, -cost)
+	CookieService.AddCookies(player, -cost, PlayerMetricsService.CookieSources.PendingPurchase)
 	local applied, applyMessage = UpgradeService.ApplyUpgrade(player, upgradeId, 1, placementCFrame)
 	if not applied then
-		CookieService.AddCookies(player, cost)
+		CookieService.AddCookies(player, cost, PlayerMetricsService.CookieSources.Refund)
 		return false, applyMessage or "Upgrade could not be applied."
 	end
 
 	countValue.Value += 1
+	PlayerMetricsService.RecordCookiesSpent(player, cost)
 
 	if config.TemplateKind == "Building" then
+		PlayerMetricsService.RecordBuildingPlaced(player)
 		local newlyUnlocked = markBuildingUnlocked(player, upgradeId)
 		if newlyUnlocked then
 			XpService.AwardBuildingUnlock(player, upgradeId, config)
@@ -1192,7 +1195,7 @@ function UpgradeService.Sell(player, upgradeId)
 	elseif config.TemplateKind == "Building" and countValue.Value <= minimumCount then
 		removeBuilding(player, upgradeId)
 	end
-	CookieService.AddCookies(player, refund)
+	CookieService.AddCookies(player, refund, PlayerMetricsService.CookieSources.Refund)
 
 	return true, "Sold " .. (config.DisplayName or upgradeId) .. " for " .. refund .. "."
 end
@@ -1225,7 +1228,7 @@ function UpgradeService.SellBuilding(player, building)
 	countValue.Value -= 1
 	markBuildingCountAdjusted(building)
 	building:Destroy()
-	CookieService.AddCookies(player, refund)
+	CookieService.AddCookies(player, refund, PlayerMetricsService.CookieSources.Refund)
 
 	return true, "Sold " .. (config.DisplayName or upgradeId) .. " for " .. refund .. ".", upgradeId
 end
@@ -1257,7 +1260,7 @@ function UpgradeService.SellAllBuildings(player, upgradeId)
 
 	countValue.Value = minimumCount
 	removeAllBuildings(player, upgradeId)
-	CookieService.AddCookies(player, refund)
+	CookieService.AddCookies(player, refund, PlayerMetricsService.CookieSources.Refund)
 
 	return true, "Sold " .. soldCount .. " " .. (config.DisplayName or upgradeId) .. " for " .. refund .. ".", upgradeId
 end

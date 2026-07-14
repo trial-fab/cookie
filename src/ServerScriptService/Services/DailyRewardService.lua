@@ -16,6 +16,7 @@ local Net = require(ReplicatedStorage.Shared.Net)
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
 local DailyRewardConfig = require(ReplicatedStorage.Shared.DailyRewardConfig)
 local GoldenCookieService = require(script.Parent.GoldenCookieService)
+local PlayerMetricsService = require(script.Parent.PlayerMetricsService)
 local WheelService = require(script.Parent.WheelService)
 
 local DailyRewardService = {}
@@ -94,6 +95,7 @@ function DailyRewardService.Claim(player)
 
 	player:SetAttribute(Attrs.LoginStreak, newStreak)
 	player:SetAttribute(Attrs.LastLoginDay, today)
+	PlayerMetricsService.RecordLoginStreak(player, newStreak)
 
 	return {
 		Success = true,

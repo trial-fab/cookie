@@ -20,6 +20,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 
 local CookieService = require(ServerScriptService.Services.CookieService)
+local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
 local ProductionService = require(ServerScriptService.Services.ProductionService)
 local UpgradeService = require(ServerScriptService.Services.UpgradeService)
 local Net = require(ReplicatedStorage.Shared.Net)
@@ -63,7 +64,7 @@ function OfflineEarningsService.OnPlayerSetup(player)
 		local earned = math.floor(cps * OFFLINE_RATE * awaySeconds)
 
 		if earned > 0 and awaySeconds >= MIN_AWAY_SECONDS then
-			CookieService.AddCookies(player, earned)
+			CookieService.AddCookies(player, earned, PlayerMetricsService.CookieSources.Offline)
 			result.Amount = earned
 			result.AwaySeconds = awaySeconds
 			result.Capped = rawAway > capSeconds

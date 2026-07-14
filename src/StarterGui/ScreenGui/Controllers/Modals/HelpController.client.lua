@@ -1,17 +1,15 @@
 local screenGui = script:FindFirstAncestorOfClass("ScreenGui")
 
 local GuiService = game:GetService("GuiService")
-local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 local UserInputService = game:GetService("UserInputService")
 local ModalOutsideClose = require(script.Parent:WaitForChild("ModalOutsideClose"))
 local ModalCoordinator = require(script.Parent:WaitForChild("ModalCoordinator"))
+local ModalPageTransition = require(script.Parent:WaitForChild("ModalPageTransition"))
 local shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local Attrs = require(shared:WaitForChild("Attrs"))
 local GuiNames = require(shared:WaitForChild("GuiNames"))
 local IconButton = require(shared:WaitForChild("IconButton"))
 local MobileScale = require(shared:WaitForChild("MobileScale"))
-local scaleInfo = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-
 local helpGui = screenGui:WaitForChild(GuiNames.Help)
 local menuPill = screenGui:FindFirstChild(GuiNames.MenuPill, true)
 
@@ -66,20 +64,21 @@ local activeTween = nil
 local previousSelection = nil
 local gamepadFocusOwned = false
 
--- UIScale used for BOTH the pop-in/pop-out animation and the shared responsive scale
--- (Roblox honours only one UIScale per object).
-local function getAnimScale()
+-- The modal's single UIScale is reserved for responsive layout, never open/close motion.
+local function getResponsiveScale()
 	local s = helpGui:FindFirstChild("AnimScale")
 	if not s or not s:IsA("UIScale") then
-		s = Instance.new("UIScale")
-		s.Name = "AnimScale"
-		s.Scale = 1
-		s.Parent = helpGui
+		s = helpGui:FindFirstChildOfClass("UIScale")
+		if not s then
+			s = Instance.new("UIScale")
+			s.Name = "AnimScale"
+			s.Scale = 1
+			s.Parent = helpGui
+		end
 	end
 	return s
 end
--- Resting scale: the shared continuous responsive factor (1 at 1080p, smaller on phones).
--- The open/close pop is expressed RELATIVE to this so the two compose on the single UIScale.
+-- Resting scale is responsive layout only; opening and closing never animate it.
 -- Captured once before the first resolveModal call (which rewrites helpGui.Size on mobile).
 local designSize = Vector2.new(helpGui.Size.X.Offset, helpGui.Size.Y.Offset)
 local function restScale()
@@ -134,6 +133,7 @@ local helpSlot = ModalCoordinator.register("Help", function()
 end)
 
 function setHelpVisible(value)
+	local previousOwner = ModalCoordinator.current()
 	helpVisible = value
 
 	if value then
@@ -149,12 +149,13 @@ function setHelpVisible(value)
 
 	helpIcon.set(value, value and "CLOSE" or "HELP")
 
-	local scale = getAnimScale()
-	local animate = true -- Short modal transition intentionally remains under Reduced Motion.
+	local scale = getResponsiveScale()
+	local rest = restScale()
+	local restPosition = helpGui.Position
+	scale.Scale = rest
 
 	if value then
 		showCurrentPage()
-		local rest = restScale()
 		helpGui.Visible = true
 		if UserInputService.PreferredInput == Enum.PreferredInput.Gamepad then
 			previousSelection = GuiService.SelectedObject
@@ -165,12 +166,10 @@ function setHelpVisible(value)
 				end
 			end)
 		end
-		if animate then
-			scale.Scale = rest * 0.92
-			activeTween = UiMotion.create(scale, scaleInfo, { Scale = rest })
-			activeTween:Play()
-		else
-			scale.Scale = rest
+		local switched
+		activeTween, switched = ModalPageTransition.open(screenGui, helpGui, previousOwner, "Help", restPosition)
+		if not switched then
+			activeTween = ModalPageTransition.openSession(scale, rest)
 		end
 	else
 		if gamepadFocusOwned then
@@ -186,30 +185,30 @@ function setHelpVisible(value)
 				end
 			end)
 		end
-		if animate then
-			activeTween = UiMotion.create(scale, scaleInfo, { Scale = restScale() * 0.92 })
-			activeTween.Completed:Once(function()
-				if not helpVisible then
-					helpGui.Visible = false
-					scale.Scale = restScale()
-				end
-			end)
-			activeTween:Play()
-		else
-			helpGui.Visible = false
-			scale.Scale = restScale()
+		local function finishClose()
+			if not helpVisible then
+				helpGui.Visible = false
+			end
+		end
+		local switched
+		activeTween, switched = ModalPageTransition.close(
+			screenGui,
+			helpGui,
+			"Help",
+			ModalCoordinator.current(),
+			restPosition,
+			finishClose
+		)
+		if not switched then
+			activeTween = ModalPageTransition.closeSession(scale, rest, finishClose)
 		end
 	end
 end
 
--- Keep the resting scale right across viewport/orientation changes. Skip while a pop tween
--- is mid-flight (it lands on restScale() itself) so we don't snap over the animation.
+-- Keep responsive layout stable without snapping a page during a swipe.
 MobileScale.onViewportChanged(function()
-	local rest = restScale() -- also re-lays out size + position for the current viewport
-	-- Skip only while a pop is actually animating; a finished tween lingers non-nil and must not
-	-- block live re-scaling when the window is resized.
 	if activeTween and activeTween.PlaybackState == Enum.PlaybackState.Playing then return end
-	getAnimScale().Scale = rest
+	getResponsiveScale().Scale = restScale()
 end)
 
 rebuildPages()

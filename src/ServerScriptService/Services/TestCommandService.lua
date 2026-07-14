@@ -8,6 +8,7 @@ local CookieService = require(Services:WaitForChild("CookieService"))
 local PlayerDataService = require(Services:WaitForChild("PlayerDataService"))
 local UpgradeService = require(Services:WaitForChild("UpgradeService"))
 local GoldenCookieService = require(Services:WaitForChild("GoldenCookieService"))
+local PlayerMetricsService = require(Services:WaitForChild("PlayerMetricsService"))
 local WheelService = require(Services:WaitForChild("WheelService"))
 local SheetService = require(Services:WaitForChild("SheetService"))
 local Net = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Net"))
@@ -77,7 +78,7 @@ local function handleCommand(player, message)
 	if amountText then
 		local amount = parseAmount(amountText)
 		if amount then
-			CookieService.AddCookies(player, amount)
+			CookieService.AddCookies(player, amount, PlayerMetricsService.CookieSources.Admin)
 			PlayerDataService.Save(player, true)
 			print("Added cookies for", player.Name, amount)
 		end

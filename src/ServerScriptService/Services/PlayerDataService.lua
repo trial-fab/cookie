@@ -8,6 +8,8 @@ local Workspace = game:GetService("Workspace")
 local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
 local GridPlacement = require(ReplicatedStorage.Shared.GridPlacement)
+local PlayerMetricConfig = require(ReplicatedStorage.Shared.PlayerMetricConfig)
+local PlayerMetricsService = require(script.Parent.PlayerMetricsService)
 
 local PlayerDataService = {}
 
@@ -63,6 +65,10 @@ local DEFAULT_PERSISTENT_DATA = {
 	MixerUnlocked = false,
 	CompletedStoryChapters = {},
 }
+
+for _, attribute in ipairs(PlayerMetricConfig.PersistentAttributes) do
+	DEFAULT_PERSISTENT_DATA[attribute] = 0
+end
 
 local DEFAULT_DATA = {
 	Run = DEFAULT_RUN_DATA,
@@ -576,6 +582,7 @@ function PlayerDataService.UpdateFromPlayerValues(player)
 	persistent.EquippedSkins = decodeJsonTable(player:GetAttribute(Attrs.EquippedSkinsJson)) or persistent.EquippedSkins
 	persistent.Achievements = decodeJsonTable(player:GetAttribute(Attrs.AchievementsJson)) or persistent.Achievements
 	persistent.UnlockedBuildings = decodeJsonTable(player:GetAttribute(Attrs.UnlockedBuildingsJson)) or persistent.UnlockedBuildings
+	PlayerMetricsService.WritePersistentData(player, persistent)
 
 	return data
 end

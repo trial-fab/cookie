@@ -8,10 +8,10 @@
 local GuiService = game:GetService("GuiService")
 local Attrs = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Attrs"))
 local GuiNames = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("GuiNames"))
-local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 local UserInputService = game:GetService("UserInputService")
 local ModalOutsideClose = require(script.Parent:WaitForChild("ModalOutsideClose"))
 local ModalCoordinator = require(script.Parent:WaitForChild("ModalCoordinator"))
+local ModalPageTransition = require(script.Parent:WaitForChild("ModalPageTransition"))
 local SettingsAnimationGlyph = require(script.Parent:WaitForChild("SettingsAnimationGlyph"))
 local SettingsMusicWaveform = require(script.Parent:WaitForChild("SettingsMusicWaveform"))
 local SettingsSfxGlyph = require(script.Parent:WaitForChild("SettingsSfxGlyph"))
@@ -41,8 +41,6 @@ local animationGlyph = SettingsAnimationGlyph.new(body)
 local musicWaveform = SettingsMusicWaveform.new(body)
 local sfxGlyph = SettingsSfxGlyph.new(body)
 local upgradeReminderPulse = SettingsUpgradeReminderPulse.new(body)
-
-local scaleInfo = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 local SIMPLE = {
 	ReducedMotion = Attrs.ReducedMotionEnabled,
@@ -244,20 +242,21 @@ screenGui:GetAttributeChangedSignal(Attrs.ReducedMotionEnabled):Connect(function
 end)
 
 -- ── Open / close (+ single-open coordination) ─────────────────────────────────
-local function getAnimScale()
+local function getResponsiveScale()
 	local s = modal:FindFirstChild("AnimScale")
 	if not s or not s:IsA("UIScale") then
-		s = Instance.new("UIScale")
-		s.Name = "AnimScale"
-		s.Scale = 1
-		s.Parent = modal
+		s = modal:FindFirstChildOfClass("UIScale")
+		if not s then
+			s = Instance.new("UIScale")
+			s.Name = "AnimScale"
+			s.Scale = 1
+			s.Parent = modal
+		end
 	end
 	return s
 end
 
--- Resting scale: the shared continuous responsive factor (1 at 1080p, smaller on phones).
--- The open/close pop is expressed RELATIVE to this so both compose on the single AnimScale
--- UIScale (Roblox honours only one UIScale per object).
+-- Resting scale is responsive layout only; opening and closing never animate it.
 -- Captured once before the first resolveModal call (which rewrites modal.Size on mobile).
 local designSize = Vector2.new(modal.Size.X.Offset, modal.Size.Y.Offset)
 local function restScale()
@@ -300,6 +299,7 @@ local function firstSettingControl()
 end
 
 function setVisible(value)
+	local previousOwner = ModalCoordinator.current()
 	modal:SetAttribute(Attrs.Open, value)
 	local _, container = resolveButton()
 	if container then container:SetAttribute(Attrs.Active, value) end
@@ -311,8 +311,10 @@ function setVisible(value)
 	end
 
 	if activeTween then activeTween:Cancel(); activeTween = nil end
-	local animate = true -- Short modal transition intentionally remains under Reduced Motion.
-	local scale = getAnimScale()
+	local scale = getResponsiveScale()
+	local rest = restScale()
+	local restPosition = modal.Position
+	scale.Scale = rest
 	if value then
 		modal.Visible = true
 		updateMusicWaveform()
@@ -328,13 +330,10 @@ function setVisible(value)
 				end
 			end)
 		end
-		local rest = restScale()
-		if animate then
-			scale.Scale = rest * 0.92
-			activeTween = UiMotion.create(scale, scaleInfo, { Scale = rest })
-			activeTween:Play()
-		else
-			scale.Scale = rest
+		local switched
+		activeTween, switched = ModalPageTransition.open(screenGui, modal, previousOwner, MY, restPosition)
+		if not switched then
+			activeTween = ModalPageTransition.openSession(scale, rest)
 		end
 	else
 		updateMusicWaveform()
@@ -354,27 +353,30 @@ function setVisible(value)
 				end
 			end)
 		end
-		if animate then
-			activeTween = UiMotion.create(scale, scaleInfo, { Scale = restScale() * 0.92 })
-			activeTween.Completed:Once(function()
-				if not modal:GetAttribute(Attrs.Open) then modal.Visible = false end
-				scale.Scale = restScale()
-			end)
-			activeTween:Play()
-		else
-			modal.Visible = false
+		local function finishClose()
+			if not modal:GetAttribute(Attrs.Open) then
+				modal.Visible = false
+			end
+		end
+		local switched
+		activeTween, switched = ModalPageTransition.close(
+			screenGui,
+			modal,
+			MY,
+			ModalCoordinator.current(),
+			restPosition,
+			finishClose
+		)
+		if not switched then
+			activeTween = ModalPageTransition.closeSession(scale, rest, finishClose)
 		end
 	end
 end
 
--- Keep the resting scale right across viewport/orientation changes. Skip while a pop tween
--- is mid-flight (it lands on restScale() itself) so we don't snap over the animation.
+-- Keep responsive layout stable without snapping a page during a swipe.
 MobileScale.onViewportChanged(function()
-	local rest = restScale() -- also re-lays out size + position for the current viewport
-	-- Skip only while a pop is actually animating; a finished tween lingers non-nil and must not
-	-- block live re-scaling when the window is resized.
 	if activeTween and activeTween.PlaybackState == Enum.PlaybackState.Playing then return end
-	getAnimScale().Scale = rest
+	getResponsiveScale().Scale = restScale()
 end)
 
 do

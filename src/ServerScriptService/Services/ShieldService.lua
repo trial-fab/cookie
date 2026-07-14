@@ -3,6 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 
 local CookieService = require(ServerScriptService.Services.CookieService)
+local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
 local SheetService = require(ServerScriptService.Services.SheetService)
 local Net = require(ReplicatedStorage.Shared.Net)
 local PvpConfig = require(ReplicatedStorage.Shared.PvpConfig)
@@ -131,7 +132,7 @@ function ShieldService.ToggleShield(player)
 
 	local cost = ShieldService.GetPurchaseCost(player)
 	if cost > 0 then
-		local paid = CookieService.AddCookies(player, -cost)
+		local paid = CookieService.AddCookies(player, -cost, PlayerMetricsService.CookieSources.Shield)
 		if not paid then
 			return false, "Not enough cookies."
 		end
