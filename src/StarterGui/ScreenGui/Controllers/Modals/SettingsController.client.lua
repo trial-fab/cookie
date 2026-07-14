@@ -12,9 +12,10 @@ local UserInputService = game:GetService("UserInputService")
 local ModalOutsideClose = require(script.Parent:WaitForChild("ModalOutsideClose"))
 local ModalCoordinator = require(script.Parent:WaitForChild("ModalCoordinator"))
 local ModalPageTransition = require(script.Parent:WaitForChild("ModalPageTransition"))
-local SettingsAnimationGlyph = require(script.Parent:WaitForChild("SettingsAnimationGlyph"))
 local SettingsMusicWaveform = require(script.Parent:WaitForChild("SettingsMusicWaveform"))
+local SettingsReducedMotionGlyph = require(script.Parent:WaitForChild("SettingsReducedMotionGlyph"))
 local SettingsSfxGlyph = require(script.Parent:WaitForChild("SettingsSfxGlyph"))
+local SettingsToggleGlyphs = require(script.Parent:WaitForChild("SettingsToggleGlyphs"))
 local SettingsUpgradeReminderPulse = require(script.Parent:WaitForChild("SettingsUpgradeReminderPulse"))
 local MobileScale = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("MobileScale"))
 
@@ -37,8 +38,8 @@ if not modal then
 	return
 end
 local body = modal:WaitForChild("Body")
-local animationGlyph = SettingsAnimationGlyph.new(body)
 local musicWaveform = SettingsMusicWaveform.new(body)
+local reducedMotionGlyph = SettingsReducedMotionGlyph.new(body)
 local sfxGlyph = SettingsSfxGlyph.new(body)
 local upgradeReminderPulse = SettingsUpgradeReminderPulse.new(body)
 
@@ -201,23 +202,26 @@ for rowName, attr in pairs(SIMPLE) do
 	end
 end
 
+SettingsToggleGlyphs.new(body, screenGui)
+
 local function updateUpgradeReminderPulse()
 	local modalOpen = modal:GetAttribute(Attrs.Open) == true
 	local enabled = screenGui:GetAttribute(Attrs.UpgradeRemindersEnabled) == true
 	local reduced = screenGui:GetAttribute(Attrs.ReducedMotionEnabled) == true
-	upgradeReminderPulse.setState(enabled, modalOpen and enabled and not reduced, modalOpen and reduced)
+	upgradeReminderPulse.setState(enabled, modalOpen and enabled and not reduced)
 end
 screenGui:GetAttributeChangedSignal(Attrs.UpgradeRemindersEnabled):Connect(updateUpgradeReminderPulse)
 
-local function updateAnimationGlyph()
-	local active = modal:GetAttribute(Attrs.Open) == true
-		and screenGui:GetAttribute(Attrs.ReducedMotionEnabled) ~= true
-	animationGlyph.setActive(active)
+local function updateReducedMotionGlyph(animate)
+	local enabled = screenGui:GetAttribute(Attrs.ReducedMotionEnabled) == true
+	local modalOpen = modal:GetAttribute(Attrs.Open) == true
+	reducedMotionGlyph.setEnabled(enabled, animate == true and modalOpen)
 end
 screenGui:GetAttributeChangedSignal(Attrs.ReducedMotionEnabled):Connect(function()
-	updateAnimationGlyph()
+	updateReducedMotionGlyph(true)
 	updateUpgradeReminderPulse()
 end)
+updateReducedMotionGlyph(false)
 
 local function updateSfxGlyph(animate)
 	local enabled = screenGui:GetAttribute(Attrs.SfxEnabled) == true
@@ -319,7 +323,7 @@ function setVisible(value)
 		modal.Visible = true
 		updateMusicWaveform()
 		updateSfxGlyph(false)
-		updateAnimationGlyph()
+		updateReducedMotionGlyph(false)
 		updateUpgradeReminderPulse()
 		if UserInputService.PreferredInput == Enum.PreferredInput.Gamepad then
 			previousSelection = GuiService.SelectedObject
@@ -338,7 +342,7 @@ function setVisible(value)
 	else
 		updateMusicWaveform()
 		updateSfxGlyph(false)
-		updateAnimationGlyph()
+		updateReducedMotionGlyph(false)
 		updateUpgradeReminderPulse()
 		if gamepadFocusOwned then
 			gamepadFocusOwned = false

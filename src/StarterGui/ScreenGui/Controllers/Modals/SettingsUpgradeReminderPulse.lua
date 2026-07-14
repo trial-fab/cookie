@@ -34,7 +34,7 @@ function SettingsUpgradeReminderPulse.new(body)
 		pulseCircle.ImageTransparency = baseTransparency
 	end
 
-	local function setState(enabled, animate, showReducedState)
+	local function setState(enabled, animate)
 		stop()
 		if enabled and animate then
 			tween = ReminderPulse.start(mainCircle, pulseCircle, {
@@ -42,7 +42,7 @@ function SettingsUpgradeReminderPulse.new(body)
 				color = mainCircle.ImageColor3,
 				startTransparency = baseTransparency,
 			})
-		elseif showReducedState then
+		else
 			ReminderPulse.setStatic(mainCircle, pulseCircle, {
 				color = mainCircle.ImageColor3,
 				mainTransparency = if enabled then 0 else 0.5,

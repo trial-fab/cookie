@@ -23,6 +23,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(shared:WaitForChild("Attrs"))
+local CameraZoomMotion = require(shared:WaitForChild("CameraZoomMotion"))
 local IconButton = require(shared:WaitForChild("IconButton"))
 local UiMotion = require(shared:WaitForChild("UiMotion"))
 
@@ -37,23 +38,20 @@ local SHUTTER_CLOSED = "rbxassetid://81727677661365"
 -- Shutter "zoom-in" timing:
 --   ACTIVATE   - the CLOSED rest face gives way to the click-tween shutter, which grows from the
 --                authored size to the active scale while spinning one full turn and stepping closed -> medium
---                -> open, then HOLDS open. BuildModeCamera enlarges (CAMERA_ZOOM) at the same pace, so
+--                -> open, then HOLDS open. BuildModeCamera enlarges at the same pace, so
 --                it reads as zooming into the opening lens.
 --   DEACTIVATE - the shutter spins one full turn shut (open -> medium -> closed) while it shrinks from
 --                the active scale back to the authored rest size. The camera zooms back out.
 -- The enclosing BuildModeFrame CanvasGroup masks everything (oversized/rotating) to the button circle.
-local ACTIVATE_TIME = 0.45
-local DEACTIVATE_TIME = 0.45
+local ACTIVATE_TIME = CameraZoomMotion.ACTIVATE_TIME
+local DEACTIVATE_TIME = CameraZoomMotion.DEACTIVATE_TIME
 -- One full turn as the shutter opens (ACTIVATE) or closes (DEACTIVATE); lands back at 0deg.
 local SHUTTER_SPIN = 360
 -- The open/active shutter scales from its Studio-authored size and HOLDS here while build mode is ON.
 local SHUTTER_ACTIVE_SCALE = 4.4
--- How much BuildModeCamera enlarges during the zoom, relative to its authored size.
-local CAMERA_ZOOM = 6
-
 -- ACTIVATE eases out (decelerates into the held-closed state); DEACTIVATE eases in-out back home.
-local ACTIVATE_INFO = TweenInfo.new(ACTIVATE_TIME, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
-local DEACTIVATE_INFO = TweenInfo.new(DEACTIVATE_TIME, Enum.EasingStyle.Quart, Enum.EasingDirection.InOut)
+local ACTIVATE_INFO = CameraZoomMotion.ACTIVATE_INFO
+local DEACTIVATE_INFO = CameraZoomMotion.DEACTIVATE_INFO
 
 -- Frame swaps must land at points along the *visual* (eased) progress, not raw wall-clock time.
 -- Quart/Out front-loads the motion: it's already ~82% spun by the 35% time mark and ~99% by 70%,
@@ -306,18 +304,6 @@ local function scaleUDim2(size, factor)
 	)
 end
 
--- The UDim2 position a layer would need, if re-anchored to (0.5, 0.5), to occupy the exact same
--- rect it currently does. Lets us centre-anchor the camera (so it scales about its middle) without
--- visually moving it, whatever anchor/position it was authored with.
-local function centerPosition(pos, size, anchor)
-	return UDim2.new(
-		pos.X.Scale + (0.5 - anchor.X) * size.X.Scale,
-		pos.X.Offset + (0.5 - anchor.X) * size.X.Offset,
-		pos.Y.Scale + (0.5 - anchor.Y) * size.Y.Scale,
-		pos.Y.Offset + (0.5 - anchor.Y) * size.Y.Offset
-	)
-end
-
 function BuildModeButtonAnimator.new(container)
 	if not container or not container:IsA("GuiObject") then
 		return nil
@@ -377,10 +363,7 @@ function BuildModeButtonAnimator.new(container)
 	-- is hidden behind the opaque closed shutter while ON, so the re-anchor is imperceptible.
 	local camRestSize, camBigSize = nil, nil
 	if iconLayer then
-		camRestSize = iconLayer.Size
-		iconLayer.Position = centerPosition(iconLayer.Position, camRestSize, iconLayer.AnchorPoint)
-		iconLayer.AnchorPoint = Vector2.new(0.5, 0.5)
-		camBigSize = scaleUDim2(camRestSize, CAMERA_ZOOM)
+		camRestSize, camBigSize = CameraZoomMotion.prepare(iconLayer)
 	end
 
 	if visual then

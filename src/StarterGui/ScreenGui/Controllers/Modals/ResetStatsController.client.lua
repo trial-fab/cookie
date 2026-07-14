@@ -12,6 +12,8 @@ local resetStatsButton = bottomBar:WaitForChild("ResetStats")
 
 local yesButton = resetStatsButton:FindFirstChild("Yes")
 local noButton = resetStatsButton:FindFirstChild("No")
+local authoredBackgroundTransparency = resetStatsButton.BackgroundTransparency
+local authoredTextTransparency = resetStatsButton.TextTransparency
 
 local confirming = false
 local debounce = false
@@ -39,8 +41,8 @@ local function setConfirming(value)
 		resetStatsButton.TextTransparency = 1
 	else
 		resetStatsButton.Text = "RESET STATS"
-		resetStatsButton.BackgroundTransparency = 0
-		resetStatsButton.TextTransparency = 0
+		resetStatsButton.BackgroundTransparency = authoredBackgroundTransparency
+		resetStatsButton.TextTransparency = authoredTextTransparency
 	end
 
 	if UserInputService.PreferredInput == Enum.PreferredInput.Gamepad then
