@@ -24,8 +24,8 @@ local ModalCoordinator = require(script.Parent:WaitForChild("ModalCoordinator"))
 local ModalPageTransition = require(script.Parent:WaitForChild("ModalPageTransition"))
 
 local MY = "Wheel"
-local ACTIVE_COLOR = Color3.fromRGB(0, 170, 255)
-local MUTED = Color3.fromRGB(150, 160, 175)
+local FALLBACK_ACTIVE_COLOR = Color3.fromRGB(5, 142, 109)
+local FALLBACK_MUTED_COLOR = Color3.fromRGB(150, 160, 175)
 
 local screenGui = script:FindFirstAncestorOfClass("ScreenGui")
 if not screenGui then
@@ -67,6 +67,17 @@ local function waitChild(parent, name)
 	return parent:WaitForChild(name, WAIT_TIMEOUT)
 end
 
+local function waitDescendant(parent, name)
+	if not parent then return nil end
+	local found = parent:FindFirstChild(name, true)
+	local deadline = tick() + WAIT_TIMEOUT
+	while not found and tick() < deadline do
+		task.wait(0.05)
+		found = parent:FindFirstChild(name, true)
+	end
+	return found
+end
+
 local function fmtMult(m)
 	return ("×%.2f"):format(tonumber(m) or 1)
 end
@@ -80,8 +91,63 @@ end
 local header = waitChild(modal, "Header")
 local gcValue = header and header:FindFirstChild("GcPill", true)
 gcValue = gcValue and (gcValue:FindFirstChild("Value") or gcValue)
-local spinPage = waitChild(modal, "SpinPage")
+local pages = waitChild(modal, "Pages")
+local pageLayout = pages and pages:FindFirstChildOfClass("UIPageLayout")
+local spinPage = waitDescendant(pages or modal, "SpinPage")
 local spinButton = waitChild(spinPage, "SpinButton") or (spinPage and spinPage:FindFirstChild("SpinButton", true))
+
+-- Studio-authored enabled/disabled and equip/equipped references. Like Settings' two
+-- reference ticks, these keep state appearance editable without moving color/transparency
+-- decisions into code. The target buttons already own their visual instances in Studio;
+-- runtime only copies properties onto them.
+local stateReferences = modal:FindFirstChild("StateReferences")
+local BUTTON_PROPERTIES = {
+	"BackgroundColor3",
+	"BackgroundTransparency",
+	"TextColor3",
+	"TextTransparency",
+}
+local STROKE_PROPERTIES = {
+	"Color",
+	"Enabled",
+	"Thickness",
+	"Transparency",
+}
+
+local function captureProperties(instance, properties)
+	if not instance then return nil end
+	local values = {}
+	for _, property in ipairs(properties) do
+		values[property] = instance[property]
+	end
+	return values
+end
+
+local function captureButtonStyle(reference)
+	if not (reference and reference:IsA("TextButton")) then return nil end
+	return {
+		button = captureProperties(reference, BUTTON_PROPERTIES),
+		stroke = captureProperties(reference:FindFirstChildWhichIsA("UIStroke"), STROKE_PROPERTIES),
+	}
+end
+
+local function applyProperties(instance, values)
+	if not (instance and values) then return end
+	for property, value in pairs(values) do
+		instance[property] = value
+	end
+end
+
+local function applyButtonStyle(button, style)
+	if not (button and button:IsA("TextButton") and style) then return end
+	applyProperties(button, style.button)
+	applyProperties(button:FindFirstChildWhichIsA("UIStroke"), style.stroke)
+end
+
+local authoredActionEnabled = captureButtonStyle(stateReferences and stateReferences:FindFirstChild("ActionEnabled"))
+local authoredActionDisabled = captureButtonStyle(stateReferences and stateReferences:FindFirstChild("ActionDisabled"))
+local authoredEquipOff = captureButtonStyle(stateReferences and stateReferences:FindFirstChild("EquipOff"))
+local authoredEquipOn = captureButtonStyle(stateReferences and stateReferences:FindFirstChild("EquipOn"))
 
 local spinning = false
 
@@ -99,8 +165,11 @@ local function styleSpinButton()
 	spinButton.AutoButtonColor = enabled
 	spinButton.Active = enabled
 	if spinButton:IsA("TextButton") then
+		applyButtonStyle(spinButton, enabled and authoredActionEnabled or authoredActionDisabled)
 		spinButton.Text = spinning and "Spinning…" or ("Spin " .. NumberFormat.abbreviate(WheelConfig.SpinCost))
-		spinButton.TextTransparency = enabled and 0 or 0.45
+		if not (authoredActionEnabled and authoredActionDisabled) then
+			spinButton.TextTransparency = enabled and 0 or 0.45
+		end
 	end
 	-- The cost icon (Studio-authored `GcIcon` child) only makes sense beside the cost
 	-- number; hide it while the button reads "Spinning…".
@@ -121,8 +190,8 @@ player:GetAttributeChangedSignal(Attrs.GoldenCookies):Connect(refreshGc)
 
 -- ── Tabs ───────────────────────────────────────────────────────────────────────
 local tabBar = waitChild(modal, "TabBar")
-local skinsPage = waitChild(modal, "SkinsPage")
-local dailyPage = waitChild(modal, "DailyPage")
+local skinsPage = waitDescendant(pages or modal, "SkinsPage")
+local dailyPage = waitDescendant(pages or modal, "DailyPage")
 local spinTab = tabBar and tabBar:FindFirstChild("SpinTab")
 local skinsTab = tabBar and tabBar:FindFirstChild("SkinsTab")
 local dailyTab = tabBar and tabBar:FindFirstChild("DailyTab")
@@ -130,17 +199,64 @@ local dailyTab = tabBar and tabBar:FindFirstChild("DailyTab")
 -- Implemented in the Daily section below; called on open and when the Daily tab is shown.
 local refreshDaily
 
-local function styleTab(tab, active)
-	if not (tab and tab:IsA("TextButton")) then return end
-	tab.TextColor3 = active and ACTIVE_COLOR or MUTED
+-- SpinTab is the Studio-authored active reference; SkinsTab is the authored inactive
+-- reference. Runtime captures those appearances and applies them to whichever tab is active,
+-- matching Settings' authored on/off tick workflow instead of duplicating visual constants.
+local function captureTabStyle(tab)
+	if not (tab and tab:IsA("TextButton")) then return nil end
 	local underline = tab:FindFirstChild("Underline")
-	if underline then underline.Visible = active end
+	return {
+		textColor = tab.TextColor3,
+		textTransparency = tab.TextTransparency,
+		backgroundColor = tab.BackgroundColor3,
+		backgroundTransparency = tab.BackgroundTransparency,
+		underlineVisible = underline and underline.Visible or false,
+		underlineColor = underline and underline.BackgroundColor3 or FALLBACK_ACTIVE_COLOR,
+		underlineTransparency = underline and underline.BackgroundTransparency or 0,
+	}
 end
 
+local authoredActiveTabStyle = captureTabStyle(spinTab)
+local authoredInactiveTabStyle = captureTabStyle(skinsTab)
+
+local function styleTab(tab, active)
+	if not (tab and tab:IsA("TextButton")) then return end
+	local style = active and authoredActiveTabStyle or authoredInactiveTabStyle
+	tab.TextColor3 = (style and style.textColor)
+		or (active and FALLBACK_ACTIVE_COLOR or FALLBACK_MUTED_COLOR)
+	if style then
+		tab.TextTransparency = style.textTransparency
+		tab.BackgroundColor3 = style.backgroundColor
+		tab.BackgroundTransparency = style.backgroundTransparency
+	end
+	local underline = tab:FindFirstChild("Underline")
+	if underline then
+		underline.Visible = style and style.underlineVisible or active
+		if style then
+			underline.BackgroundColor3 = style.underlineColor
+			underline.BackgroundTransparency = style.underlineTransparency
+		end
+	end
+end
+
+local currentTab = "Spin"
 local function setTab(name)
-	if spinPage then spinPage.Visible = (name == "Spin") end
-	if skinsPage then skinsPage.Visible = (name == "Skins") end
-	if dailyPage then dailyPage.Visible = (name == "Daily") end
+	currentTab = name
+	local target = if name == "Skins" then skinsPage elseif name == "Daily" then dailyPage else spinPage
+	if pageLayout and target then
+		-- The layout pages are authored wrapper slots so all three content frames keep
+		-- Visible=true. Studio's PageLayout controls make every page easy to author, while
+		-- runtime tab changes select the matching slot without visibility bookkeeping.
+		local slot = target.Parent
+		if slot and slot.Parent == pages then
+			pageLayout:JumpTo(slot)
+		end
+	else
+		-- Compatibility with places that have not received the authored Pages container yet.
+		if spinPage then spinPage.Visible = (name == "Spin") end
+		if skinsPage then skinsPage.Visible = (name == "Skins") end
+		if dailyPage then dailyPage.Visible = (name == "Daily") end
+	end
 	styleTab(spinTab, name == "Spin")
 	styleTab(skinsTab, name == "Skins")
 	styleTab(dailyTab, name == "Daily")
@@ -583,6 +699,7 @@ local function fillCard(card, skinId, def, equipped)
 			local isEquipped = equipped[def.BuildingId] == skinId
 			equipBtn.Visible = true
 			if equipBtn:IsA("TextButton") then
+				applyButtonStyle(equipBtn, isEquipped and authoredEquipOn or authoredEquipOff)
 				equipBtn.Text = isEquipped and "Equipped" or "Equip"
 			end
 			equipBtn:SetAttribute(Attrs.Active, isEquipped)
@@ -776,8 +893,11 @@ refreshDaily = function()
 		claimButton.Active = state.canClaim
 		claimButton.AutoButtonColor = state.canClaim
 		if claimButton:IsA("TextButton") then
+			applyButtonStyle(claimButton, state.canClaim and authoredActionEnabled or authoredActionDisabled)
 			claimButton.Text = state.canClaim and ("Claim Day %d"):format(state.dayInCycle) or "Claimed"
-			claimButton.TextTransparency = state.canClaim and 0 or 0.45
+			if not (authoredActionEnabled and authoredActionDisabled) then
+				claimButton.TextTransparency = state.canClaim and 0 or 0.45
+			end
 		end
 	end
 
@@ -816,7 +936,7 @@ end
 task.spawn(function()
 	while true do
 		task.wait(1)
-		if dailyPage and dailyPage.Visible then
+		if dailyPage and currentTab == "Daily" then
 			local state = dailyState()
 			if not state.canClaim then
 				updateDailyStatus(state)
@@ -843,9 +963,11 @@ end
 -- Captured once before the first resolveModal call (which rewrites modal.Size on mobile).
 local designSize = Vector2.new(modal.Size.X.Offset, modal.Size.Y.Offset)
 local function restScale()
-	-- Match the other main modals on smaller desktop Studio viewports without
-	-- changing Wheel's established mobile scale.
-	return MobileScale.resolveModal(modal, designSize, { nativeTextDesktop = true })
+	-- Use the exact responsive policy shared by Settings, Profile, and Help.
+	return MobileScale.resolveModal(modal, designSize, {
+		mobileScale = 0.82,
+		nativeTextDesktop = true,
+	})
 end
 
 -- The launcher icon's open-state look (gold WheelCookie) is owned entirely by
