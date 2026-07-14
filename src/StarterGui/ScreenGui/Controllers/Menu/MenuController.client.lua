@@ -61,6 +61,17 @@ pill.BorderSizePixel    = 0
 pill.ClipsDescendants   = true   -- reset from bake (which shows open/unclipped)
 pill.ZIndex             = 20
 
+local authoredPillBackgroundTransparency = pill.BackgroundTransparency
+local authoredPillZIndex = pill.ZIndex
+local function updateCompactModalPresentation()
+	local compact = screenGui:GetAttribute(Attrs.CompactModalActive) == true
+	pill.Visible = true
+	pill.BackgroundTransparency = compact and 1 or authoredPillBackgroundTransparency
+	pill.ZIndex = compact and math.max(authoredPillZIndex, 102) or authoredPillZIndex
+end
+screenGui:GetAttributeChangedSignal(Attrs.CompactModalActive):Connect(updateCompactModalPresentation)
+updateCompactModalPresentation()
+
 local pillCorner = pill:FindFirstChild("ModernCorner") or Instance.new("UICorner")
 pillCorner.Name          = "ModernCorner"
 pillCorner.CornerRadius  = UDim.new(0, PILL_H / 2)

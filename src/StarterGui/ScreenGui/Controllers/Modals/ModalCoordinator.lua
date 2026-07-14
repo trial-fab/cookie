@@ -1,4 +1,4 @@
--- ModalCoordinator — single-open coordination for the Help / Settings / Profile
+-- ModalCoordinator — single-open coordination for the Help / Settings / Profile / Wheel
 -- modals. Replaces the identical `OpenModal` attribute dance that used to be
 -- copy-pasted into each controller (claim-on-open, release-on-close, and a
 -- per-controller GetAttributeChangedSignal listener that closed the modal when a
@@ -25,9 +25,17 @@
 local ModalCoordinator = {}
 
 local screenGui = script:FindFirstAncestorOfClass("ScreenGui")
-local Attrs = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Attrs"))
+local shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local Attrs = require(shared:WaitForChild("Attrs"))
+local MobileScale = require(shared:WaitForChild("MobileScale"))
 
 local NONE = ""
+local COMPACT_MAIN_MODAL_ROOTS = {
+	Help = "Help",
+	Settings = "SettingsModal",
+	Profile = "ProfileModal",
+	Wheel = "WheelModal",
+}
 
 -- name -> onForeignOpen callback ("you are no longer the open modal").
 local registry = {}
@@ -35,6 +43,19 @@ local suspendedSurfaces = nil
 
 local function current()
 	return screenGui:GetAttribute(Attrs.OpenModal) or NONE
+end
+
+local function updateCompactState()
+	local owner = current()
+	local rootName = COMPACT_MAIN_MODAL_ROOTS[owner]
+	local modal = rootName and screenGui:FindFirstChild(rootName)
+	local closeButton = modal and modal:FindFirstChild("MobileClose")
+	screenGui:SetAttribute(
+		Attrs.CompactModalActive,
+		closeButton ~= nil
+			and closeButton:IsA("GuiButton")
+			and MobileScale.shouldUseMobile(screenGui)
+	)
 end
 
 local function suspendBackgroundSurfaces()
@@ -65,6 +86,7 @@ end
 local lastOwner = current()
 screenGui:GetAttributeChangedSignal(Attrs.OpenModal):Connect(function()
 	local owner = current()
+	updateCompactState()
 	if owner == NONE and lastOwner ~= NONE then
 		restoreBackgroundSurfaces()
 	end
@@ -75,6 +97,8 @@ screenGui:GetAttributeChangedSignal(Attrs.OpenModal):Connect(function()
 		end
 	end
 end)
+
+MobileScale.onViewportChanged(updateCompactState)
 
 -- Register a modal under `name`. `onForeignOpen` is called whenever another modal
 -- claims the single open slot (i.e. this modal should close). Returns a handle with

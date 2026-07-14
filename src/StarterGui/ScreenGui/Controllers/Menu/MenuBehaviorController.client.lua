@@ -20,6 +20,27 @@ if not pill then
 	return
 end
 
+local authoredPillBackgroundTransparency = pill.BackgroundTransparency
+local authoredPillZIndex = pill.ZIndex
+local compactModalActive = false
+local compactMenuRestoreRequested = false
+local refreshCompactMenuLayout = nil
+local function updateCompactModalPresentation()
+	compactModalActive = screenGui:GetAttribute(Attrs.CompactModalActive) == true
+	compactMenuRestoreRequested = screenGui:GetAttribute(Attrs.CompactMenuRestoreRequested) == true
+	-- Keep the menu controls available so players can switch directly between the four main
+	-- modals. Only its surrounding pill disappears into the full-screen modal surface.
+	pill.Visible = true
+	pill.BackgroundTransparency = compactModalActive and 1 or authoredPillBackgroundTransparency
+	pill.ZIndex = compactModalActive and math.max(authoredPillZIndex, 102) or authoredPillZIndex
+	if refreshCompactMenuLayout then
+		refreshCompactMenuLayout()
+	end
+end
+screenGui:GetAttributeChangedSignal(Attrs.CompactModalActive):Connect(updateCompactModalPresentation)
+screenGui:GetAttributeChangedSignal(Attrs.CompactMenuRestoreRequested):Connect(updateCompactModalPresentation)
+updateCompactModalPresentation()
+
 -- On mobile, nudge the pill 10px further from the right edge so it clears the rounded screen
 -- corner now that ClipToDeviceSafeArea is off. Re-applies on orientation changes. Open/close
 -- only grows pill.Size leftward (anchor 1,0), so nothing else owns pill.Position.
@@ -221,6 +242,12 @@ end
 
 local maxMenuHeight = math.max(openSize.Y.Offset, closedSize.Y.Offset)
 local toggleSize = getOffsetSize(toggle.Size)
+local compactOpenSize = UDim2.new(
+	openSize.X.Scale - toggle.Size.X.Scale,
+	openSize.X.Offset - toggleSize.X,
+	openSize.Y.Scale,
+	openSize.Y.Offset
+)
 local revealItems = getOrderedMenuItems()
 local revealClip = pill:FindFirstChild("MenuItemsClip")
 if not revealClip or not revealClip:IsA("Frame") then
@@ -251,13 +278,18 @@ if layout then
 	layout.Parent = nil
 end
 
+local menuOpen = false
+local compactToggleCollapsed = false
+local activeTween = nil
+
 local function updateMenuLayout()
 	local pillWidth = pill.Size.X.Offset
 	local pillHeight = math.max(pill.Size.Y.Offset, maxMenuHeight)
 	local toggleX = math.max(0, pillWidth - toggleSize.X)
+	local revealWidth = compactToggleCollapsed and pillWidth or toggleX
 
 	revealClip.Position = UDim2.fromOffset(0, 0)
-	revealClip.Size = UDim2.fromOffset(toggleX, pillHeight)
+	revealClip.Size = UDim2.fromOffset(revealWidth, pillHeight)
 	toggle.Position = UDim2.fromOffset(toggleX, math.floor((pillHeight - toggleSize.Y) / 2 + 0.5))
 end
 
@@ -278,8 +310,6 @@ for _, name in ipairs(middleDotNames) do
 	end
 end
 
-local menuOpen = false
-local activeTween = nil
 local iconTweens = {}
 
 local function playIconTween(instance, tweenInfo, goals)
@@ -337,6 +367,26 @@ local function setIconOpen(open)
 	end
 end
 
+local function tweenMenuSize(targetSize, tweenInfo, onComplete)
+	if activeTween then
+		activeTween:Cancel()
+		activeTween = nil
+	end
+
+	local tween = UiMotion.create(pill, tweenInfo, { Size = targetSize })
+	activeTween = tween
+	tween.Completed:Once(function(playbackState)
+		if activeTween ~= tween then
+			return
+		end
+		activeTween = nil
+		if playbackState == Enum.PlaybackState.Completed and onComplete then
+			onComplete()
+		end
+	end)
+	tween:Play()
+end
+
 local function setMenuOpen(open)
 	menuOpen = open
 	toggle:SetAttribute(Attrs.Open, open)
@@ -344,13 +394,47 @@ local function setMenuOpen(open)
 	if toggle:IsA("TextButton") then
 		toggle.Text = ""
 	end
-	if activeTween then activeTween:Cancel() end
 	setIconOpen(open)
 	pill.ClipsDescendants = true
-	activeTween = UiMotion.create(pill, open and openInfo or closeInfo, {
-		Size = open and openSize or closedSize,
-	})
-	activeTween:Play()
+	compactToggleCollapsed = compactModalActive and open
+	toggle.Visible = not compactToggleCollapsed
+	updateMenuLayout()
+	tweenMenuSize(
+		open and (compactToggleCollapsed and compactOpenSize or openSize) or closedSize,
+		open and openInfo or closeInfo
+	)
+end
+
+refreshCompactMenuLayout = function()
+	local shouldCollapseToggle = compactModalActive and menuOpen and not compactMenuRestoreRequested
+	if shouldCollapseToggle then
+		-- The fullscreen modal already supplies the top-right X. Remove the menu's duplicate X,
+		-- give its slot to the reveal row, and shrink the right-anchored pill so the row slides right.
+		compactToggleCollapsed = true
+		toggle.Visible = false
+		updateMenuLayout()
+		tweenMenuSize(compactOpenSize, closeInfo)
+	elseif compactModalActive and menuOpen and compactToggleCollapsed and compactMenuRestoreRequested then
+		-- Recreate the open menu's empty toggle slot while the fullscreen modal still covers the
+		-- HUD. The modal is released on this tween's final frame, so its X is never shown twice.
+		toggle.Visible = false
+		updateMenuLayout()
+		tweenMenuSize(openSize, openInfo, function()
+			if compactModalActive and compactMenuRestoreRequested and menuOpen then
+				compactToggleCollapsed = false
+				updateMenuLayout()
+			end
+		end)
+	elseif menuOpen and not compactModalActive then
+		compactToggleCollapsed = false
+		toggle.Visible = true
+		pill.Size = openSize
+		updateMenuLayout()
+	elseif not menuOpen then
+		compactToggleCollapsed = false
+		toggle.Visible = true
+		updateMenuLayout()
+	end
 end
 
 -- Reset to closed on startup (pill may have been baked open for design view).
@@ -364,6 +448,7 @@ end
 toggle:SetAttribute(Attrs.Open, false)
 toggleButton:SetAttribute(Attrs.Active, false)
 setIconOpen(false)
+updateCompactModalPresentation()
 
 toggleButton.MouseButton1Click:Connect(function()
 	setMenuOpen(not menuOpen)

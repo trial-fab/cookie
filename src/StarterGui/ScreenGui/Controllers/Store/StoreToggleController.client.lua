@@ -48,6 +48,9 @@ end
 -- Owner of the StoreOpen attribute. Everything else reacts to it.
 local function setStoreOpen(open)
 	open = open == true
+	if open and screenGui:GetAttribute(Attrs.CompactModalActive) == true then
+		return
+	end
 	if open and not mixerUnlocked() then
 		return
 	end
@@ -83,7 +86,11 @@ screenGui:GetAttributeChangedSignal(Attrs.StoreOpen):Connect(function()
 		screenGui:GetAttribute(Attrs.StoreOpen) == true
 		and ModalCoordinator.isOpen()
 	then
-		ModalCoordinator.overrideBackground(true, false)
+		if screenGui:GetAttribute(Attrs.CompactModalActive) == true then
+			screenGui:SetAttribute(Attrs.StoreOpen, false)
+		else
+			ModalCoordinator.overrideBackground(true, false)
+		end
 	end
 end)
 
@@ -132,6 +139,15 @@ refreshMixerGate()
 -- Authored in Studio as ScreenGui.BuildButton with a `.hitbox` GuiButton (or as a GuiButton).
 local buildButton = screenGui:FindFirstChild(GuiNames.BuildButton)
 local buildButtonHit = buildButton and (buildButton:FindFirstChild("hitbox") or buildButton)
+if buildButton and buildButton:IsA("GuiObject") then
+	local authoredBuildButtonVisible = buildButton.Visible
+	local function updateBuildButtonVisibility()
+		buildButton.Visible = authoredBuildButtonVisible
+			and screenGui:GetAttribute(Attrs.CompactModalActive) ~= true
+	end
+	screenGui:GetAttributeChangedSignal(Attrs.CompactModalActive):Connect(updateBuildButtonVisibility)
+	updateBuildButtonVisibility()
+end
 if buildButtonHit and buildButtonHit:IsA("GuiButton") then
 	buildButtonHit.Activated:Connect(toggleStore)
 end

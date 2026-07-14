@@ -102,17 +102,44 @@ local function getViewportSize(gui)
 end
 MobileScale.getViewportSize = getViewportSize
 
-local function shouldUseMobile(gui)
-	if not UserInputService.TouchEnabled then
-		return false
+-- Insets from the physical viewport edges to Roblox's Core UI safe rectangle. A full-screen
+-- surface may still draw edge-to-edge, but its header and primary content must start inside
+-- these offsets so they are not hidden by a notch or topbar controls. Compact modal close
+-- buttons intentionally use the game's separate topbar control slot instead.
+-- GetInsetArea is preferred because this ScreenGui deliberately renders with no automatic
+-- insets. The GetGuiInset fallback keeps older clients usable if the newer API is unavailable.
+function MobileScale.getCoreSafeOffsets(gui)
+	local ok, noneRect, coreRect = pcall(function()
+		return GuiService:GetInsetArea(Enum.ScreenInsets.None),
+			GuiService:GetInsetArea(Enum.ScreenInsets.CoreUISafeInsets)
+	end)
+	if ok and noneRect and coreRect then
+		return Vector2.new(
+			math.max(0, coreRect.Min.X - noneRect.Min.X),
+			math.max(0, coreRect.Min.Y - noneRect.Min.Y)
+		), Vector2.new(
+			math.max(0, noneRect.Max.X - coreRect.Max.X),
+			math.max(0, noneRect.Max.Y - coreRect.Max.Y)
+		)
 	end
 
-	local viewportSize = getViewportSize(gui)
-	if viewportSize.X <= 0 or viewportSize.Y <= 0 then
+	local insetTopLeft = GuiService:GetGuiInset()
+	return Vector2.new(math.max(0, insetTopLeft.X), math.max(0, insetTopLeft.Y)), Vector2.zero
+end
+
+local function isCompactViewport(viewportSize, touchEnabled)
+	if not touchEnabled then
 		return false
 	end
-
+	if not viewportSize or viewportSize.X <= 0 or viewportSize.Y <= 0 then
+		return false
+	end
 	return math.min(viewportSize.X, viewportSize.Y) <= MOBILE_VIEWPORT_MAX_SHORT_SIDE
+end
+MobileScale.isCompactViewport = isCompactViewport
+
+local function shouldUseMobile(gui)
+	return isCompactViewport(getViewportSize(gui), UserInputService.TouchEnabled)
 end
 MobileScale.shouldUseMobile = shouldUseMobile
 
@@ -231,6 +258,16 @@ function MobileScale.resolveModal(gui, designSize, opts)
 	end
 
 	local vp, topEdge, bottomEdge = usableBand(gui)
+	if shouldUseMobile(gui) and opts.mobilePresentation == "fullscreen" and vp.X > 0 and vp.Y > 0 then
+		-- The modal surface covers the physical viewport. Its controller is responsible for
+		-- placing its header/content below getCoreSafeOffsets(); keeping UIScale at 1 preserves
+		-- authored text and touch-target sizes.
+		gui.AnchorPoint = Vector2.new(0.5, 0.5)
+		gui.Position = UDim2.fromScale(0.5, 0.5)
+		gui.Size = UDim2.fromScale(1, 1)
+		return 1
+	end
+
 	local centerY = (topEdge + bottomEdge) / 2
 	gui.AnchorPoint = Vector2.new(0.5, 0.5)
 	gui.Position = UDim2.new(0.5, 0, 0, math.floor(centerY + 0.5))

@@ -606,12 +606,16 @@ function HotbarCarousel.new(ctx)
 	end
 
 	-- Mixer gate: the controller hides the whole bar until building is unlocked, then restores it.
+	local function updateVisibility()
+		hotbar.Visible = unlocked and screenGui:GetAttribute(Attrs.CompactModalActive) ~= true
+	end
+
 	local function setUnlocked(value)
 		unlocked = value == true
 		if not unlocked then
-			hotbar.Visible = false
+			updateVisibility()
 		else
-			hotbar.Visible = true
+			updateVisibility()
 			setPlaceholdersVisible(not storeOpen())
 			if storeOpen() then
 				snapOpen()
@@ -622,6 +626,7 @@ function HotbarCarousel.new(ctx)
 		end
 		updateKeybindBadges()
 	end
+	screenGui:GetAttributeChangedSignal(Attrs.CompactModalActive):Connect(updateVisibility)
 
 	-- Initial pose: disc at full authored rest, bar hidden until unlock/onStoreOpen drives it.
 	snapRest()

@@ -237,7 +237,8 @@ end
 local function updateVisibility()
 	-- PC: always visible. Mobile: visible only while the leaderboard is closed (they swap places).
 	local leaderboardOpen = screenGui:GetAttribute(Attrs.LeaderboardOpen) == true
-	hud.Visible = not (MobileScale.shouldUseMobile(hud) and leaderboardOpen)
+	local compactModal = screenGui:GetAttribute(Attrs.CompactModalActive) == true
+	hud.Visible = not compactModal and not (MobileScale.shouldUseMobile(hud) and leaderboardOpen)
 end
 
 -- Mobile-only reflow of the HUD's stacked layout: XpBar rides on top of the Top block, and each
@@ -284,6 +285,7 @@ MobileScale.onViewportChanged(function()
 	updateLayoutOrder()
 end)
 screenGui:GetAttributeChangedSignal(Attrs.LeaderboardOpen):Connect(updateVisibility)
+screenGui:GetAttributeChangedSignal(Attrs.CompactModalActive):Connect(updateVisibility)
 
 -- Fade the whole HUD out while the store band is up, and back in when it closes.
 HudStoreTransition.start({

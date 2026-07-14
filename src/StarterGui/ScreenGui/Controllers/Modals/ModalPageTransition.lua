@@ -24,6 +24,7 @@ local ROOT_BY_NAME = {
 
 local SCALE_TWEEN_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local SWIPE_TWEEN_INFO = TweenInfo.new(0.28, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local COMPACT_MENU_RESTORE_TIME = 0.22
 
 local function shifted(position, xOffset)
 	return UDim2.new(
@@ -31,6 +32,15 @@ local function shifted(position, xOffset)
 		position.X.Offset + xOffset,
 		position.Y.Scale,
 		position.Y.Offset
+	)
+end
+
+local function shiftedY(position, yOffset)
+	return UDim2.new(
+		position.X.Scale,
+		position.X.Offset,
+		position.Y.Scale,
+		position.Y.Offset + yOffset
 	)
 end
 
@@ -213,6 +223,82 @@ function ModalPageTransition.close(screenGui, modal, fromName, toName, _restPosi
 		return shifted(entry.restPosition, transition.motionX * transition.distance)
 	end, onComplete)
 	return handle, true
+end
+
+-- Compact-phone sessions keep the opaque full-screen surface fixed and animate only its direct
+-- content. This prevents the old 0.92 root-scale pop from exposing clickable HUD around the
+-- edges. MobileClose is expected to carry SwipeStationary=true in Studio.
+function ModalPageTransition.openCompact(screenGui, modal, fromName, toName)
+	local swipe, switched = ModalPageTransition.open(screenGui, modal, fromName, toName)
+	if switched then
+		return swipe
+	end
+
+	local entries = movingChildren(modal)
+	local rootState = captureRootAppearance(modal, false)
+	if screenGui:GetAttribute(Attrs.ReducedMotionEnabled) == true then
+		restore(entries, modal, rootState)
+		return nil
+	end
+	for _, entry in ipairs(entries) do
+		entry.gui.Position = shiftedY(entry.restPosition, 18)
+	end
+	return playGroup(entries, modal, rootState, function(entry)
+		return entry.restPosition
+	end, function() end)
+end
+
+function ModalPageTransition.closeCompact(screenGui, modal, fromName, toName, onComplete)
+	local swipe, switched = ModalPageTransition.close(screenGui, modal, fromName, toName, nil, onComplete)
+	if switched then
+		return swipe
+	end
+
+	local entries = movingChildren(modal)
+	local rootState = captureRootAppearance(modal, false)
+	if screenGui:GetAttribute(Attrs.ReducedMotionEnabled) == true then
+		onComplete()
+		restore(entries, modal, rootState)
+		return nil
+	end
+	return playGroup(entries, modal, rootState, function(entry)
+		return shiftedY(entry.restPosition, 18)
+	end, onComplete)
+end
+
+-- Manual fullscreen exit has one ordered handoff: MenuPill expands left while its toggle remains
+-- hidden, then the modal disappears immediately on the same frame that the regular HUD returns.
+-- Module-to-module changes do not use this path; they keep the horizontal desktop swipe.
+function ModalPageTransition.closeCompactAfterMenu(screenGui, releaseModal, onComplete)
+	local handle = {
+		PlaybackState = Enum.PlaybackState.Playing,
+		cancelled = false,
+	}
+	screenGui:SetAttribute(Attrs.CompactMenuRestoreRequested, true)
+
+	function handle:Cancel()
+		if self.PlaybackState ~= Enum.PlaybackState.Playing then
+			return
+		end
+		self.cancelled = true
+		self.PlaybackState = Enum.PlaybackState.Cancelled
+		screenGui:SetAttribute(Attrs.CompactMenuRestoreRequested, false)
+	end
+
+	local delayTime = if screenGui:GetAttribute(Attrs.ReducedMotionEnabled) == true
+		then 0
+		else COMPACT_MENU_RESTORE_TIME
+	task.delay(delayTime, function()
+		if handle.cancelled then
+			return
+		end
+		releaseModal()
+		screenGui:SetAttribute(Attrs.CompactMenuRestoreRequested, false)
+		handle.PlaybackState = Enum.PlaybackState.Completed
+		onComplete()
+	end)
+
+	return handle
 end
 
 -- Scale is used only when entering or leaving the four-page modal session. Direct

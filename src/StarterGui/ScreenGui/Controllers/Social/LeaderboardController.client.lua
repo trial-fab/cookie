@@ -81,6 +81,9 @@ end
 
 local function setLeaderboardVisible(visible, animate)
 	if visible and ModalCoordinator.isOpen() then
+		if screenGui:GetAttribute(Attrs.CompactModalActive) == true then
+			return
+		end
 		ModalCoordinator.overrideBackground(false, true)
 		return
 	end

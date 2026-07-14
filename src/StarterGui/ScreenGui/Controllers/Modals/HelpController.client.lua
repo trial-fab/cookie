@@ -5,11 +5,10 @@ local UserInputService = game:GetService("UserInputService")
 local ModalOutsideClose = require(script.Parent:WaitForChild("ModalOutsideClose"))
 local ModalCoordinator = require(script.Parent:WaitForChild("ModalCoordinator"))
 local ModalPageTransition = require(script.Parent:WaitForChild("ModalPageTransition"))
+local ModalResponsiveLayout = require(script.Parent:WaitForChild("ModalResponsiveLayout"))
 local shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
-local Attrs = require(shared:WaitForChild("Attrs"))
 local GuiNames = require(shared:WaitForChild("GuiNames"))
 local IconButton = require(shared:WaitForChild("IconButton"))
-local MobileScale = require(shared:WaitForChild("MobileScale"))
 local helpGui = screenGui:WaitForChild(GuiNames.Help)
 local menuPill = screenGui:FindFirstChild(GuiNames.MenuPill, true)
 
@@ -63,6 +62,7 @@ local helpVisible = false
 local activeTween = nil
 local previousSelection = nil
 local gamepadFocusOwned = false
+local setHelpVisible
 
 -- The modal's single UIScale is reserved for responsive layout, never open/close motion.
 local function getResponsiveScale()
@@ -78,14 +78,16 @@ local function getResponsiveScale()
 	end
 	return s
 end
--- Resting scale is responsive layout only; opening and closing never animate it.
--- Captured once before the first resolveModal call (which rewrites helpGui.Size on mobile).
-local designSize = Vector2.new(helpGui.Size.X.Offset, helpGui.Size.Y.Offset)
+local responsiveLayout = ModalResponsiveLayout.bind({
+	modal = helpGui,
+	close = function()
+		if setHelpVisible then
+			setHelpVisible(false)
+		end
+	end,
+})
 local function restScale()
-	return MobileScale.resolveModal(helpGui, designSize, {
-		mobileScale = 0.82,
-		nativeTextDesktop = true,
-	})
+	return responsiveLayout.restScale()
 end
 
 local function rebuildPages()
@@ -124,8 +126,7 @@ local function showCurrentPage()
 	pageNumberLabel.Text = tostring(currentPage) .. " / " .. tostring(pageCount)
 end
 
--- Single-open coordination: only one of Help/Settings/Profile open at a time.
-local setHelpVisible
+-- Single-open coordination: only one main modal is open at a time.
 local helpSlot = ModalCoordinator.register("Help", function()
 	if helpVisible then
 		setHelpVisible(false)
@@ -134,11 +135,12 @@ end)
 
 function setHelpVisible(value)
 	local previousOwner = ModalCoordinator.current()
+	local deferCompactClose = not value and responsiveLayout.isCompact() and previousOwner == "Help"
 	helpVisible = value
 
 	if value then
 		helpSlot.open()
-	else
+	elseif not deferCompactClose then
 		helpSlot.close()
 	end
 
@@ -166,10 +168,14 @@ function setHelpVisible(value)
 				end
 			end)
 		end
-		local switched
-		activeTween, switched = ModalPageTransition.open(screenGui, helpGui, previousOwner, "Help", restPosition)
-		if not switched then
-			activeTween = ModalPageTransition.openSession(scale, rest)
+		if responsiveLayout.isCompact() then
+			activeTween = ModalPageTransition.openCompact(screenGui, helpGui, previousOwner, "Help")
+		else
+			local switched
+			activeTween, switched = ModalPageTransition.open(screenGui, helpGui, previousOwner, "Help", restPosition)
+			if not switched then
+				activeTween = ModalPageTransition.openSession(scale, rest)
+			end
 		end
 	else
 		if gamepadFocusOwned then
@@ -190,25 +196,39 @@ function setHelpVisible(value)
 				helpGui.Visible = false
 			end
 		end
-		local switched
-		activeTween, switched = ModalPageTransition.close(
-			screenGui,
-			helpGui,
-			"Help",
-			ModalCoordinator.current(),
-			restPosition,
-			finishClose
-		)
-		if not switched then
-			activeTween = ModalPageTransition.closeSession(scale, rest, finishClose)
+		if responsiveLayout.isCompact() then
+			if deferCompactClose then
+				activeTween = ModalPageTransition.closeCompactAfterMenu(screenGui, function()
+					helpSlot.close()
+				end, finishClose)
+			else
+				activeTween = ModalPageTransition.closeCompact(
+					screenGui,
+					helpGui,
+					"Help",
+					ModalCoordinator.current(),
+					finishClose
+				)
+			end
+		else
+			local switched
+			activeTween, switched = ModalPageTransition.close(
+				screenGui,
+				helpGui,
+				"Help",
+				ModalCoordinator.current(),
+				restPosition,
+				finishClose
+			)
+			if not switched then
+				activeTween = ModalPageTransition.closeSession(scale, rest, finishClose)
+			end
 		end
 	end
 end
 
--- Keep responsive layout stable without snapping a page during a swipe.
-MobileScale.onViewportChanged(function()
-	if activeTween and activeTween.PlaybackState == Enum.PlaybackState.Playing then return end
-	getResponsiveScale().Scale = restScale()
+responsiveLayout.bindViewport(getResponsiveScale, function()
+	return activeTween
 end)
 
 rebuildPages()

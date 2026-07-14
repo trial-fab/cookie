@@ -11,6 +11,12 @@ if not boardToggle then
 	return
 end
 
+local function updateCompactModalVisibility()
+	boardToggle.Visible = screenGui:GetAttribute(Attrs.CompactModalActive) ~= true
+end
+screenGui:GetAttributeChangedSignal(Attrs.CompactModalActive):Connect(updateCompactModalVisibility)
+updateCompactModalVisibility()
+
 -- On mobile, nudge the toggle 10px further from the right edge so it clears the rounded screen
 -- corner now that ClipToDeviceSafeArea is off. Re-applies on orientation changes.
 local baseTogglePosition = boardToggle.Position

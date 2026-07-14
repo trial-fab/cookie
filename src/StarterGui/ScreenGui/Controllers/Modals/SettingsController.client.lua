@@ -4,7 +4,7 @@
 -- Preferences are stored as attributes on the ScreenGui so other controllers can
 -- read them (ReducedMotionEnabled, etc.). Upgrade-owned toggles such as Multi-Place
 -- live in the Store. Reset Stats lives in the bottom bar and is driven by
--- ResetStatsController. Only one of Help/Settings/Profile is open at a time.
+-- ResetStatsController. Only one of Help/Settings/Profile/Wheel is open at a time.
 local GuiService = game:GetService("GuiService")
 local Attrs = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Attrs"))
 local GuiNames = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("GuiNames"))
@@ -12,12 +12,12 @@ local UserInputService = game:GetService("UserInputService")
 local ModalOutsideClose = require(script.Parent:WaitForChild("ModalOutsideClose"))
 local ModalCoordinator = require(script.Parent:WaitForChild("ModalCoordinator"))
 local ModalPageTransition = require(script.Parent:WaitForChild("ModalPageTransition"))
+local ModalResponsiveLayout = require(script.Parent:WaitForChild("ModalResponsiveLayout"))
 local SettingsMusicWaveform = require(script.Parent:WaitForChild("SettingsMusicWaveform"))
 local SettingsReducedMotionGlyph = require(script.Parent:WaitForChild("SettingsReducedMotionGlyph"))
 local SettingsSfxGlyph = require(script.Parent:WaitForChild("SettingsSfxGlyph"))
 local SettingsToggleGlyphs = require(script.Parent:WaitForChild("SettingsToggleGlyphs"))
 local SettingsUpgradeReminderPulse = require(script.Parent:WaitForChild("SettingsUpgradeReminderPulse"))
-local MobileScale = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("MobileScale"))
 
 local MY = "Settings"
 local INTRO_REPLAY_EVENT_NAME = "ReplayIntroRequested"
@@ -260,14 +260,17 @@ local function getResponsiveScale()
 	return s
 end
 
--- Resting scale is responsive layout only; opening and closing never animate it.
--- Captured once before the first resolveModal call (which rewrites modal.Size on mobile).
-local designSize = Vector2.new(modal.Size.X.Offset, modal.Size.Y.Offset)
+local setVisible
+local responsiveLayout = ModalResponsiveLayout.bind({
+	modal = modal,
+	close = function()
+		if setVisible then
+			setVisible(false)
+		end
+	end,
+})
 local function restScale()
-	return MobileScale.resolveModal(modal, designSize, {
-		mobileScale = 0.82,
-		nativeTextDesktop = true,
-	})
+	return responsiveLayout.restScale()
 end
 
 local function resolveButton()
@@ -281,8 +284,7 @@ local function resolveButton()
 	return nil, container
 end
 
--- Single-open coordination: only one of Help/Settings/Profile open at a time.
-local setVisible
+-- Single-open coordination: only one main modal is open at a time.
 local modalSlot = ModalCoordinator.register(MY, function()
 	if modal:GetAttribute(Attrs.Open) then
 		setVisible(false)
@@ -304,13 +306,14 @@ end
 
 function setVisible(value)
 	local previousOwner = ModalCoordinator.current()
+	local deferCompactClose = not value and responsiveLayout.isCompact() and previousOwner == MY
 	modal:SetAttribute(Attrs.Open, value)
 	local _, container = resolveButton()
 	if container then container:SetAttribute(Attrs.Active, value) end
 
 	if value then
 		modalSlot.open()
-	else
+	elseif not deferCompactClose then
 		modalSlot.close()
 	end
 
@@ -334,10 +337,14 @@ function setVisible(value)
 				end
 			end)
 		end
-		local switched
-		activeTween, switched = ModalPageTransition.open(screenGui, modal, previousOwner, MY, restPosition)
-		if not switched then
-			activeTween = ModalPageTransition.openSession(scale, rest)
+		if responsiveLayout.isCompact() then
+			activeTween = ModalPageTransition.openCompact(screenGui, modal, previousOwner, MY)
+		else
+			local switched
+			activeTween, switched = ModalPageTransition.open(screenGui, modal, previousOwner, MY, restPosition)
+			if not switched then
+				activeTween = ModalPageTransition.openSession(scale, rest)
+			end
 		end
 	else
 		updateMusicWaveform()
@@ -362,25 +369,34 @@ function setVisible(value)
 				modal.Visible = false
 			end
 		end
-		local switched
-		activeTween, switched = ModalPageTransition.close(
-			screenGui,
-			modal,
-			MY,
-			ModalCoordinator.current(),
-			restPosition,
-			finishClose
-		)
-		if not switched then
-			activeTween = ModalPageTransition.closeSession(scale, rest, finishClose)
+		if responsiveLayout.isCompact() then
+			if deferCompactClose then
+				activeTween = ModalPageTransition.closeCompactAfterMenu(screenGui, function()
+					modalSlot.close()
+				end, finishClose)
+			else
+				activeTween =
+					ModalPageTransition.closeCompact(screenGui, modal, MY, ModalCoordinator.current(), finishClose)
+			end
+		else
+			local switched
+			activeTween, switched = ModalPageTransition.close(
+				screenGui,
+				modal,
+				MY,
+				ModalCoordinator.current(),
+				restPosition,
+				finishClose
+			)
+			if not switched then
+				activeTween = ModalPageTransition.closeSession(scale, rest, finishClose)
+			end
 		end
 	end
 end
 
--- Keep responsive layout stable without snapping a page during a swipe.
-MobileScale.onViewportChanged(function()
-	if activeTween and activeTween.PlaybackState == Enum.PlaybackState.Playing then return end
-	getResponsiveScale().Scale = restScale()
+responsiveLayout.bindViewport(getResponsiveScale, function()
+	return activeTween
 end)
 
 do

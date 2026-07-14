@@ -19,6 +19,11 @@ return {
 	LeaderboardOpen = "LeaderboardOpen",
 	Hovering = "Hovering",
 	OpenModal = "OpenModal",
+	-- True only while one of the four main menu modals owns the slot on a compact touch viewport.
+	-- HUD owners compose this into visibility/input rules, while the menu uses it to switch to its
+	-- transparent modal presentation. Tablets and desktop-sized touch devices remain false.
+	CompactModalActive = "CompactModalActive",
+	CompactMenuRestoreRequested = "CompactMenuRestoreRequested",
 	-- Accessibility/performance preference: pauses selected continuous decorative motion while
 	-- leaving ordinary UI transitions and gameplay/world animation intact.
 	ReducedMotionEnabled = "ReducedMotionEnabled",

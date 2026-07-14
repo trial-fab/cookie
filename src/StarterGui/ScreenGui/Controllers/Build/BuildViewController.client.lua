@@ -495,15 +495,21 @@ end
 local buildControls = screenGui:FindFirstChild(GuiNames.BuildControls)
 local buildControlsUp = buildControls and buildControls:FindFirstChild("Up")
 local buildControlsDown = buildControls and buildControls:FindFirstChild("Down")
+local buildControlsRequested = false
 if buildControls then
 	buildControls.Visible = false
 end
 
 local function setBuildControlsVisible(visible)
+	buildControlsRequested = visible == true
 	if buildControls then
-		buildControls.Visible = visible
+		buildControls.Visible = buildControlsRequested
+			and screenGui:GetAttribute(Attrs.CompactModalActive) ~= true
 	end
 end
+screenGui:GetAttributeChangedSignal(Attrs.CompactModalActive):Connect(function()
+	setBuildControlsVisible(buildControlsRequested)
+end)
 
 local function bindHeightButton(button, dir)
 	if not button or not button:IsA("GuiButton") then
@@ -714,12 +720,20 @@ local function exitBuildView()
 end
 
 local function toggleBuildView()
+	if screenGui:GetAttribute(Attrs.CompactModalActive) == true then
+		return
+	end
 	if buildViewActive then
 		exitBuildView()
 	elseif player:GetAttribute(Attrs.MixerUnlocked) == true then
 		enterBuildView()
 	end
 end
+screenGui:GetAttributeChangedSignal(Attrs.CompactModalActive):Connect(function()
+	if screenGui:GetAttribute(Attrs.CompactModalActive) == true then
+		exitBuildView()
+	end
+end)
 
 -- Compose the build-title reveal and first-placement nudge as ctx modules (StoreController-
 -- style). They own their UI bindings + state; this orchestrator keeps the camera/input
@@ -784,8 +798,20 @@ local buildModeButton = (topbarHudGui and topbarHudGui:FindFirstChild(GuiNames.B
 	or (topBar and topBar:FindFirstChild(GuiNames.BuildModeButton))
 	or (store and store:FindFirstChild(GuiNames.BuildModeButton, true))
 	or screenGui:FindFirstChild(GuiNames.BuildModeFrame, true)
-if topbarHudGui and buildModeButton and buildModeButton:IsDescendantOf(topbarHudGui) then
+if
+	topbarHudGui
+	and buildModeButton
+	and buildModeButton:IsA("GuiObject")
+	and buildModeButton:IsDescendantOf(topbarHudGui)
+then
 	BuildModeTopbarPosition.bind(buildModeButton)
+	local authoredBuildModeButtonVisible = buildModeButton.Visible
+	local function updateCompactModalVisibility()
+		buildModeButton.Visible = authoredBuildModeButtonVisible
+			and screenGui:GetAttribute(Attrs.CompactModalActive) ~= true
+	end
+	screenGui:GetAttributeChangedSignal(Attrs.CompactModalActive):Connect(updateCompactModalVisibility)
+	updateCompactModalVisibility()
 end
 local buildModeButtonAnimator = BuildModeButtonAnimator.new(buildModeButton)
 local buildModeButtonHit = buildModeButtonAnimator and buildModeButtonAnimator.hitbox

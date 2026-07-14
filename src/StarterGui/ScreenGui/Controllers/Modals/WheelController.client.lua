@@ -6,6 +6,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ModalOutsideClose = require(script.Parent:WaitForChild("ModalOutsideClose"))
 local ModalCoordinator = require(script.Parent:WaitForChild("ModalCoordinator"))
 local ModalPageTransition = require(script.Parent:WaitForChild("ModalPageTransition"))
+local ModalResponsiveLayout = require(script.Parent:WaitForChild("ModalResponsiveLayout"))
 
 local ctx = {}
 ctx.preview = require(script.Parent:WaitForChild("WheelGooPreview"))
@@ -38,7 +39,6 @@ local Attrs = require(Shared:WaitForChild("Attrs"))
 local GuiNames = require(Shared:WaitForChild("GuiNames"))
 local UiMotion = require(Shared:WaitForChild("UiMotion"))
 local NumberFormat = require(Shared:WaitForChild("NumberFormat"))
-local MobileScale = require(Shared:WaitForChild("MobileScale"))
 local WheelConfig = require(Shared:WaitForChild("WheelConfig"))
 local DailyRewardConfig = require(Shared:WaitForChild("DailyRewardConfig"))
 
@@ -431,9 +431,17 @@ local function getResponsiveScale()
 	return scale
 end
 
-local designSize = Vector2.new(modal.Size.X.Offset, modal.Size.Y.Offset)
+local setVisible
+local responsiveLayout = ModalResponsiveLayout.bind({
+	modal = modal,
+	close = function()
+		if setVisible then
+			setVisible(false)
+		end
+	end,
+})
 local function restScale()
-	return MobileScale.resolveModal(modal, designSize, { mobileScale = 0.82, nativeTextDesktop = true })
+	return responsiveLayout.restScale()
 end
 
 local function resolveButton()
@@ -453,7 +461,6 @@ local function resolveButton()
 	return nil, container
 end
 
-local setVisible
 local modalSlot = ModalCoordinator.register(MY, function()
 	if modal:GetAttribute(Attrs.Open) then
 		setVisible(false)
@@ -463,6 +470,7 @@ end)
 local activeTween
 function setVisible(value)
 	local previousOwner = ModalCoordinator.current()
+	local deferCompactClose = not value and responsiveLayout.isCompact() and previousOwner == MY
 	modal:SetAttribute(Attrs.Open, value)
 	local _, container = resolveButton()
 	if container then
@@ -470,7 +478,7 @@ function setVisible(value)
 	end
 	if value then
 		modalSlot.open()
-	else
+	elseif not deferCompactClose then
 		modalSlot.close()
 	end
 	if activeTween then
@@ -486,10 +494,14 @@ function setVisible(value)
 		modal.Visible = true
 		setTab("Spin")
 		ctx.reel.refresh()
-		local switched
-		activeTween, switched = ModalPageTransition.open(screenGui, modal, previousOwner, MY, restPosition)
-		if not switched then
-			activeTween = ModalPageTransition.openSession(scale, rest)
+		if responsiveLayout.isCompact() then
+			activeTween = ModalPageTransition.openCompact(screenGui, modal, previousOwner, MY)
+		else
+			local switched
+			activeTween, switched = ModalPageTransition.open(screenGui, modal, previousOwner, MY, restPosition)
+			if not switched then
+				activeTween = ModalPageTransition.openSession(scale, rest)
+			end
 		end
 	else
 		ctx.reel.setVisible(false)
@@ -499,11 +511,22 @@ function setVisible(value)
 				modal.Visible = false
 			end
 		end
-		local switched
-		activeTween, switched =
-			ModalPageTransition.close(screenGui, modal, MY, ModalCoordinator.current(), restPosition, finishClose)
-		if not switched then
-			activeTween = ModalPageTransition.closeSession(scale, rest, finishClose)
+		if responsiveLayout.isCompact() then
+			if deferCompactClose then
+				activeTween = ModalPageTransition.closeCompactAfterMenu(screenGui, function()
+					modalSlot.close()
+				end, finishClose)
+			else
+				activeTween =
+					ModalPageTransition.closeCompact(screenGui, modal, MY, ModalCoordinator.current(), finishClose)
+			end
+		else
+			local switched
+			activeTween, switched =
+				ModalPageTransition.close(screenGui, modal, MY, ModalCoordinator.current(), restPosition, finishClose)
+			if not switched then
+				activeTween = ModalPageTransition.closeSession(scale, rest, finishClose)
+			end
 		end
 	end
 end
@@ -521,11 +544,8 @@ do
 	end
 end
 
-MobileScale.onViewportChanged(function()
-	if activeTween and activeTween.PlaybackState == Enum.PlaybackState.Playing then
-		return
-	end
-	getResponsiveScale().Scale = restScale()
+responsiveLayout.bindViewport(getResponsiveScale, function()
+	return activeTween
 end)
 
 task.defer(function()
