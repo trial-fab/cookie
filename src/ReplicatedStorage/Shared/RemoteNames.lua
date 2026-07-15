@@ -19,6 +19,7 @@ return {
 	EquipSkin = "EquipSkin",
 	DisableBuildViewNudge = "DisableBuildViewNudge",
 	MarkIntroSeen = "MarkIntroSeen",
+	UpdateSetting = "UpdateSetting",
 	StoryAction = "StoryAction",
 
 	-- debug / test harness only (server handler is gated to Studio or the place creator)

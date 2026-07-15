@@ -25,7 +25,10 @@
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local GuiService = game:GetService("GuiService")
-local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local Attrs = require(Shared:WaitForChild("Attrs"))
+local IconButton = require(Shared:WaitForChild("IconButton"))
+local UiMotion = require(Shared:WaitForChild("UiMotion"))
 
 -- Radius of the circle the iris looks along, as a fraction of the icon size. Bleed is masked in
 -- Studio (frames above the iris, below the eyeball), so this is a pure look-distance dial: make
@@ -41,8 +44,51 @@ local IRIS_SETTLE_EPSILON_PX = 0.05 -- close enough to the target: snap and stop
 local LOCK_TWEEN_INFO = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local ACTIVE_COLOR = Color3.fromRGB(0, 170, 255)
 local IDLE_COLOR = Color3.new(1, 1, 1)
+local HITBOX_MARGIN_PX = 8
 
 local StatsEyeController = {}
+
+local function createHitbox(toggle)
+	local visualButton = toggle:FindFirstChild("StatsEyeButton", true)
+	if not (visualButton and visualButton:IsA("ImageButton")) then
+		visualButton = toggle:IsA("ImageButton") and toggle or toggle:FindFirstChildWhichIsA("ImageButton", true)
+	end
+	if not visualButton then
+		return toggle:IsA("GuiButton") and toggle or nil
+	end
+
+	-- Match the menu-bar controls: when Studio provides a larger frame around the inset image,
+	-- cover that whole frame (including its authored UIPadding) with one transparent input proxy.
+	if visualButton ~= toggle then
+		return IconButton.createHitbox(toggle, visualButton)
+	end
+
+	-- Older Studio layouts use StatsEyeToggle itself as the ImageButton, so there is no outer
+	-- frame for IconButton.createHitbox to cover. Give that layout the same proxy pattern with a
+	-- small amount of hit slop on every side instead of leaving the eye-sized target unchanged.
+	local hitbox = toggle:FindFirstChild("Hitbox")
+	if not (hitbox and hitbox:IsA("TextButton")) then
+		if hitbox then
+			hitbox:Destroy()
+		end
+		hitbox = Instance.new("TextButton")
+		hitbox.Name = "Hitbox"
+		hitbox.Parent = toggle
+	end
+
+	hitbox.BackgroundTransparency = 1
+	hitbox.BorderSizePixel = 0
+	hitbox.Text = ""
+	hitbox.TextTransparency = 1
+	hitbox.AutoButtonColor = false
+	hitbox.Selectable = false
+	hitbox:SetAttribute(Attrs.IconOnly, true)
+	hitbox.AnchorPoint = Vector2.new(0.5, 0.5)
+	hitbox.Position = UDim2.fromScale(0.5, 0.5)
+	hitbox.Size = UDim2.new(1, HITBOX_MARGIN_PX * 2, 1, HITBOX_MARGIN_PX * 2)
+	hitbox.ZIndex = toggle.ZIndex + 10
+	return hitbox
+end
 
 function StatsEyeController.new(ctx)
 	local screenGui = ctx.screenGui
@@ -63,6 +109,10 @@ function StatsEyeController.new(ctx)
 	then
 		warn("[StatsEyeController] Orb/Middle/Lines layers missing; eye toggle disabled")
 		return {}
+	end
+	local hitbox = createHitbox(toggle)
+	if not hitbox then
+		warn("[StatsEyeController] StatsEyeButton not found; eye toggle input disabled")
 	end
 
 	-- Orb + Middle move as one. All layers share the icon centre, so an iris offset in px maps
@@ -171,8 +221,8 @@ function StatsEyeController.new(ctx)
 		UiMotion.create(middle, LOCK_TWEEN_INFO, { ImageColor3 = on and ACTIVE_COLOR or IDLE_COLOR }):Play()
 	end
 
-	if toggle:IsA("GuiButton") then
-		toggle.Activated:Connect(function()
+	if hitbox then
+		hitbox.Activated:Connect(function()
 			setLocked(not locked)
 		end)
 	end

@@ -234,14 +234,21 @@ function StoreDescription.new(ctx)
 			record.overInfo = false
 			closeWhenUnhovered(record)
 		end)
-		touchTarget.Activated:Connect(function(input)
+		local function toggleFromTouch(input)
 			if
 				UserInputService.PreferredInput == Enum.PreferredInput.Touch
 				or (input and input.UserInputType == Enum.UserInputType.Touch)
 			then
 				setExpanded(record, not record.expanded)
 			end
-		end)
+		end
+		touchTarget.Activated:Connect(toggleFromTouch)
+		-- InfoHitbox can sit behind the visible info button in the mobile template. Roblox sends
+		-- Activated only to the topmost button, so bind the visible button as well; taps around it
+		-- still route through the larger hitbox while taps on the icon now behave identically.
+		if info ~= touchTarget and info:IsA("GuiButton") then
+			info.Activated:Connect(toggleFromTouch)
+		end
 		info.SelectionGained:Connect(function()
 			setExpanded(record, true)
 		end)

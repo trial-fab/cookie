@@ -1,8 +1,8 @@
 -- SettingsController — logic only. The Settings modal (StarterGui.ScreenGui.
 -- SettingsModal) with its grouped panels, icon/title/description rows and tick
 -- checkboxes is authored in Studio; this binds the ticks and open/close behavior.
--- Preferences are stored as attributes on the ScreenGui so other controllers can
--- read them (ReducedMotionEnabled, etc.). Upgrade-owned toggles such as Multi-Place
+-- Preferences are mirrored as attributes on the ScreenGui so other controllers can
+-- read them (ReducedMotionEnabled, etc.) and persisted by SettingsPersistence. Upgrade-owned toggles such as Multi-Place
 -- live in the Store. Reset Stats lives in the bottom bar and is driven by
 -- ResetStatsController. Only one of Help/Settings/Profile/Wheel is open at a time.
 local GuiService = game:GetService("GuiService")
@@ -14,6 +14,7 @@ local ModalCoordinator = require(script.Parent:WaitForChild("ModalCoordinator"))
 local ModalPageTransition = require(script.Parent:WaitForChild("ModalPageTransition"))
 local ModalResponsiveLayout = require(script.Parent:WaitForChild("ModalResponsiveLayout"))
 local SettingsMusicWaveform = require(script.Parent:WaitForChild("SettingsMusicWaveform"))
+local SettingsPersistence = require(script.Parent:WaitForChild("SettingsPersistence"))
 local SettingsReducedMotionGlyph = require(script.Parent:WaitForChild("SettingsReducedMotionGlyph"))
 local SettingsSfxGlyph = require(script.Parent:WaitForChild("SettingsSfxGlyph"))
 local SettingsToggleGlyphs = require(script.Parent:WaitForChild("SettingsToggleGlyphs"))
@@ -202,6 +203,7 @@ for rowName, attr in pairs(SIMPLE) do
 	end
 end
 
+SettingsPersistence.new(screenGui)
 SettingsToggleGlyphs.new(body, screenGui)
 
 local function updateUpgradeReminderPulse()

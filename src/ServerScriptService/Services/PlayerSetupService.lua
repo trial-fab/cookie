@@ -12,6 +12,7 @@ local WheelService = require(ServerScriptService.Services.WheelService)
 local ProductionService = require(ServerScriptService.Services.ProductionService)
 local OfflineEarningsService = require(ServerScriptService.Services.OfflineEarningsService)
 local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
+local SettingsService = require(ServerScriptService.Services.SettingsService)
 local StoryService = require(ServerScriptService.Services.StoryService)
 local Net = require(ReplicatedStorage.Shared.Net)
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
@@ -134,6 +135,7 @@ local function setupPlayer(player)
 
 	createPlayerValues(player, data)
 	PlayerMetricsService.SetupPlayer(player, data.Persistent or {}, run)
+	SettingsService.SetupPlayer(player, data.Persistent or {})
 
 	-- §7 skin inventory. Runs after createPlayerValues so the skin attributes already
 	-- exist. The daily login bonus is no longer auto-granted here — it's a claim-based

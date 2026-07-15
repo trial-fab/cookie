@@ -23,7 +23,6 @@
 -- consumer bias the whole curve (the Store band is deliberately larger). `min`/`max`
 -- override the default clamp.
 local Workspace = game:GetService("Workspace")
-local UserInputService = game:GetService("UserInputService")
 local GuiService = game:GetService("GuiService")
 
 local DESIGN_RESOLUTION = Vector2.new(1920, 1080)
@@ -50,10 +49,11 @@ local FIT_FLOOR = 0.2 -- never scale a fitted modal below this
 -- row or two visible). Closer to 1 = bigger/more readable but fewer rows; lower = more fits.
 local MOBILE_SCALE = 0.6
 
--- Touch-device predicate threshold, kept for mobile-only HUD nudges (shiftLeftOnMobile)
--- and for consumers (Store/Hotbar) that still want a hard mobile branch on top of the
--- continuous scale. This is the single source of that threshold.
-local MOBILE_VIEWPORT_MAX_SHORT_SIDE = 600
+-- Compact viewport threshold, kept for phone-sized HUD nudges (shiftLeftOnMobile)
+-- and for consumers (Store/Hotbar) that want a hard compact branch on top of the
+-- continuous scale. Input hardware is intentionally irrelevant so Studio windows and
+-- desktop clients at the same usable size receive the same layout.
+local MOBILE_VIEWPORT_MAX_SHORT_SIDE = 500
 
 local MobileScale = {}
 
@@ -127,10 +127,7 @@ function MobileScale.getCoreSafeOffsets(gui)
 	return Vector2.new(math.max(0, insetTopLeft.X), math.max(0, insetTopLeft.Y)), Vector2.zero
 end
 
-local function isCompactViewport(viewportSize, touchEnabled)
-	if not touchEnabled then
-		return false
-	end
+local function isCompactViewport(viewportSize)
 	if not viewportSize or viewportSize.X <= 0 or viewportSize.Y <= 0 then
 		return false
 	end
@@ -139,7 +136,7 @@ end
 MobileScale.isCompactViewport = isCompactViewport
 
 local function shouldUseMobile(gui)
-	return isCompactViewport(getViewportSize(gui), UserInputService.TouchEnabled)
+	return isCompactViewport(getViewportSize(gui))
 end
 MobileScale.shouldUseMobile = shouldUseMobile
 
@@ -244,7 +241,7 @@ end
 -- this rewrites gui.Size on mobile).
 --
 --   Desktop: the authored offset box, design-res scaled (~1 at 1080p), centered in the safe band.
---   Mobile (touch + small viewport): the box is RESIZED to fit the safe area and UIScale stays at
+--   Compact viewport: the box is RESIZED to fit the safe area and UIScale stays at
 --     native (1) — so the shrink happens on the Size, not the UIScale, and TEXT keeps its authored
 --     readable size instead of scaling down with everything. This is the documented best practice
 --     (fixed-size text, container reflows). `opts.mobileScale` can bump native size if desired.
@@ -317,7 +314,7 @@ function MobileScale.apply(gui, opts)
 	end
 
 	bindViewport(gui, function()
-		-- opts.mobileScale: a fixed gentle scale on touch/small viewports (like the modals use),
+		-- opts.mobileScale: a fixed gentle scale on compact viewports (like the modals use),
 		-- instead of the continuous design-res shrink which can get aggressively small.
 		if opts and opts.mobileScale and shouldUseMobile(gui) then
 			scale.Scale = opts.mobileScale
@@ -353,10 +350,10 @@ function MobileScale.applyResolved(gui, opts)
 	return scale
 end
 
--- The flat mobile-only shrink factor: the fixed MOBILE_SCALE (or opts.mobileScale) on a touch
--- phone, and exactly 1 everywhere else. Unlike targetScale/fitScale it does NOT damp-shrink on
--- smaller desktop windows -- PC/laptop are left untouched. This is the factor used by HUD/overlay
--- elements that should scale down on phones but never on PC.
+-- The flat compact shrink factor: the fixed MOBILE_SCALE (or opts.mobileScale) below the shared
+-- short-side threshold, and exactly 1 everywhere else. Unlike targetScale/fitScale it does not
+-- use a continuous design-resolution curve. This is used by HUD/overlay elements that need the
+-- same discrete compact breakpoint as the modals.
 function MobileScale.mobileFactor(gui, opts)
 	if shouldUseMobile(gui) then
 		return (opts and opts.mobileScale) or MOBILE_SCALE
@@ -364,8 +361,8 @@ function MobileScale.mobileFactor(gui, opts)
 	return 1
 end
 
--- Scale an element down on phones only, leaving PC untouched. Drives ONLY a UIScale by
--- mobileFactor (mobile shrink / 1 on PC) -- a single uniform zoom. A UIScale scales the object it
+-- Scale an element down on compact viewports only. Drives ONLY a UIScale by mobileFactor
+-- (compact shrink / 1 otherwise) -- a single uniform zoom. A UIScale scales the object it
 -- is parented to (keeping its anchor-anchored position fixed) AND every descendant in step, so it
 -- is safe for a laid-out frame with mixed scale/offset children: everything scales together and the
 -- layout never distorts. (Resizing the frame's Size instead double-shrinks scale-sized children vs

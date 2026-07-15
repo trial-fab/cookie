@@ -32,6 +32,9 @@ return {
 	InstantWheelSpinEnabled = "InstantWheelSpinEnabled",
 	MusicEnabled = "MusicEnabled",
 	SfxEnabled = "SfxEnabled",
+	-- Server flips this after persisted preferences have been mirrored onto the Player. The
+	-- Settings client waits for it before replacing device-aware ScreenGui defaults.
+	SettingsLoaded = "SettingsLoaded",
 	-- Optional Studio-authored Sound attribute. Set to "Music" or "SoundEffect" to
 	-- route the Sound through the matching settings-controlled SoundGroup.
 	AudioCategory = "AudioCategory",

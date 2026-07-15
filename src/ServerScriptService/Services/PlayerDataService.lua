@@ -10,6 +10,7 @@ local Attrs = require(ReplicatedStorage.Shared.Attrs)
 local GridPlacement = require(ReplicatedStorage.Shared.GridPlacement)
 local PlayerMetricConfig = require(ReplicatedStorage.Shared.PlayerMetricConfig)
 local PlayerMetricsService = require(script.Parent.PlayerMetricsService)
+local SettingsConfig = require(ReplicatedStorage.Shared.SettingsConfig)
 
 local PlayerDataService = {}
 
@@ -52,6 +53,9 @@ local DEFAULT_PERSISTENT_DATA = {
 	Achievements = {},
 	LastSeenTimestamp = 0,
 	UnlockedBuildings = {},
+	-- Only explicit player choices are stored. Missing keys continue to use device-aware client
+	-- defaults, so first joining on mobile does not permanently change the desktop experience.
+	Settings = {},
 	-- Once a player ticks "don't show again" on the Build View nudge we never prompt
 	-- them again, across sessions. Defaults false so genuinely new players get nudged.
 	BuildViewNudgeDisabled = false,
@@ -153,6 +157,7 @@ local function migrateFlatData(data)
 		Achievements = data.Achievements,
 		LastSeenTimestamp = data.LastSeenTimestamp or data.lastSeenTimestamp,
 		UnlockedBuildings = data.UnlockedBuildings,
+		Settings = data.Settings,
 	})
 
 	return migrated
@@ -591,6 +596,15 @@ function PlayerDataService.UpdateFromPlayerValues(player)
 	persistent.Achievements = decodeJsonTable(player:GetAttribute(Attrs.AchievementsJson)) or persistent.Achievements
 	persistent.UnlockedBuildings = decodeJsonTable(player:GetAttribute(Attrs.UnlockedBuildingsJson))
 		or persistent.UnlockedBuildings
+	persistent.Settings = type(persistent.Settings) == "table" and persistent.Settings or {}
+	for _, attribute in ipairs(SettingsConfig.Attributes) do
+		local value = player:GetAttribute(attribute)
+		if type(value) == "boolean" then
+			persistent.Settings[attribute] = value
+		else
+			persistent.Settings[attribute] = nil
+		end
+	end
 	PlayerMetricsService.WritePersistentData(player, persistent)
 
 	return data

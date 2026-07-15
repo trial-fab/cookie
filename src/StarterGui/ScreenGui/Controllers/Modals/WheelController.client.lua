@@ -2,6 +2,7 @@
 -- own reel/preview and lazy collection behavior.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 
 local ModalOutsideClose = require(script.Parent:WaitForChild("ModalOutsideClose"))
 local ModalCoordinator = require(script.Parent:WaitForChild("ModalCoordinator"))
@@ -12,6 +13,9 @@ local ctx = {}
 ctx.preview = require(script.Parent:WaitForChild("WheelGooPreview"))
 
 local MY = "Wheel"
+local TINY_RESULT_MAX_SHORT_SIDE = 439
+local TIGHT_CONDENSED_MAX_SHORT_SIDE = 570
+local CONDENSED_WHEEL_MAX_SHORT_SIDE = 640
 local FALLBACK_ACTIVE_COLOR = Color3.fromRGB(5, 142, 109)
 local FALLBACK_MUTED_COLOR = Color3.fromRGB(150, 160, 175)
 local WAIT_TIMEOUT = 10
@@ -63,6 +67,12 @@ local header = waitChild(modal, "Header")
 local gcValue = header and header:FindFirstChild("GcPill", true)
 gcValue = gcValue and (gcValue:FindFirstChild("Value") or gcValue)
 local pages = waitChild(modal, "Pages")
+if pages then
+	-- UIPageLayout keeps every slot visible and positions inactive pages off-screen. Clip at the
+	-- page viewport so moving WheelModal.Pages during a modal-to-modal swipe cannot expose an
+	-- adjacent stale tab (Skins/Daily) over the incoming modal.
+	pages.ClipsDescendants = true
+end
 local pageLayout = pages and pages:FindFirstChildOfClass("UIPageLayout")
 local spinPage = waitDescendant(pages or modal, "SpinPage")
 local skinsPage = waitDescendant(pages or modal, "SkinsPage")
@@ -441,7 +451,16 @@ local responsiveLayout = ModalResponsiveLayout.bind({
 	end,
 })
 local function restScale()
-	return responsiveLayout.restScale()
+	local scale = responsiveLayout.restScale()
+	local compact = responsiveLayout.isCompact()
+	local camera = Workspace.CurrentCamera
+	local viewportSize = camera and camera.ViewportSize or Vector2.zero
+	local shortSide = math.min(viewportSize.X, viewportSize.Y)
+	local condensed = not compact and shortSide > 0 and shortSide < CONDENSED_WHEEL_MAX_SHORT_SIDE
+	local tightCondensed = condensed and shortSide <= TIGHT_CONDENSED_MAX_SHORT_SIDE
+	local tinyResult = compact and shortSide > 0 and shortSide < TINY_RESULT_MAX_SHORT_SIDE
+	ctx.reel.setCompactLayout(compact, condensed, tightCondensed, tinyResult)
+	return scale
 end
 
 local function resolveButton()

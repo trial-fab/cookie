@@ -28,7 +28,29 @@ function WheelReel.bind(ctx)
 	local cellTemplate = ctx.waitChild(strip, "CellTemplate")
 	local pointer = reel and reel:FindFirstChild("Pointer")
 	local rewardCard = ctx.spinPage and ctx.spinPage:FindFirstChild("RewardCard")
+	local cellPreview = cellTemplate and cellTemplate:FindFirstChild("Preview")
+	local rewardPreview = rewardCard and rewardCard:FindFirstChild("Preview")
+	local rewardBottomRow = rewardCard and rewardCard:FindFirstChild("bottom-row")
+	local rewardOwnedLabel = rewardCard and rewardCard:FindFirstChild("OwnedLabel")
+	local rewardCardPadding = rewardCard and rewardCard:FindFirstChildOfClass("UIPadding")
 	local statusLabel = ctx.spinPage and ctx.spinPage:FindFirstChild("Status")
+	local authoredReelSize = reel and reel.Size
+	local authoredCellSize = cellTemplate and cellTemplate.Size
+	local authoredCellPreviewSize = cellPreview and cellPreview.Size
+	local authoredRewardCardSize = rewardCard and rewardCard.Size
+	local authoredRewardPreviewSize = rewardPreview and rewardPreview.Size
+	local authoredRewardPreviewPosition = rewardPreview and rewardPreview.Position
+	local authoredRewardBottomRowSize = rewardBottomRow and rewardBottomRow.Size
+	local authoredRewardOwnedLabelSize = rewardOwnedLabel and rewardOwnedLabel.Size
+	local authoredSpinButtonSize = ctx.spinButton and ctx.spinButton.Size
+	local authoredRewardCardPadding = rewardCardPadding
+		and {
+			left = rewardCardPadding.PaddingLeft,
+			right = rewardCardPadding.PaddingRight,
+			top = rewardCardPadding.PaddingTop,
+			bottom = rewardCardPadding.PaddingBottom,
+		}
+	local authoredRewardSparkleSizes = {}
 	local allSkinDefs = {}
 	local cellPool = {}
 	local activeCells = {}
@@ -43,6 +65,23 @@ function WheelReel.bind(ctx)
 	local idleGeneration = 0
 	local requestOwnershipSnapshot = {}
 	local displayOwnershipSnapshot = {}
+	local tinyResultModeEnabled = false
+	local awaitingRewardAck = false
+	local compactLayoutActive = nil
+	local condensedLayoutActive = nil
+	local tightCondensedLayoutActive = nil
+	local tinyResultLayoutActive = nil
+
+	if rewardCard then
+		for _, descendant in ipairs(rewardCard:GetDescendants()) do
+			if
+				string.match(descendant.Name, "^Sparkle")
+				and (descendant:IsA("ImageLabel") or descendant:IsA("ImageButton"))
+			then
+				authoredRewardSparkleSizes[descendant] = descendant.Size
+			end
+		end
+	end
 
 	for _, def in ipairs(ctx.config.GooSkinDefinitions) do
 		if def.Rollable then
@@ -72,7 +111,7 @@ function WheelReel.bind(ctx)
 		if not (ctx.spinButton and ctx.spinButton:IsA("GuiButton")) then
 			return
 		end
-		local enabled = canSpin()
+		local enabled = awaitingRewardAck or canSpin()
 		ctx.spinButton.AutoButtonColor = false
 		ctx.spinButton.Active = enabled
 
@@ -81,7 +120,10 @@ function WheelReel.bind(ctx)
 		local icon = contentRow and contentRow:FindFirstChild("GcIcon") or ctx.spinButton:FindFirstChild("GcIcon")
 		local text
 		local targetWidth
-		if not ctx.config.FeatureFlags.GooSkinsEnabled then
+		if awaitingRewardAck then
+			text = "Ok"
+			targetWidth = ctx.spinButton:GetAttribute("IdleWidth") or DEFAULT_IDLE_BUTTON_WIDTH
+		elseif not ctx.config.FeatureFlags.GooSkinsEnabled then
 			text = "Unavailable"
 			targetWidth = ctx.spinButton:GetAttribute("UnavailableWidth") or DEFAULT_SPINNING_BUTTON_WIDTH
 		elseif spinning then
@@ -103,7 +145,10 @@ function WheelReel.bind(ctx)
 		elseif ctx.spinButton:IsA("TextButton") then
 			ctx.spinButton.Text = text
 		end
-		setVisible(icon, not spinning and not spinHovered and ctx.config.FeatureFlags.GooSkinsEnabled)
+		setVisible(
+			icon,
+			not awaitingRewardAck and not spinning and not spinHovered and ctx.config.FeatureFlags.GooSkinsEnabled
+		)
 
 		if buttonTargetWidth ~= targetWidth then
 			buttonTargetWidth = targetWidth
@@ -347,8 +392,8 @@ function WheelReel.bind(ctx)
 		local def = defFromResult(result)
 		local rarity = ctx.config.RarityById[result.RarityId]
 		local name = rewardCard:FindFirstChild("SkinName")
-		local tag = rewardCard:FindFirstChild("RarityTag")
-		local multiplier = rewardCard:FindFirstChild("Multiplier")
+		local tag = rewardCard:FindFirstChild("RarityTag", true)
+		local multiplier = rewardCard:FindFirstChild("Multiplier", true)
 		local ownedLabel = rewardCard:FindFirstChild("OwnedLabel")
 		if name and name:IsA("TextLabel") then
 			name.Text = result.DisplayName or "?"
@@ -481,8 +526,15 @@ function WheelReel.bind(ctx)
 				setStatus("New skin unlocked!")
 			end
 			spinning = false
+			awaitingRewardAck = tinyResultModeEnabled
+			if awaitingRewardAck then
+				stopIdle()
+				setVisible(reel, false)
+			else
+				setVisible(reel, true)
+				startIdle()
+			end
 			styleSpinButton()
-			startIdle()
 		end)
 	end
 
@@ -499,6 +551,15 @@ function WheelReel.bind(ctx)
 			styleSpinButton()
 		end)
 		ctx.spinButton.Activated:Connect(function()
+			if awaitingRewardAck then
+				awaitingRewardAck = false
+				setVisible(rewardCard, false)
+				setVisible(reel, true)
+				setStatus("")
+				styleSpinButton()
+				startIdle()
+				return
+			end
 			if not canSpin() then
 				if not ctx.config.FeatureFlags.GooSkinsEnabled then
 					setStatus("Goo skins are currently unavailable.")
@@ -531,7 +592,7 @@ function WheelReel.bind(ctx)
 		refresh = refreshGc,
 		setVisible = function(visible)
 			pageVisible = visible == true
-			if pageVisible then
+			if pageVisible and not awaitingRewardAck then
 				startIdle()
 			else
 				stopIdle()
@@ -541,6 +602,114 @@ function WheelReel.bind(ctx)
 		restartForMotionSetting = function()
 			stopIdle()
 			startIdle()
+		end,
+		setCompactLayout = function(compact, condensed, tightCondensed, tinyResult)
+			compact = compact == true
+			condensed = not compact and condensed == true
+			tightCondensed = condensed and tightCondensed == true
+			tinyResult = compact and tinyResult == true
+			if
+				compactLayoutActive == compact
+				and condensedLayoutActive == condensed
+				and tightCondensedLayoutActive == tightCondensed
+				and tinyResultLayoutActive == tinyResult
+			then
+				return
+			end
+			compactLayoutActive = compact
+			condensedLayoutActive = condensed
+			tightCondensedLayoutActive = tightCondensed
+			tinyResultLayoutActive = tinyResult
+
+			local wasIdle = idleRunning
+			local wasAwaitingRewardAck = awaitingRewardAck
+			if wasIdle then
+				stopIdle()
+			end
+
+			if reel and authoredReelSize then
+				local reelHeight = compact and 114 or (condensed and (tightCondensed and 94 or 124) or nil)
+				reel.Size = reelHeight
+					and UDim2.new(authoredReelSize.X.Scale, authoredReelSize.X.Offset, 0, reelHeight)
+					or authoredReelSize
+			end
+			if ctx.spinButton and authoredSpinButtonSize then
+				ctx.spinButton.Size = compact
+					and UDim2.new(authoredSpinButtonSize.X.Scale, authoredSpinButtonSize.X.Offset, 0, 24)
+					or authoredSpinButtonSize
+			end
+			local responsiveCellSide = compact and 110 or (condensed and (tightCondensed and 90 or 120) or nil)
+			local cellSize = responsiveCellSide
+				and UDim2.fromOffset(responsiveCellSide, responsiveCellSide)
+				or authoredCellSize
+			if strip and cellSize then
+				for _, cell in ipairs(strip:GetChildren()) do
+					if cell:IsA("GuiObject") and (cell == cellTemplate or cell.Name == "Cell") then
+						cell.Size = cellSize
+						local preview = cell:FindFirstChild("Preview")
+						if preview and preview:IsA("GuiObject") and authoredCellPreviewSize then
+							preview.Size = (compact or condensed)
+								and UDim2.new(1, -10, 1, -32)
+								or authoredCellPreviewSize
+						end
+					end
+				end
+			end
+			if rewardCard and authoredRewardCardSize then
+				rewardCard.Size = compact
+					and UDim2.fromOffset(100, 100)
+					or (
+						condensed and UDim2.fromOffset(tightCondensed and 78 or 110, tightCondensed and 78 or 110)
+						or authoredRewardCardSize
+					)
+			end
+			if rewardPreview and authoredRewardPreviewSize and authoredRewardPreviewPosition then
+				rewardPreview.Size = compact
+					and UDim2.fromOffset(70, 70)
+					or (tightCondensed and UDim2.fromOffset(54, 54) or authoredRewardPreviewSize)
+				rewardPreview.Position = (compact or tightCondensed)
+					and UDim2.fromScale(0.5, 0.5)
+					or authoredRewardPreviewPosition
+			end
+			if rewardBottomRow and authoredRewardBottomRowSize then
+				rewardBottomRow.Size = authoredRewardBottomRowSize
+			end
+			if rewardOwnedLabel and authoredRewardOwnedLabelSize then
+				rewardOwnedLabel.Size = authoredRewardOwnedLabelSize
+			end
+			if rewardCardPadding and authoredRewardCardPadding then
+				local padding = (compact or condensed) and UDim.new(0, 0) or nil
+				rewardCardPadding.PaddingLeft = padding or authoredRewardCardPadding.left
+				rewardCardPadding.PaddingRight = padding or authoredRewardCardPadding.right
+				rewardCardPadding.PaddingTop = padding or authoredRewardCardPadding.top
+				rewardCardPadding.PaddingBottom = padding or authoredRewardCardPadding.bottom
+			end
+			for sparkle, authoredSize in pairs(authoredRewardSparkleSizes) do
+				if sparkle.Parent then
+					sparkle.Size = compact
+						and UDim2.fromOffset(20, 20)
+						or (tightCondensed and UDim2.fromOffset(16, 16) or authoredSize)
+				end
+			end
+
+			tinyResultModeEnabled = tinyResult
+			if tinyResult and rewardCard and rewardCard.Visible and not spinning then
+				awaitingRewardAck = true
+				setVisible(reel, false)
+			elseif not tinyResult and awaitingRewardAck then
+				awaitingRewardAck = false
+				setVisible(reel, true)
+			end
+			styleSpinButton()
+
+			if
+				(wasIdle or (wasAwaitingRewardAck and not awaitingRewardAck))
+				and pageVisible
+				and not spinning
+				and not awaitingRewardAck
+			then
+				startIdle()
+			end
 		end,
 	}
 end
