@@ -18,6 +18,7 @@
 -- StoreOpen=true from that side, so the band is always present while building.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local screenGui = script:FindFirstAncestorOfClass("ScreenGui")
@@ -33,6 +34,7 @@ screenGui:SetAttribute("StoreToggleControllerRunning", true)
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(shared:WaitForChild("Attrs"))
 local GuiNames = require(shared:WaitForChild("GuiNames"))
+local SettingsConfig = require(shared:WaitForChild("SettingsConfig"))
 local StoreShell = require(shared:WaitForChild("StoreShell"))
 local ModalCoordinator = require(script.Parent.Parent:WaitForChild("Modals"):WaitForChild("ModalCoordinator"))
 
@@ -98,7 +100,12 @@ end)
 -- works before the Settings row is opened. SettingsController owns it once the row exists; the
 -- same default rule lives there (mirrors how PlacementControlsEnabled is seeded in two places).
 if screenGui:GetAttribute(Attrs.AutoBuildMode) == nil then
-	screenGui:SetAttribute(Attrs.AutoBuildMode, UserInputService.TouchEnabled and not UserInputService.MouseEnabled)
+	local deviceType = SettingsConfig.GetDeviceType(
+		UserInputService.TouchEnabled,
+		UserInputService.MouseEnabled,
+		RunService:IsStudio() and UserInputService.PreferredInput == Enum.PreferredInput.Touch
+	)
+	screenGui:SetAttribute(Attrs.AutoBuildMode, deviceType == SettingsConfig.DeviceType.Mobile)
 end
 
 -- Build the cookie animator (StoreController-style ctx module). It binds the StoreBottomOff/On

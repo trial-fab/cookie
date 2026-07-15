@@ -597,7 +597,7 @@ function PlayerDataService.UpdateFromPlayerValues(player)
 	persistent.UnlockedBuildings = decodeJsonTable(player:GetAttribute(Attrs.UnlockedBuildingsJson))
 		or persistent.UnlockedBuildings
 	persistent.Settings = type(persistent.Settings) == "table" and persistent.Settings or {}
-	for _, attribute in ipairs(SettingsConfig.Attributes) do
+	for _, attribute in ipairs(SettingsConfig.StoredAttributes) do
 		local value = player:GetAttribute(attribute)
 		if type(value) == "boolean" then
 			persistent.Settings[attribute] = value

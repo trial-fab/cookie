@@ -8,7 +8,11 @@
 -- screenGui PlacementActive attribute.
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Attrs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Attrs"))
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Attrs = require(Shared:WaitForChild("Attrs"))
+local SettingsConfig = require(Shared:WaitForChild("SettingsConfig"))
 
 local StorePlacement = {}
 
@@ -196,8 +200,12 @@ function StorePlacement.new(ctx)
 	function pad.enabled()
 		local pref = screenGui:GetAttribute(Attrs.PlacementControlsEnabled)
 		if pref == nil then
-			local UserInputService = game:GetService("UserInputService")
-			return UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+			local deviceType = SettingsConfig.GetDeviceType(
+				UserInputService.TouchEnabled,
+				UserInputService.MouseEnabled,
+				RunService:IsStudio() and UserInputService.PreferredInput == Enum.PreferredInput.Touch
+			)
+			return deviceType == SettingsConfig.DeviceType.Mobile
 		end
 
 		return pref == true

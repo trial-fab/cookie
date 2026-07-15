@@ -2,12 +2,15 @@
 -- SettingsModal) with its grouped panels, icon/title/description rows and tick
 -- checkboxes is authored in Studio; this binds the ticks and open/close behavior.
 -- Preferences are mirrored as attributes on the ScreenGui so other controllers can
--- read them (ReducedMotionEnabled, etc.) and persisted by SettingsPersistence. Upgrade-owned toggles such as Multi-Place
--- live in the Store. Reset Stats lives in the bottom bar and is driven by
--- ResetStatsController. Only one of Help/Settings/Profile/Wheel is open at a time.
+-- read them (ReducedMotionEnabled, etc.) and persisted by SettingsPersistence. Upgrade-owned
+-- toggles such as Multi-Place live in the Store. Reset Stats lives in the bottom bar and is
+-- driven by ResetStatsController. Only one of Help/Settings/Profile/Wheel is open at a time.
 local GuiService = game:GetService("GuiService")
+local RunService = game:GetService("RunService")
 local Attrs = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Attrs"))
 local GuiNames = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("GuiNames"))
+local SettingsConfig =
+	require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("SettingsConfig"))
 local UserInputService = game:GetService("UserInputService")
 local ModalOutsideClose = require(script.Parent:WaitForChild("ModalOutsideClose"))
 local ModalCoordinator = require(script.Parent:WaitForChild("ModalCoordinator"))
@@ -16,6 +19,7 @@ local ModalResponsiveLayout = require(script.Parent:WaitForChild("ModalResponsiv
 local SettingsMusicWaveform = require(script.Parent:WaitForChild("SettingsMusicWaveform"))
 local SettingsPersistence = require(script.Parent:WaitForChild("SettingsPersistence"))
 local SettingsReducedMotionGlyph = require(script.Parent:WaitForChild("SettingsReducedMotionGlyph"))
+local SettingsResetButton = require(script.Parent:WaitForChild("SettingsResetButton"))
 local SettingsSfxGlyph = require(script.Parent:WaitForChild("SettingsSfxGlyph"))
 local SettingsToggleGlyphs = require(script.Parent:WaitForChild("SettingsToggleGlyphs"))
 local SettingsUpgradeReminderPulse = require(script.Parent:WaitForChild("SettingsUpgradeReminderPulse"))
@@ -43,6 +47,12 @@ local musicWaveform = SettingsMusicWaveform.new(body)
 local reducedMotionGlyph = SettingsReducedMotionGlyph.new(body)
 local sfxGlyph = SettingsSfxGlyph.new(body)
 local upgradeReminderPulse = SettingsUpgradeReminderPulse.new(body)
+local currentDeviceType =
+	SettingsConfig.GetDeviceType(
+		UserInputService.TouchEnabled,
+		UserInputService.MouseEnabled,
+		RunService:IsStudio() and UserInputService.PreferredInput == Enum.PreferredInput.Touch
+	)
 
 local SIMPLE = {
 	ReducedMotion = Attrs.ReducedMotionEnabled,
@@ -63,13 +73,13 @@ local function getDefault(attr)
 	-- Placement pad is opt-out on touch-only devices (no R/Esc/keyboard there) and
 	-- opt-in when a mouse is present. The same rule lives in StoreController so the
 	-- two agree regardless of which controller initializes the attribute first.
-	if attr == "PlacementControlsEnabled" then
-		return UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+	if attr == Attrs.PlacementControlsEnabled then
+		return currentDeviceType == SettingsConfig.DeviceType.Mobile
 	end
 	-- Auto build mode is opt-out on touch-only devices (tapping the store toggle is the only
 	-- build affordance there) and opt-in on PC, where B and V are separate keys by default.
 	if attr == Attrs.AutoBuildMode then
-		return UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+		return currentDeviceType == SettingsConfig.DeviceType.Mobile
 	end
 	return true
 end
@@ -203,7 +213,10 @@ for rowName, attr in pairs(SIMPLE) do
 	end
 end
 
-SettingsPersistence.new(screenGui)
+local settingsPersistence = SettingsPersistence.new(screenGui, currentDeviceType)
+SettingsResetButton.new(body, function()
+	settingsPersistence.resetToDefaults(getDefault)
+end)
 SettingsToggleGlyphs.new(body, screenGui)
 
 local function updateUpgradeReminderPulse()
