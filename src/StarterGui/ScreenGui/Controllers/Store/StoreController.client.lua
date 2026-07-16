@@ -404,6 +404,7 @@ local ctx = {
 	layout = nil,
 	preview = nil,
 	cookieStats = nil,
+	cursorTooltip = nil,
 	placement = nil,
 	robuxTab = nil,
 	-- late-bound orchestrator callbacks (assigned once their definitions exist):
@@ -1194,6 +1195,7 @@ local function scheduleOrderingRefresh()
 	end)
 end
 
+ctx.cursorTooltip = require(shared:WaitForChild("CursorTooltip")).get(screenGui)
 ctx.placement = require(script.Parent.StorePlacement).new(ctx)
 ctx.placementControls = require(script.Parent.StorePlacementControls).new(ctx, ctx.placement)
 ctx.multiPlaceSessionControls = require(script.Parent.StoreMultiPlaceSessionControls).new(ctx, ctx.placement)

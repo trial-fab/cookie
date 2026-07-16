@@ -5,7 +5,8 @@
 -- StoreCookieStats. ensureViewport consults ctx.isBuildingLocked to render the locked
 -- silhouette; setRequirementUi uses ctx.format for the count text.
 local StorePreview = {}
-local Attrs = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Attrs"))
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local Attrs = require(Shared:WaitForChild("Attrs"))
 
 function StorePreview.new(ctx)
 	local UpgradeConfig = ctx.UpgradeConfig
@@ -19,7 +20,7 @@ function StorePreview.new(ctx)
 	-- the vertical axis through that centre. Keyed by viewport so rebuilds replace it.
 	local previewSpinners = {}
 	local previewInteraction = {
-		autoSpinSpeed = 0.35,
+		autoSpinSpeed = 0.3,
 		dragThresholdPx = 6,
 		dragRadiansPerPixel = 0.015,
 		activeDragOwner = nil,
@@ -182,19 +183,157 @@ function StorePreview.new(ctx)
 		end
 	end
 
-	-- Buildings may hold a Studio-authored "Front" marker part (invisible, non-collidable) that
-	-- pinpoints the static upgrade preview's camera. It must be pulled from EVERY cloned preview
-	-- before measuring/rendering so it never inflates the bounding box or shows up. Only the static
-	-- upgrade preview uses the returned position; the spinning cards and requirement previews just
-	-- discard it. Returns the marker's world position, or nil if there is none.
-	local function extractFrontMarker(model)
+	-- Legacy "Front" marker parts may still exist inside preview models (they used to aim
+	-- the static camera). The camera no longer uses them, but they must still be pulled from
+	-- every clone so an invisible marker never inflates the bounding box. Once the Front
+	-- parts are deleted from ReplicatedStorage.BuildingPreviews this helper can go too.
+	local function removeFrontMarker(model)
 		local part = model:FindFirstChild("Front", true)
 		if part and part:IsA("BasePart") then
-			local pos = part.Position
 			part:Destroy()
-			return pos
 		end
-		return nil
+	end
+
+	-- Universal orbit framing for every STATIC building preview (upgrade rows, reduced-motion
+	-- and mobile store cards). The camera FITS the building's oriented bounding box into the
+	-- viewport frustum, so flat, tall, and wide buildings all fill the frame equally instead
+	-- of sharing a distance keyed to their largest dimension. Zoom is the margin on that fit
+	-- (1 = box exactly fills the frame, higher backs off, lower crops in), which also makes
+	-- Fov a pure perspective-flatness dial. These final values are intentionally baked: static
+	-- upgrade previews and their reduced-motion/mobile card fallback share one fixed composition.
+	local function aimStaticCamera(viewport, camera, boxCFrame, boxSize)
+		local angle = math.rad(180)
+		local upRatio = 0.2
+		local zoom = 1
+		local ground = 0
+		local fov = 20
+		local direction = Vector3.new(math.cos(angle), upRatio, math.sin(angle)).Unit
+		camera.FieldOfView = fov
+
+		local center = boxCFrame.Position
+		local forward = -direction
+		local rot = CFrame.lookAt(center + direction, center)
+		local right, up = rot.RightVector, rot.UpVector
+		local tanVertical = math.tan(math.rad(fov) * 0.5)
+		local absSize = viewport.AbsoluteSize
+		local aspect = (absSize.X > 0 and absSize.Y > 0) and (absSize.X / absSize.Y) or 1
+		local tanHorizontal = tanVertical * aspect
+
+		-- Minimal distance that puts all 8 box corners inside both frustum planes.
+		local fitDistance = 0
+		local corners = {}
+		for xi = -0.5, 0.5 do
+			for yi = -0.5, 0.5 do
+				for zi = -0.5, 0.5 do
+					local corner = boxCFrame:PointToWorldSpace(Vector3.new(boxSize.X * xi, boxSize.Y * yi, boxSize.Z * zi))
+					table.insert(corners, corner)
+					local offset = corner - center
+					local depth = offset:Dot(forward)
+					fitDistance = math.max(
+						fitDistance,
+						math.abs(offset:Dot(right)) / tanHorizontal - depth,
+						math.abs(offset:Dot(up)) / tanVertical - depth
+					)
+				end
+			end
+		end
+
+		local distance = math.max(fitDistance, 0.5) * zoom
+
+		-- Project all corners through the real tilted perspective camera. Normalized vertical
+		-- coordinates are -1 at the bottom frustum plane and 1 at the top.
+		local function projectedVerticalExtents(aimY)
+			local aim = Vector3.new(center.X, aimY, center.Z)
+			local cameraCFrame = CFrame.lookAt(aim + direction * distance, aim)
+			local minV = math.huge
+			local maxV = -math.huge
+			for _, corner in ipairs(corners) do
+				local relative = cameraCFrame:PointToObjectSpace(corner)
+				local v = relative.Y / (-relative.Z * tanVertical)
+				minV = math.min(minV, v)
+				maxV = math.max(maxV, v)
+			end
+			return minV, maxV, cameraCFrame
+		end
+
+		-- Both projected extrema decrease as aimY rises. Expand from the box centre until
+		-- the requested extent is bracketed, then solve it precisely by bisection.
+		local function solveAimY(initialY, targetV, useMaximum)
+			local function extentAt(aimY)
+				local minV, maxV = projectedVerticalExtents(aimY)
+				return useMaximum and maxV or minV
+			end
+
+			local initialV = extentAt(initialY)
+			if initialV == targetV then
+				return initialY
+			end
+
+			local lowY = initialY
+			local highY = initialY
+			local step = math.max(distance * 0.25, boxSize.Magnitude * 0.25, 0.5)
+			if initialV > targetV then
+				for _ = 1, 16 do
+					highY += step
+					if extentAt(highY) <= targetV then
+						break
+					end
+					step *= 2
+				end
+			else
+				for _ = 1, 16 do
+					lowY -= step
+					if extentAt(lowY) >= targetV then
+						break
+					end
+					step *= 2
+				end
+			end
+
+			for _ = 1, 24 do
+				local midY = (lowY + highY) * 0.5
+				if extentAt(midY) > targetV then
+					lowY = midY
+				else
+					highY = midY
+				end
+			end
+			return (lowY + highY) * 0.5
+		end
+
+		-- Shared ground line: solve the true perspective position of the lowest corner,
+		-- then raise the aim only if needed to keep the highest corner inside the frame.
+		local targetMinV = -(1 - 2 * ground)
+		local aimY = solveAimY(center.Y, targetMinV, false)
+		local _, maxV = projectedVerticalExtents(aimY)
+		if maxV > 1 then
+			aimY = solveAimY(aimY, 1, true)
+		end
+		local _, _, cameraCFrame = projectedVerticalExtents(aimY)
+		camera.CFrame = cameraCFrame
+	end
+
+	-- Simple base-anchored framing shared by the spinning StoreBottom cards and the small
+	-- requirement thumbnail. A virtual minimum height raises the aim for short buildings without
+	-- adding parts or stacking a separate vertical offset on top of the camera composition.
+	local function aimBaseAnchoredCamera(camera, boundingCFrame, size, angleDegrees, up, zoom, minimumHeight, fov)
+		local angle = math.rad(angleDegrees)
+		local frameHeight = math.max(size.Y, minimumHeight)
+		local aim = boundingCFrame:PointToWorldSpace(Vector3.new(0, (frameHeight - size.Y) * 0.5, 0))
+		local maxDimension = math.max(size.X, frameHeight, size.Z, 1)
+		local offset = Vector3.new(math.cos(angle) * zoom, up, math.sin(angle) * zoom) * maxDimension
+
+		camera.FieldOfView = fov
+		camera.CFrame = CFrame.lookAt(aim + offset, aim)
+	end
+
+	-- Final StoreBottom composition, baked after live tuning.
+	local function aimSpinningCamera(camera, boundingCFrame, size)
+		aimBaseAnchoredCamera(camera, boundingCFrame, size, 46.16913932790743, 0.5, 1.9, 6, 40)
+	end
+
+	local function aimRequirementCamera(camera, boundingCFrame, size)
+		aimBaseAnchoredCamera(camera, boundingCFrame, size, 225, 0.5, 1.5, 1, 40)
 	end
 
 	function previewInteraction.clearRequirementPreview(viewport)
@@ -240,18 +379,15 @@ function StorePreview.new(ctx)
 		local model = sourceModel:Clone()
 		model.Name = "RequirementModel"
 		setPreviewModelState(model)
-		extractFrontMarker(model)
+		removeFrontMarker(model)
 		model.Parent = world
 
 		local boundingCFrame, size = model:GetBoundingBox()
-		local center = boundingCFrame.Position
-		local maxDimension = math.max(size.X, size.Y, size.Z, 1)
 
 		local camera = Instance.new("Camera")
 		camera.Name = "RequirementCamera"
-		camera.FieldOfView = 35
-		camera.CFrame = CFrame.lookAt(center + Vector3.new(maxDimension * 1.2, maxDimension * 0.75, maxDimension * 1.25), center)
 		camera.Parent = viewport
+		aimRequirementCamera(camera, boundingCFrame, size)
 		viewport.CurrentCamera = camera
 	end
 
@@ -336,13 +472,12 @@ function StorePreview.new(ctx)
 		previewInteraction.renderRequirementPreview(requirement:FindFirstChild("RequirementPreview", true), requiredId)
 	end
 
-	-- Renders a building model into a viewport as a STATIC (non-spinning) front-facing shot,
-	-- zoomed a little tighter than normal building cards. BuildingUpgrade rows always use it;
-	-- building cards reuse it while Reduced Motion is on. Never registered in previewSpinners,
-	-- so the render loop leaves it alone. Only rebuilds when the target or style changes.
-	-- Frame chrome (background, border, size, position) is Studio's; this sets only the lighting
-	-- and 3D contents. targetConfig.PreviewYaw (degrees) dials a building's front per-building.
-	local function renderStaticBuilding(viewport, sourceModel, targetName, targetConfig, silhouette)
+	-- Renders a building model into a viewport as a STATIC (non-spinning) shot using the
+	-- universal orbit framing (aimStaticCamera). BuildingUpgrade rows always use it; building
+	-- cards reuse it while Reduced Motion is on. Never registered in previewSpinners, so the
+	-- render loop leaves it alone. Only rebuilds when the target or style changes. Frame chrome
+	-- (background, border, size, position) is Studio's; this sets only the lighting and 3D contents.
+	local function renderStaticBuilding(viewport, sourceModel, targetName, silhouette)
 		silhouette = silhouette == true
 		if viewport:GetAttribute(Attrs.UpgradeId) == targetName
 			and viewport:GetAttribute("PreviewMode") == "Static"
@@ -372,32 +507,15 @@ function StorePreview.new(ctx)
 		if silhouette then
 			applyPreviewSilhouette(model)
 		end
-		-- The "Front" marker (if any) sits at the camera's vantage point: the camera goes to its
-		-- position and looks at the building's centre, so its placement controls both the front
-		-- angle and the zoom distance. It is removed here so it never inflates the box or renders.
-		local frontPos = extractFrontMarker(model)
+		removeFrontMarker(model)
 		model.Parent = world
 
 		local boundingCFrame, size = model:GetBoundingBox()
-		local center = boundingCFrame.Position
-		local maxDimension = math.max(size.X, size.Y, size.Z, 1)
-
-		local camCFrame
-		if frontPos then
-			camCFrame = CFrame.lookAt(frontPos, center)
-		else
-			-- No Front marker: straight-on +Z view, PreviewYaw-rotatable, at a fixed zoom.
-			local yaw = math.rad(tonumber(targetConfig and targetConfig.PreviewYaw) or 0)
-			local dist = maxDimension * 1.35
-			local offset = CFrame.Angles(0, yaw, 0):VectorToWorldSpace(Vector3.new(0, size.Y * 0.12, dist))
-			camCFrame = CFrame.lookAt(center + offset, center)
-		end
 
 		local camera = Instance.new("Camera")
 		camera.Name = "PreviewCamera"
-		camera.FieldOfView = 35
-		camera.CFrame = camCFrame
 		camera.Parent = viewport
+		aimStaticCamera(viewport, camera, boundingCFrame, size)
 		viewport.CurrentCamera = camera
 	end
 
@@ -428,7 +546,7 @@ function StorePreview.new(ctx)
 		if icon and icon:IsA("GuiObject") then
 			icon.Visible = false
 		end
-		renderStaticBuilding(viewport, sourceModel, targetName, targetConfig, false)
+		renderStaticBuilding(viewport, sourceModel, targetName, false)
 	end
 
 	local function ensureViewport(row, config)
@@ -475,9 +593,9 @@ function StorePreview.new(ctx)
 		viewport.BackgroundTransparency = 1
 		viewport.BorderSizePixel = 0
 		if reducedMotion then
-			-- Reuse the same fixed, front-facing composition as BuildingUpgrade rows.
+			-- Reuse the same universal static composition as BuildingUpgrade rows.
 			-- Locked buildings keep their existing dark silhouette treatment.
-			renderStaticBuilding(viewport, sourceModel, row.Name, config, wantSilhouette)
+			renderStaticBuilding(viewport, sourceModel, row.Name, wantSilhouette)
 			return
 		end
 
@@ -498,7 +616,7 @@ function StorePreview.new(ctx)
 		local model = sourceModel:Clone()
 		model.Name = "PreviewModel"
 		setPreviewModelState(model)
-		extractFrontMarker(model)
+		removeFrontMarker(model)
 		if wantSilhouette then
 			applyPreviewSilhouette(model)
 		end
@@ -506,13 +624,11 @@ function StorePreview.new(ctx)
 
 		local boundingCFrame, size = model:GetBoundingBox()
 		local center = boundingCFrame.Position
-		local maxDimension = math.max(size.X, size.Y, size.Z, 1)
 
 		local camera = Instance.new("Camera")
 		camera.Name = "PreviewCamera"
-		camera.FieldOfView = 35
-		camera.CFrame = CFrame.lookAt(center + Vector3.new(maxDimension * 1.2, maxDimension * 0.75, maxDimension * 1.25), center)
 		camera.Parent = viewport
+		aimSpinningCamera(camera, boundingCFrame, size)
 		viewport.CurrentCamera = camera
 
 		previewSpinners[viewport] = {

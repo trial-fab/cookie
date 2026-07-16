@@ -2,20 +2,18 @@
 -- The Studio-authored counter follows the cursor in both desktop placement presentations.
 -- Classic placement also reuses the center hotbar slot as Cancel at x0 and Done after the
 -- first server-confirmed building. HotbarPlacementMode owns face visibility and slot geometry.
-local GuiService = game:GetService("GuiService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(Shared:WaitForChild("Attrs"))
-local DevTuning = require(Shared:WaitForChild("DevTuning"):WaitForChild("DevTuning"))
 local Net = require(Shared:WaitForChild("Net"))
 local SettingsConfig = require(Shared:WaitForChild("SettingsConfig"))
 local UiMotion = require(Shared:WaitForChild("UiMotion"))
 
 local StoreMultiPlaceSessionControls = {}
+local STATE_TRANSITION_SECONDS = 0.2
 
 local function isImage(instance)
 	return instance and (instance:IsA("ImageLabel") or instance:IsA("ImageButton"))
@@ -32,7 +30,8 @@ function StoreMultiPlaceSessionControls.new(ctx, placement)
 	local confirmFace = hotbar
 		and hotbar:FindFirstChild("SlotRight")
 		and hotbar.SlotRight:FindFirstChild("PlacementFace")
-	local counter = screenGui:FindFirstChild("MultiPlaceCounter")
+	local counterSource = ctx.cursorTooltip
+		and ctx.cursorTooltip:createSource({ priority = ctx.cursorTooltip.Priority.Counter })
 	local deviceType = SettingsConfig.GetDeviceType(
 		UserInputService.TouchEnabled,
 		UserInputService.MouseEnabled,
@@ -84,7 +83,7 @@ function StoreMultiPlaceSessionControls.new(ctx, placement)
 			cancel = { ImageTransparency = done and 1 or 0 },
 			done = { ImageTransparency = done and 0 or 1 },
 		}
-		local duration = DevTuning.get("PlacementControls.MultiPlaceStateTransitionSeconds")
+		local duration = STATE_TRANSITION_SECONDS
 		if not animate or duration <= 0 then
 			face.BackgroundColor3 = goals.face.BackgroundColor3
 			cancelIcon.ImageTransparency = goals.cancel.ImageTransparency
@@ -104,31 +103,18 @@ function StoreMultiPlaceSessionControls.new(ctx, placement)
 		end
 	end
 
-	local function updateCounterPosition()
-		if not (counter and counter:IsA("GuiObject") and counter.Visible) then
-			return
-		end
-		local point = UserInputService:GetMouseLocation()
-		if not screenGui.IgnoreGuiInset then
-			point -= GuiService:GetGuiInset()
-		end
-		local offsetX = DevTuning.get("PlacementControls.MultiPlaceCounterOffsetX")
-		local offsetY = DevTuning.get("PlacementControls.MultiPlaceCounterOffsetY")
-		local camera = Workspace.CurrentCamera
-		local viewport = camera and camera.ViewportSize or Vector2.new(math.huge, math.huge)
-		local size = counter.AbsoluteSize
-		local x = math.clamp(point.X + offsetX, 0, math.max(0, viewport.X - size.X))
-		local y = math.clamp(point.Y + offsetY, 0, math.max(0, viewport.Y - size.Y))
-		counter.Position = UDim2.fromOffset(math.round(x), math.round(y))
-	end
-
 	local function refresh()
 		local active = sessionActive()
 		local count = getCount()
-		if counter and counter:IsA("TextLabel") then
-			counter.Visible = active
-			counter.Text = "x" .. tostring(count)
-			updateCounterPosition()
+		if counterSource then
+			if active then
+				counterSource:show({
+					mode = "Counter",
+					text = "x" .. tostring(count),
+				})
+			else
+				counterSource:clear()
+			end
 		end
 		local classic = classicSessionActive()
 		if classic and hitbox and hitbox:IsA("GuiButton") then
@@ -161,13 +147,9 @@ function StoreMultiPlaceSessionControls.new(ctx, placement)
 	}) do
 		screenGui:GetAttributeChangedSignal(attribute):Connect(refresh)
 	end
-	RunService.RenderStepped:Connect(updateCounterPosition)
-	DevTuning.observe("PlacementControls.MultiPlaceCounterOffsetX", updateCounterPosition)
-	DevTuning.observe("PlacementControls.MultiPlaceCounterOffsetY", updateCounterPosition)
-	DevTuning.observe("PlacementControls.MultiPlaceStateTransitionSeconds", function() end)
 
-	if counter and counter:IsA("GuiObject") then
-		counter.Visible = false
+	if counterSource then
+		counterSource:clear()
 	end
 	setDoneState(false, false)
 	refresh()

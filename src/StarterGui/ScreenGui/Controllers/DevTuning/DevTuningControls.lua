@@ -1,9 +1,15 @@
 -- DevTuningControls: generated feature groups, typed controls, search, and server applies.
 
+local UserInputService = game:GetService("UserInputService")
+
 local DevTuningControls = {}
 
 local ROW_HEIGHT = 112
+local SLIDER_ROW_HEIGHT = 146
 local CONTROL_HEIGHT = 40
+-- Ranges with more steps than this are impossible to set precisely by sliding;
+-- they keep the text box only (e.g. MultiPlaceCounterTestCount's huge range).
+local MAX_SLIDER_STEPS = 10000
 
 local function addCorner(parent, radius)
 	local corner = Instance.new("UICorner")
@@ -15,8 +21,16 @@ local function addStroke(parent, color)
 	local stroke = Instance.new("UIStroke")
 	stroke.Color = color
 	stroke.Transparency = 0.25
-	stroke.Thickness = 1
+	stroke.Thickness = 2
 	stroke.Parent = parent
+end
+
+local function sliderEligible(definition)
+	return definition.kind == "number"
+		and type(definition.min) == "number"
+		and type(definition.max) == "number"
+		and definition.max > definition.min
+		and (definition.max - definition.min) / math.max(definition.step or 0, 1e-9) <= MAX_SLIDER_STEPS
 end
 
 local function makeButton(name, text, parent, ctx)
@@ -24,6 +38,7 @@ local function makeButton(name, text, parent, ctx)
 	button.Name = name
 	button.AutoButtonColor = true
 	button.BackgroundColor3 = ctx.colors.surface
+	button.BackgroundTransparency = 1
 	button.BorderSizePixel = 0
 	button.Font = Enum.Font.ArialBold
 	button.Text = text
@@ -39,6 +54,7 @@ local function makeTextBox(name, parent, ctx)
 	local box = Instance.new("TextBox")
 	box.Name = name
 	box.BackgroundColor3 = Color3.fromRGB(21, 24, 32)
+	box.BackgroundTransparency = 1
 	box.BorderSizePixel = 0
 	box.ClearTextOnFocus = false
 	box.Font = Enum.Font.Arial
@@ -99,10 +115,127 @@ local function submitAsync(ctx, definition, candidateValue)
 	task.spawn(submit, ctx, definition, candidateValue)
 end
 
+-- Drag slider for bounded numeric tunables. Applies throttled live submits while
+-- dragging (so previews react in real time) and a final submit on release; the
+-- server still clamps and step-quantizes as its own invariant.
+local function buildSlider(ctx, definition, row)
+	local area = Instance.new("Frame")
+	area.Name = "Slider"
+	area.Position = UDim2.fromOffset(12, ROW_HEIGHT - 2)
+	area.Size = UDim2.new(1, -24, 0, 28)
+	area.BackgroundTransparency = 1
+	area.Active = true
+	area.Parent = row
+
+	local track = Instance.new("Frame")
+	track.Name = "Track"
+	track.AnchorPoint = Vector2.new(0, 0.5)
+	track.Position = UDim2.new(0, 0, 0.5, 0)
+	track.Size = UDim2.new(1, 0, 0, 6)
+	track.BackgroundColor3 = Color3.fromRGB(21, 24, 32)
+	track.BorderSizePixel = 0
+	track.Parent = area
+	addCorner(track, 3)
+
+	local fill = Instance.new("Frame")
+	fill.Name = "Fill"
+	fill.Size = UDim2.new(0, 0, 1, 0)
+	fill.BackgroundColor3 = ctx.colors.accent
+	fill.BorderSizePixel = 0
+	fill.Parent = track
+	addCorner(fill, 3)
+
+	local knob = Instance.new("Frame")
+	knob.Name = "Knob"
+	knob.AnchorPoint = Vector2.new(0.5, 0.5)
+	knob.Position = UDim2.new(0, 0, 0.5, 0)
+	knob.Size = UDim2.fromOffset(18, 18)
+	knob.BackgroundColor3 = ctx.colors.text
+	knob.BorderSizePixel = 0
+	knob.ZIndex = 2
+	knob.Parent = area
+	addCorner(knob, 9)
+
+	local function render(value)
+		local alpha = math.clamp((value - definition.min) / (definition.max - definition.min), 0, 1)
+		fill.Size = UDim2.new(alpha, 0, 1, 0)
+		knob.Position = UDim2.new(alpha, 0, 0.5, 0)
+	end
+
+	local function valueFromX(x)
+		local width = math.max(track.AbsoluteSize.X, 1)
+		local alpha = math.clamp((x - track.AbsolutePosition.X) / width, 0, 1)
+		local value = definition.min + alpha * (definition.max - definition.min)
+		local step = definition.step
+		if type(step) == "number" and step > 0 then
+			value = definition.min + math.round((value - definition.min) / step) * step
+		end
+		return math.clamp(value, definition.min, definition.max)
+	end
+
+	local dragging = false
+	local lastSent = nil
+	local lastSendClock = 0
+
+	local function handle(x, final)
+		local value = valueFromX(x)
+		render(value)
+		if final then
+			if value ~= lastSent then
+				lastSent = value
+				submitAsync(ctx, definition, value)
+			end
+		elseif value ~= lastSent and os.clock() - lastSendClock > 0.15 then
+			lastSent = value
+			lastSendClock = os.clock()
+			submitAsync(ctx, definition, value)
+		end
+	end
+
+	table.insert(
+		ctx.connections,
+		area.InputBegan:Connect(function(input)
+			if
+				input.UserInputType == Enum.UserInputType.MouseButton1
+				or input.UserInputType == Enum.UserInputType.Touch
+			then
+				dragging = true
+				handle(input.Position.X, false)
+			end
+		end)
+	)
+	table.insert(
+		ctx.connections,
+		UserInputService.InputChanged:Connect(function(input)
+			if
+				dragging
+				and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch)
+			then
+				handle(input.Position.X, false)
+			end
+		end)
+	)
+	table.insert(
+		ctx.connections,
+		UserInputService.InputEnded:Connect(function(input)
+			if
+				dragging
+				and (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch)
+			then
+				dragging = false
+				handle(input.Position.X, true)
+			end
+		end)
+	)
+
+	return render
+end
+
 local function buildValueControl(ctx, definition, valueArea, rowState)
 	if definition.kind == "boolean" then
 		local toggle = makeButton("ValueButton", "", valueArea, ctx)
 		toggle.Size = UDim2.new(1, 0, 1, 0)
+		local toggleStroke = toggle:FindFirstChildOfClass("UIStroke")
 		table.insert(
 			ctx.connections,
 			toggle.Activated:Connect(function()
@@ -111,7 +244,10 @@ local function buildValueControl(ctx, definition, valueArea, rowState)
 		)
 		return function(value)
 			toggle.Text = value and "ON" or "OFF"
-			toggle.BackgroundColor3 = value and ctx.colors.accent or ctx.colors.surface
+			toggle.TextColor3 = value and ctx.colors.accent or ctx.colors.muted
+			if toggleStroke then
+				toggleStroke.Color = value and ctx.colors.accent or ctx.colors.border
+			end
 		end
 	elseif definition.kind == "enum" then
 		local selector = makeButton("ValueButton", "", valueArea, ctx)
@@ -171,8 +307,15 @@ local function buildValueControl(ctx, definition, valueArea, rowState)
 				end
 			end)
 		)
+		local renderSlider = nil
+		if sliderEligible(definition) then
+			renderSlider = buildSlider(ctx, definition, valueArea.Parent)
+		end
 		return function(value)
 			box.Text = formatNumber(value)
+			if renderSlider then
+				renderSlider(value)
+			end
 		end
 	end
 end
@@ -181,17 +324,17 @@ local function buildRow(ctx, definition, parent, layoutOrder)
 	local row = Instance.new("Frame")
 	row.Name = definition.key
 	row.LayoutOrder = layoutOrder
-	row.Size = UDim2.new(1, 0, 0, ROW_HEIGHT)
-	row.BackgroundColor3 = ctx.colors.surface
+	row.Size = UDim2.new(1, 0, 0, sliderEligible(definition) and SLIDER_ROW_HEIGHT or ROW_HEIGHT)
+	row.BackgroundTransparency = 1
 	row.BorderSizePixel = 0
 	row.Parent = parent
-	addCorner(row, 9)
-	addStroke(row, ctx.colors.border)
 
 	local name = Instance.new("TextLabel")
 	name.Name = "Name"
 	name.Position = UDim2.fromOffset(12, 8)
-	name.Size = UDim2.new(1, -114, 0, 22)
+	-- Keep the header column clear of the 92px Default button (plus margins) so
+	-- text never runs underneath it.
+	name.Size = UDim2.new(1, -124, 0, 22)
 	name.BackgroundTransparency = 1
 	name.Font = Enum.Font.ArialBold
 	name.Text = definition.key .. "  [" .. definition.scope .. "]"
@@ -203,7 +346,7 @@ local function buildRow(ctx, definition, parent, layoutOrder)
 	local description = Instance.new("TextLabel")
 	description.Name = "Description"
 	description.Position = UDim2.fromOffset(12, 31)
-	description.Size = UDim2.new(1, -24, 0, 30)
+	description.Size = UDim2.new(1, -124, 0, 30)
 	description.BackgroundTransparency = 1
 	description.Font = Enum.Font.Arial
 	description.Text = definition.description
@@ -263,11 +406,21 @@ local function buildFeature(ctx, feature, layoutOrder)
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.Parent = group
 
+	-- 1px hairline separating this section from the previous one.
+	local separator = Instance.new("Frame")
+	separator.Name = "Separator"
+	separator.LayoutOrder = -1
+	separator.Size = UDim2.new(1, 0, 0, 1)
+	separator.BackgroundColor3 = ctx.colors.border
+	separator.BackgroundTransparency = 0.4
+	separator.BorderSizePixel = 0
+	separator.Parent = group
+
 	local heading = Instance.new("TextLabel")
 	heading.Name = "Heading"
 	heading.LayoutOrder = 0
-	heading.Size = UDim2.new(1, 0, 0, 34)
-	heading.BackgroundColor3 = Color3.fromRGB(36, 42, 55)
+	heading.Size = UDim2.new(1, 0, 0, 30)
+	heading.BackgroundTransparency = 1
 	heading.BorderSizePixel = 0
 	heading.Font = Enum.Font.ArialBold
 	heading.Text = "  " .. feature.name
@@ -275,7 +428,6 @@ local function buildFeature(ctx, feature, layoutOrder)
 	heading.TextSize = 17
 	heading.TextXAlignment = Enum.TextXAlignment.Left
 	heading.Parent = group
-	addCorner(heading, 8)
 
 	local groupRecord = {
 		instance = group,

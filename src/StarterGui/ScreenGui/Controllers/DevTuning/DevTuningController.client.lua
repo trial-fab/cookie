@@ -43,6 +43,7 @@ local ctx = {
 }
 ctx.panelBuilder = require(script.Parent:WaitForChild("DevTuningPanel"))
 ctx.controls = require(script.Parent:WaitForChild("DevTuningControls"))
+ctx.window = require(script.Parent:WaitForChild("DevTuningWindow"))
 
 local cleaned = false
 local function cleanup()
@@ -61,6 +62,7 @@ local function cleanup()
 end
 
 ctx.panelBuilder.create(ctx)
+ctx.window.attach(ctx)
 ctx.controls.mount(ctx)
 table.insert(ctx.connections, ctx.shutdown.Event:Connect(cleanup))
 table.insert(ctx.connections, script.Destroying:Connect(cleanup))

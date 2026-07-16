@@ -6,7 +6,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(Shared:WaitForChild("Attrs"))
-local DevTuning = require(Shared:WaitForChild("DevTuning"):WaitForChild("DevTuning"))
 local UiMotion = require(Shared:WaitForChild("UiMotion"))
 
 local HotbarPlacementMode = {}
@@ -14,6 +13,9 @@ local HotbarPlacementMode = {}
 local MODE_NONE = "none"
 local MODE_CONTROLS = "controls"
 local MODE_MULTI_PLACE = "multiPlace"
+local SLOT_SIZE_PIXELS = 72
+local SLOT_GAP_PIXELS = 8
+local TRANSITION_SECONDS = 0.25
 
 local function findGui(slot, name)
 	local child = slot and slot:FindFirstChild(name)
@@ -133,8 +135,8 @@ function HotbarPlacementMode.new(ctx)
 	end
 
 	local function getPlacementTargets()
-		local size = DevTuning.get("PlacementControls.SlotSizePixels")
-		local spacing = size + DevTuning.get("PlacementControls.SlotGapPixels")
+		local size = SLOT_SIZE_PIXELS
+		local spacing = size + SLOT_GAP_PIXELS
 		return {
 			[slotLeft] = UDim2.new(
 				centerPosition.X.Scale,
@@ -161,7 +163,7 @@ function HotbarPlacementMode.new(ctx)
 		cancelTweens()
 		setModeFaces(activeMode)
 		local positions, size = getPlacementTargets()
-		local duration = DevTuning.get("PlacementControls.TransitionSeconds")
+		local duration = TRANSITION_SECONDS
 		for _, record in ipairs(records) do
 			local participates = activeMode == MODE_CONTROLS or record.slot == slotCenter
 			if participates then
@@ -196,7 +198,7 @@ function HotbarPlacementMode.new(ctx)
 		end
 
 		local targets = ctx.getExitTargets and ctx.getExitTargets() or nil
-		local duration = DevTuning.get("PlacementControls.TransitionSeconds")
+		local duration = TRANSITION_SECONDS
 		local remaining = 0
 		local function finish()
 			if token ~= transitionToken then
@@ -302,13 +304,6 @@ function HotbarPlacementMode.new(ctx)
 	}) do
 		screenGui:GetAttributeChangedSignal(attribute):Connect(refreshMode)
 	end
-	DevTuning.observe("PlacementControls.SlotSizePixels", function()
-		applyActivePose(false)
-	end)
-	DevTuning.observe("PlacementControls.SlotGapPixels", function()
-		applyActivePose(false)
-	end)
-	DevTuning.observe("PlacementControls.TransitionSeconds", function() end)
 
 	refreshMode()
 

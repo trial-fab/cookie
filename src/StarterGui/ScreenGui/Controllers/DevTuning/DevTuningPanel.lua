@@ -21,7 +21,7 @@ local function addStroke(parent)
 	local stroke = Instance.new("UIStroke")
 	stroke.Color = COLORS.border
 	stroke.Transparency = 0.2
-	stroke.Thickness = 1
+	stroke.Thickness = 2
 	stroke.Parent = parent
 end
 
@@ -30,6 +30,7 @@ local function makeButton(name, text, parent)
 	button.Name = name
 	button.AutoButtonColor = true
 	button.BackgroundColor3 = COLORS.surface
+	button.BackgroundTransparency = 1
 	button.BorderSizePixel = 0
 	button.Font = Enum.Font.ArialBold
 	button.Text = text
@@ -60,6 +61,7 @@ function DevTuningPanel.create(ctx)
 	gear.Position = UDim2.new(1, -12, 0, 60)
 	gear.Size = UDim2.fromOffset(48, 48)
 	gear.BackgroundColor3 = COLORS.background
+	gear.BackgroundTransparency = 0.5
 	gear.TextSize = 26
 	gear.ZIndex = 2
 
@@ -69,6 +71,7 @@ function DevTuningPanel.create(ctx)
 	panel.Position = UDim2.fromScale(0.5, 0.5)
 	panel.Size = UDim2.new(1, -24, 1, -88)
 	panel.BackgroundColor3 = COLORS.background
+	panel.BackgroundTransparency = 0.25
 	panel.BorderSizePixel = 0
 	panel.Visible = false
 	panel.Parent = gui
@@ -77,7 +80,7 @@ function DevTuningPanel.create(ctx)
 
 	local sizeConstraint = Instance.new("UISizeConstraint")
 	sizeConstraint.MinSize = Vector2.new(280, 340)
-	sizeConstraint.MaxSize = Vector2.new(620, 720)
+	sizeConstraint.MaxSize = Vector2.new(960, 1080)
 	sizeConstraint.Parent = panel
 
 	local title = Instance.new("TextLabel")
@@ -102,6 +105,7 @@ function DevTuningPanel.create(ctx)
 	search.Position = UDim2.fromOffset(12, 60)
 	search.Size = UDim2.new(1, -172, 0, 44)
 	search.BackgroundColor3 = COLORS.surface
+	search.BackgroundTransparency = 1
 	search.BorderSizePixel = 0
 	search.ClearTextOnFocus = false
 	search.Font = Enum.Font.Arial
