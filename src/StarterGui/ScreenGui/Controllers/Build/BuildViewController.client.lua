@@ -768,6 +768,34 @@ screenGui:GetAttributeChangedSignal(Attrs.StoreOpen):Connect(function()
 	end
 end)
 
+-- Enabling Auto Build while Settings owns the background must not open the Store underneath
+-- the modal. Once the modal restores its saved surfaces, reopen on the next task so that restore
+-- completes first regardless of signal connection order.
+local autoBuildStoreRequestToken = 0
+local function requestAutoBuildStoreWhenAvailable()
+	autoBuildStoreRequestToken += 1
+	local token = autoBuildStoreRequestToken
+	if
+		not buildViewActive
+		or screenGui:GetAttribute(Attrs.AutoBuildMode) ~= true
+		or screenGui:GetAttribute(Attrs.BackgroundSurfacesSuspended) == true
+	then
+		return
+	end
+	task.defer(function()
+		if
+			token == autoBuildStoreRequestToken
+			and buildViewActive
+			and screenGui:GetAttribute(Attrs.AutoBuildMode) == true
+			and screenGui:GetAttribute(Attrs.BackgroundSurfacesSuspended) ~= true
+		then
+			screenGui:SetAttribute(Attrs.StoreOpen, true)
+		end
+	end)
+end
+screenGui:GetAttributeChangedSignal(Attrs.AutoBuildMode):Connect(requestAutoBuildStoreWhenAvailable)
+screenGui:GetAttributeChangedSignal(Attrs.BackgroundSurfacesSuspended):Connect(requestAutoBuildStoreWhenAvailable)
+
 local function refreshMixerLock()
 	local unlocked = player:GetAttribute(Attrs.MixerUnlocked) == true
 	if not unlocked and buildViewActive then

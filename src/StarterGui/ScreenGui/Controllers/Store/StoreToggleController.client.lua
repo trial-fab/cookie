@@ -84,10 +84,7 @@ end
 -- Direct StoreOpen writes (notably BuildViewController) still override an active
 -- modal session. Normal toggles route through setStoreOpen above.
 screenGui:GetAttributeChangedSignal(Attrs.StoreOpen):Connect(function()
-	if
-		screenGui:GetAttribute(Attrs.StoreOpen) == true
-		and ModalCoordinator.isOpen()
-	then
+	if screenGui:GetAttribute(Attrs.StoreOpen) == true and ModalCoordinator.isOpen() then
 		if screenGui:GetAttribute(Attrs.CompactModalActive) == true then
 			screenGui:SetAttribute(Attrs.StoreOpen, false)
 		else
@@ -96,16 +93,18 @@ screenGui:GetAttributeChangedSignal(Attrs.StoreOpen):Connect(function()
 	end
 end)
 
--- Seed the AutoBuildMode default device-aware (on for touch-only, off on PC) so the coupling
--- works before the Settings row is opened. SettingsController owns it once the row exists; the
--- same default rule lives there (mirrors how PlacementControlsEnabled is seeded in two places).
+-- Seed device-aware defaults before the Settings modal opens. SettingsController later hydrates
+-- saved overrides for the current device where that preference is available.
+local currentDeviceType = SettingsConfig.GetDeviceType(
+	UserInputService.TouchEnabled,
+	UserInputService.MouseEnabled,
+	RunService:IsStudio() and UserInputService.PreferredInput == Enum.PreferredInput.Touch
+)
 if screenGui:GetAttribute(Attrs.AutoBuildMode) == nil then
-	local deviceType = SettingsConfig.GetDeviceType(
-		UserInputService.TouchEnabled,
-		UserInputService.MouseEnabled,
-		RunService:IsStudio() and UserInputService.PreferredInput == Enum.PreferredInput.Touch
-	)
-	screenGui:SetAttribute(Attrs.AutoBuildMode, deviceType == SettingsConfig.DeviceType.Mobile)
+	screenGui:SetAttribute(Attrs.AutoBuildMode, currentDeviceType == SettingsConfig.DeviceType.Mobile)
+end
+if screenGui:GetAttribute(Attrs.PlacementControlsEnabled) == nil then
+	screenGui:SetAttribute(Attrs.PlacementControlsEnabled, currentDeviceType == SettingsConfig.DeviceType.Mobile)
 end
 
 -- Build the cookie animator (StoreController-style ctx module). It binds the StoreBottomOff/On
@@ -149,8 +148,7 @@ local buildButtonHit = buildButton and (buildButton:FindFirstChild("hitbox") or 
 if buildButton and buildButton:IsA("GuiObject") then
 	local authoredBuildButtonVisible = buildButton.Visible
 	local function updateBuildButtonVisibility()
-		buildButton.Visible = authoredBuildButtonVisible
-			and screenGui:GetAttribute(Attrs.CompactModalActive) ~= true
+		buildButton.Visible = authoredBuildButtonVisible and screenGui:GetAttribute(Attrs.CompactModalActive) ~= true
 	end
 	screenGui:GetAttributeChangedSignal(Attrs.CompactModalActive):Connect(updateBuildButtonVisibility)
 	updateBuildButtonVisibility()

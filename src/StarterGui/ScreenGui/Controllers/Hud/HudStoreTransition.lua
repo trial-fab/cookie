@@ -94,10 +94,17 @@ function HudStoreTransition.start(ctx)
 		local buildMode = screenGui:GetAttribute(Attrs.BuildModeActive) == true
 		local autoBuild = screenGui:GetAttribute(Attrs.AutoBuildMode) == true
 		local placing = screenGui:GetAttribute(Attrs.PlacementActive) == true
-		applyState((storeOpen or (buildMode and autoBuild)) and not placing)
+		local backgroundSuspended = screenGui:GetAttribute(Attrs.BackgroundSurfacesSuspended) == true
+		applyState((storeOpen or (buildMode and autoBuild)) and not placing and not backgroundSuspended)
 	end
 
-	for _, name in ipairs({ Attrs.StoreOpen, Attrs.BuildModeActive, Attrs.AutoBuildMode, Attrs.PlacementActive }) do
+	for _, name in ipairs({
+		Attrs.StoreOpen,
+		Attrs.BuildModeActive,
+		Attrs.AutoBuildMode,
+		Attrs.PlacementActive,
+		Attrs.BackgroundSurfacesSuspended,
+	}) do
 		screenGui:GetAttributeChangedSignal(name):Connect(function()
 			refresh()
 		end)

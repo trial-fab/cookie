@@ -129,6 +129,7 @@ function StoreToggleAnimator.new(ctx)
 	local launchToken = 0
 	local cookieLaunchInProgress = false
 	local cookiePressHeld = false
+	local mixerGateVisible = false
 	-- Full-screen launch (Off -> On) and its mirror descent (On -> Off). Kept a touch slow so the
 	-- cookie reads clearly as it crosses the whole screen.
 	local COOKIE_LAUNCH_INFO = TweenInfo.new(0.4, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
@@ -145,6 +146,10 @@ function StoreToggleAnimator.new(ctx)
 	-- This is the single source of truth the whole animator branches on.
 	local function storeShowing()
 		return screenGui:GetAttribute(Attrs.StoreOpen) == true
+	end
+
+	local function backgroundControlsAvailable()
+		return screenGui:GetAttribute(Attrs.BackgroundSurfacesSuspended) ~= true
 	end
 
 	local function offsetCookiePosition(yOffset)
@@ -289,7 +294,10 @@ function StoreToggleAnimator.new(ctx)
 
 	local function setToggleOffVisible(visible)
 		if toggleOff and toggleOff:IsA("GuiObject") then
-			toggleOff.Visible = visible and toggleOffBaseVisible ~= false
+			toggleOff.Visible = visible
+				and toggleOffBaseVisible ~= false
+				and mixerGateVisible
+				and backgroundControlsAvailable()
 		end
 	end
 
@@ -333,7 +341,7 @@ function StoreToggleAnimator.new(ctx)
 
 	local function setToggleOnVisible(visible)
 		if toggleOn and toggleOn:IsA("GuiObject") then
-			toggleOn.Visible = visible
+			toggleOn.Visible = visible and mixerGateVisible and backgroundControlsAvailable()
 			if not visible then
 				-- Reset to the whole-cookie pose + home position so the next entry starts clean
 				-- (and the launch targets the home centre, not a parked-up pose).
@@ -683,11 +691,10 @@ function StoreToggleAnimator.new(ctx)
 	-- restores them to the current store state. Keeps the gate decision with the controller while
 	-- the instance resolution stays here.
 	local function setGatedVisible(visible)
+		mixerGateVisible = visible == true
 		if not visible then
 			setToggleOffVisible(false)
-			if toggleOn and toggleOn:IsA("GuiObject") then
-				toggleOn.Visible = false
-			end
+			setToggleOnVisible(false)
 			return
 		end
 		if storeShowing() then
@@ -698,6 +705,9 @@ function StoreToggleAnimator.new(ctx)
 			setToggleOffVisible(true)
 		end
 	end
+	screenGui:GetAttributeChangedSignal(Attrs.BackgroundSurfacesSuspended):Connect(function()
+		setGatedVisible(mixerGateVisible)
+	end)
 
 	return {
 		setGatedVisible = setGatedVisible,

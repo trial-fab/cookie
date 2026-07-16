@@ -1195,6 +1195,8 @@ local function scheduleOrderingRefresh()
 end
 
 ctx.placement = require(script.Parent.StorePlacement).new(ctx)
+ctx.placementControls = require(script.Parent.StorePlacementControls).new(ctx, ctx.placement)
+ctx.multiPlaceSessionControls = require(script.Parent.StoreMultiPlaceSessionControls).new(ctx, ctx.placement)
 upgradeNudge = require(script.Parent.StoreUpgradeNudge).new(ctx)
 countBadge = require(script.Parent.StoreCountBadge).new(ctx)
 screenGui:GetAttributeChangedSignal(Attrs.UpgradeRemindersEnabled):Connect(updateAllRows)

@@ -31,7 +31,9 @@ function StoreSellConfirm.new(ctx)
 
 	local root = screenGui:FindFirstChild("SellConfirm", true)
 	if not root then
-		warn("StoreSellConfirm: no `SellConfirm` template found under the ScreenGui — sell-all confirmation disabled until it is authored in Studio.")
+		warn(
+			"StoreSellConfirm: no `SellConfirm` template found under the ScreenGui — sell-all confirmation disabled until it is authored in Studio."
+		)
 	end
 
 	-- Responsive sizing: SellConfirm has no open/close pop of its own. resolveModal keeps it in
@@ -63,7 +65,11 @@ function StoreSellConfirm.new(ctx)
 		if root then
 			root.Visible = false
 		end
-	end)
+	end, {
+		-- SellConfirm belongs to the active Sell flow. Keep StoreBottom visible so the
+		-- player never sees the unrelated hotbar between opening and resolving it.
+		suspendBackgroundSurfaces = false,
+	})
 
 	local function close()
 		pendingUpgradeId = nil

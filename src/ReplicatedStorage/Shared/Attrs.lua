@@ -19,6 +19,9 @@ return {
 	LeaderboardOpen = "LeaderboardOpen",
 	Hovering = "Hovering",
 	OpenModal = "OpenModal",
+	-- True while a main modal has temporarily taken ownership of Store and Leaderboard
+	-- visibility. Store-owned confirmations do not set this because their background remains live.
+	BackgroundSurfacesSuspended = "BackgroundSurfacesSuspended",
 	-- True only while one of the four main menu modals owns the slot on a compact touch viewport.
 	-- HUD owners compose this into visibility/input rules, while the menu uses it to switch to its
 	-- transparent modal presentation. Tablets and desktop-sized touch devices remain false.
@@ -45,9 +48,18 @@ return {
 	UpgradeId = "UpgradeId",
 	CountAdjusted = "CountAdjusted",
 	PlacementActive = "PlacementActive",
-	PlacementRotationY = "PlacementRotationY",
+	-- Mobile always uses the fixed placement hotbar. On PC this preference lets players opt into
+	-- the same screen-space controls instead of click-to-place plus keyboard shortcuts.
 	PlacementControlsEnabled = "PlacementControlsEnabled",
+	-- Transient one-shot handoff intent. StorePlacement sets this for a successful single
+	-- placement so HotbarPlacementMode clears its controls before StoreBottom returns.
+	PlacementInstantExit = "PlacementInstantExit",
+	PlacementRotationY = "PlacementRotationY",
 	MultiPlaceEnabled = "MultiPlaceEnabled",
+	-- Client-owned state for one live Multi Place run. The active flag controls the desktop
+	-- session affordances; the count increments only after a successful server purchase.
+	MultiPlaceSessionActive = "MultiPlaceSessionActive",
+	MultiPlaceSessionCount = "MultiPlaceSessionCount",
 	UpgradeRemindersEnabled = "UpgradeRemindersEnabled",
 	CurrentCategory = "CurrentCategory",
 	UseGeneratedMenu = "UseGeneratedMenu",

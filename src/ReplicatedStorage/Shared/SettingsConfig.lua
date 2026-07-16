@@ -1,6 +1,6 @@
 -- Shared contract for player preferences that persist across sessions. Universal preferences use
--- their ScreenGui attribute name as the storage key. Placement Controls and Auto Build Mode use
--- separate PC/Mobile storage keys while keeping one logical ScreenGui attribute at runtime.
+-- their ScreenGui attribute name as the storage key. Device preferences keep one logical
+-- ScreenGui attribute at runtime and map to only the physical storage keys valid for that device.
 local Attrs = require(script.Parent.Attrs)
 
 local SettingsConfig = {}
@@ -28,18 +28,18 @@ SettingsConfig.UniversalAttributes = {
 }
 
 SettingsConfig.DeviceAttributes = {
-	Attrs.PlacementControlsEnabled,
 	Attrs.AutoBuildMode,
+	Attrs.PlacementControlsEnabled,
 }
 
 SettingsConfig.DeviceStorageAttributes = {
-	[Attrs.PlacementControlsEnabled] = {
-		[SettingsConfig.DeviceType.PC] = "PlacementControlsEnabled_PC",
-		[SettingsConfig.DeviceType.Mobile] = "PlacementControlsEnabled_Mobile",
-	},
 	[Attrs.AutoBuildMode] = {
 		[SettingsConfig.DeviceType.PC] = "AutoBuildMode_PC",
 		[SettingsConfig.DeviceType.Mobile] = "AutoBuildMode_Mobile",
+	},
+	-- Mobile placement controls are mandatory, so only the former PC key is active.
+	[Attrs.PlacementControlsEnabled] = {
+		[SettingsConfig.DeviceType.PC] = "PlacementControlsEnabled_PC",
 	},
 }
 
@@ -48,10 +48,10 @@ SettingsConfig.Attributes = {
 	Attrs.ReducedMotionEnabled,
 	Attrs.MusicEnabled,
 	Attrs.SfxEnabled,
-	Attrs.PlacementControlsEnabled,
 	Attrs.MultiPlaceEnabled,
 	Attrs.UpgradeRemindersEnabled,
 	Attrs.AutoBuildMode,
+	Attrs.PlacementControlsEnabled,
 }
 
 -- Physical keys mirrored onto the Player and written under Persistent.Settings.
@@ -61,7 +61,10 @@ for _, attribute in ipairs(SettingsConfig.UniversalAttributes) do
 end
 for _, attribute in ipairs(SettingsConfig.DeviceAttributes) do
 	for _, deviceType in ipairs(SettingsConfig.DeviceTypes) do
-		table.insert(SettingsConfig.StoredAttributes, SettingsConfig.DeviceStorageAttributes[attribute][deviceType])
+		local storageAttribute = SettingsConfig.DeviceStorageAttributes[attribute][deviceType]
+		if storageAttribute then
+			table.insert(SettingsConfig.StoredAttributes, storageAttribute)
+		end
 	end
 end
 

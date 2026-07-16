@@ -24,9 +24,13 @@ local BoostService = require(Services:WaitForChild("BoostService"))
 local MonetizationService = require(Services:WaitForChild("MonetizationService"))
 local PlayerMetricsService = require(Services:WaitForChild("PlayerMetricsService"))
 local SettingsService = require(Services:WaitForChild("SettingsService"))
+local DevTuningService = require(Services:WaitForChild("DevTuningService"))
+local PlacementAnalyticsService = require(Services:WaitForChild("PlacementAnalyticsService"))
 
 -- Apply the PVP pause (hide StarterPack weapons) before any player spawns.
 PvpService.Init()
+DevTuningService.Init()
+PlacementAnalyticsService.Init()
 
 PlayerDataService.Init()
 SheetService.Init()

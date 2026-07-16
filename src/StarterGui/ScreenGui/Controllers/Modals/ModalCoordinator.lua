@@ -41,6 +41,10 @@ local COMPACT_MAIN_MODAL_ROOTS = {
 local registry = {}
 local suspendedSurfaces = nil
 
+if screenGui:GetAttribute(Attrs.BackgroundSurfacesSuspended) == nil then
+	screenGui:SetAttribute(Attrs.BackgroundSurfacesSuspended, false)
+end
+
 local function current()
 	return screenGui:GetAttribute(Attrs.OpenModal) or NONE
 end
@@ -52,9 +56,7 @@ local function updateCompactState()
 	local closeButton = modal and modal:FindFirstChild("MobileClose")
 	screenGui:SetAttribute(
 		Attrs.CompactModalActive,
-		closeButton ~= nil
-			and closeButton:IsA("GuiButton")
-			and MobileScale.shouldUseMobile(screenGui)
+		closeButton ~= nil and closeButton:IsA("GuiButton") and MobileScale.shouldUseMobile(screenGui)
 	)
 end
 
@@ -65,7 +67,10 @@ local function suspendBackgroundSurfaces()
 			leaderboardOpen = screenGui:GetAttribute(Attrs.LeaderboardOpen) == true,
 		}
 	end
-	screenGui:SetAttribute(Attrs.StoreOpen, false)
+	screenGui:SetAttribute(Attrs.BackgroundSurfacesSuspended, true)
+	-- StoreOpen remains the logical state while the modal temporarily hides its surfaces.
+	-- Writing it false here would make Auto Build treat Settings as a real Store close and
+	-- exit Build View, then re-enter it when the modal restored the snapshot.
 	screenGui:SetAttribute(Attrs.LeaderboardOpen, false)
 end
 
@@ -77,6 +82,7 @@ local function restoreBackgroundSurfaces()
 	suspendedSurfaces = nil
 	screenGui:SetAttribute(Attrs.StoreOpen, snapshot.storeOpen)
 	screenGui:SetAttribute(Attrs.LeaderboardOpen, snapshot.leaderboardOpen)
+	screenGui:SetAttribute(Attrs.BackgroundSurfacesSuspended, false)
 end
 
 -- One shared observer drives every registered modal. When the slot changes, every
@@ -101,11 +107,14 @@ end)
 MobileScale.onViewportChanged(updateCompactState)
 
 -- Register a modal under `name`. `onForeignOpen` is called whenever another modal
--- claims the single open slot (i.e. this modal should close). Returns a handle with
--- `open()` / `close()`.
-function ModalCoordinator.register(name, onForeignOpen)
+-- claims the single open slot (i.e. this modal should close). Set
+-- options.suspendBackgroundSurfaces=false for Store-owned confirmations that must leave the
+-- Store visible behind them. Returns a handle with `open()` / `close()`.
+function ModalCoordinator.register(name, onForeignOpen, options)
 	assert(type(name) == "string" and name ~= NONE, "ModalCoordinator.register: name must be a non-empty string")
 	assert(type(onForeignOpen) == "function", "ModalCoordinator.register: onForeignOpen must be a function")
+	options = type(options) == "table" and options or {}
+	local shouldSuspendBackgroundSurfaces = options.suspendBackgroundSurfaces ~= false
 	registry[name] = onForeignOpen
 
 	return {
@@ -113,7 +122,9 @@ function ModalCoordinator.register(name, onForeignOpen)
 		-- shared observer above. Capture Store/Leaderboard only on the first open so
 		-- switching between registered modals keeps both suspended under one session.
 		open = function()
-			suspendBackgroundSurfaces()
+			if shouldSuspendBackgroundSurfaces then
+				suspendBackgroundSurfaces()
+			end
 			screenGui:SetAttribute(Attrs.OpenModal, name)
 		end,
 		-- Release the slot, but only if this modal still owns it. Safe to call from
@@ -142,6 +153,7 @@ end
 function ModalCoordinator.overrideBackground(storeOpen, leaderboardOpen)
 	suspendedSurfaces = nil
 	screenGui:SetAttribute(Attrs.OpenModal, NONE)
+	screenGui:SetAttribute(Attrs.BackgroundSurfacesSuspended, false)
 	screenGui:SetAttribute(Attrs.StoreOpen, storeOpen == true)
 	screenGui:SetAttribute(Attrs.LeaderboardOpen, leaderboardOpen == true)
 end

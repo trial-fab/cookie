@@ -192,6 +192,15 @@ function HotbarCarousel.new(ctx)
 	local mixerTransition = "idle"
 	local pendingSelectAfterClose = nil
 	local onMixerRestored = nil
+	local placementMode = nil
+
+	local function isPlacementActive()
+		return screenGui:GetAttribute(Attrs.PlacementActive) == true
+	end
+
+	local function placementOwnsHotbar()
+		return isPlacementActive() or (placementMode and placementMode.isTransitioning())
+	end
 
 	local function storeOpen()
 		return screenGui:GetAttribute(Attrs.StoreOpen) == true
@@ -283,6 +292,13 @@ function HotbarCarousel.new(ctx)
 	MobileScale.onViewportChanged(function()
 		local before = getHotbarScale()
 		applyHotbarMobileScale()
+		if placementMode and placementMode.isActive() then
+			placementMode.refresh()
+			return
+		end
+		if placementOwnsHotbar() then
+			return
+		end
 		if math.abs(getHotbarScale() - before) <= 0.001 then
 			return
 		end
@@ -426,6 +442,16 @@ function HotbarCarousel.new(ctx)
 		end
 	end
 
+	-- Store open state always belongs to item 1. Direct opens, such as Auto Build, can bypass
+	-- the normal spin gate, so reset the identity map before the mixer morph uses SlotCenter.
+	local function restoreCanonicalCarouselPose()
+		slotByPose = { left = slotLeft, center = slotCenter, right = slotRight }
+		centerSlot = slotCenter
+		for poseName, slot in pairs(slotByPose) do
+			applyPose(slot, poseName, false)
+		end
+	end
+
 	-- Rotate the ring one step so `slot` lands in the centre pose; the centred slot moves out to the
 	-- flank `slot` vacated, keeping all three visible (a true 3-slot cycle). No-op if already centred.
 	local function rotateToCenter(slot)
@@ -453,6 +479,15 @@ function HotbarCarousel.new(ctx)
 	local openToken = 0
 	local function requestOpenMixer()
 		if not setStoreOpen then
+			return
+		end
+		if isPlacementActive() then
+			-- B remains the Store-close path during placement. StorePlacement observes the
+			-- resulting StoreOpen=false transition and tears the placement session down.
+			setStoreOpen(false)
+			return
+		end
+		if placementOwnsHotbar() then
 			return
 		end
 		if mixerTransition == "opening" or mixerTransition == "closing" then
@@ -493,7 +528,7 @@ function HotbarCarousel.new(ctx)
 	-- A slot tap: the mixer routes through the open gate; a placeholder just spins to centre (becomes
 	-- active) with no open, since it has no item yet.
 	local function selectSlot(slot)
-		if not unlocked then
+		if not unlocked or placementOwnsHotbar() then
 			return
 		end
 		if slot == slotCenter then
@@ -514,6 +549,9 @@ function HotbarCarousel.new(ctx)
 	end
 
 	local function selectItemNumber(number)
+		if placementOwnsHotbar() then
+			return
+		end
 		local slot = slotByItemNumber[number]
 		if not slot then
 			return
@@ -551,7 +589,13 @@ function HotbarCarousel.new(ctx)
 	-- the snap then to let the fade finish). Closing: bring placeholders back as the landing-pad
 	-- context; the disc stays hidden until the cookie lands and growToRest fires.
 	local function onStoreOpenChanged()
+		if placementOwnsHotbar() then
+			return
+		end
 		if storeOpen() then
+			if centerSlot ~= slotCenter then
+				restoreCanonicalCarouselPose()
+			end
 			mixerTransition = "open"
 			pendingSelectAfterClose = nil
 			setKeybindBadgesSuppressed(true)
@@ -598,6 +642,9 @@ function HotbarCarousel.new(ctx)
 	-- the cookie has settled into the slot -- grow the disc back in from its footprint.
 	if storeOff then
 		storeOff:GetPropertyChangedSignal("ZIndex"):Connect(function()
+			if placementOwnsHotbar() then
+				return
+			end
 			local atRest = storeOffBaseZ ~= nil and storeOff.ZIndex == storeOffBaseZ
 			if atRest and not storeOpen() and centerSlot == slotCenter then
 				growToRest()
@@ -607,7 +654,9 @@ function HotbarCarousel.new(ctx)
 
 	-- Mixer gate: the controller hides the whole bar until building is unlocked, then restores it.
 	local function updateVisibility()
-		hotbar.Visible = unlocked and screenGui:GetAttribute(Attrs.CompactModalActive) ~= true
+		hotbar.Visible = unlocked
+			and screenGui:GetAttribute(Attrs.CompactModalActive) ~= true
+			and screenGui:GetAttribute(Attrs.BackgroundSurfacesSuspended) ~= true
 	end
 
 	local function setUnlocked(value)
@@ -616,6 +665,10 @@ function HotbarCarousel.new(ctx)
 			updateVisibility()
 		else
 			updateVisibility()
+			if placementOwnsHotbar() then
+				updateKeybindBadges()
+				return
+			end
 			setPlaceholdersVisible(not storeOpen())
 			if storeOpen() then
 				snapOpen()
@@ -627,6 +680,44 @@ function HotbarCarousel.new(ctx)
 		updateKeybindBadges()
 	end
 	screenGui:GetAttributeChangedSignal(Attrs.CompactModalActive):Connect(updateVisibility)
+	screenGui:GetAttributeChangedSignal(Attrs.BackgroundSurfacesSuspended):Connect(updateVisibility)
+
+	placementMode = require(script.Parent.HotbarPlacementMode).new({
+		screenGui = screenGui,
+		slotLeft = slotLeft,
+		slotCenter = slotCenter,
+		slotRight = slotRight,
+		onEnter = function()
+			-- Invalidate every delayed carousel/morph continuation before the placement faces
+			-- claim the slots. Nothing from the item carousel may fire underneath this mode.
+			openToken += 1
+			morphToken += 1
+			cancelSizeTween()
+			pendingSelectAfterClose = nil
+			setKeybindBadgesSuppressed(true)
+		end,
+		getExitTargets = function()
+			local targets = {}
+			for poseName, slot in pairs(slotByPose) do
+				targets[slot] = {
+					Position = poses[poseName].Position,
+					Size = poses[poseName].Size,
+				}
+			end
+			return targets
+		end,
+		onExit = function()
+			-- Placement starts from the Store, so its exit always returns item 1 to the
+			-- canonical center pose. This also clears any interrupted carousel tween.
+			restoreCanonicalCarouselPose()
+			if storeOpen() then
+				snapOpen()
+			else
+				snapRest()
+			end
+			onStoreOpenChanged()
+		end,
+	})
 
 	-- Initial pose: disc at full authored rest, bar hidden until unlock/onStoreOpen drives it.
 	snapRest()

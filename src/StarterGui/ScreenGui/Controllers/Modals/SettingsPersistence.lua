@@ -59,11 +59,13 @@ function SettingsPersistence.new(screenGui, deviceType)
 		end)
 
 		local storageAttribute = SettingsConfig.GetStorageAttribute(attribute, deviceType)
-		player:GetAttributeChangedSignal(storageAttribute):Connect(function()
-			if hydrated and pending[attribute] == nil then
-				applyPlayerValue(attribute)
-			end
-		end)
+		if storageAttribute then
+			player:GetAttributeChangedSignal(storageAttribute):Connect(function()
+				if hydrated and pending[attribute] == nil then
+					applyPlayerValue(attribute)
+				end
+			end)
+		end
 	end
 
 	local function hydrate()

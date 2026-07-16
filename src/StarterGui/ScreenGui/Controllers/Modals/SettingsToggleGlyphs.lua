@@ -5,10 +5,9 @@ local UiMotion = require(shared:WaitForChild("UiMotion"))
 
 local SettingsToggleGlyphs = {}
 
-local PLACEMENT_TWEEN_INFO = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local AUTO_BUILD_ON_FADE_INFO = TweenInfo.new(0.22, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
 local AUTO_BUILD_OFF_FADE_INFO = TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
-local SWIPE_OFFSET = 1.5
+local PLACEMENT_CONTROLS_SLIDE_INFO = TweenInfo.new(0.26, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 local function findRow(body, rowName)
 	local row = body:FindFirstChild(rowName, true)
@@ -20,58 +19,6 @@ end
 
 local function isImage(instance)
 	return instance and (instance:IsA("ImageLabel") or instance:IsA("ImageButton"))
-end
-
-local function offsetY(position, scaleOffset)
-	return UDim2.new(position.X.Scale, position.X.Offset, position.Y.Scale + scaleOffset, position.Y.Offset)
-end
-
-local function bindPlacementControls(body, screenGui)
-	local row = findRow(body, "PlacementControls")
-	local icon = row and row:FindFirstChild("Icon")
-	local placement = icon and icon:FindFirstChild("Glyph")
-	local cursor = icon and icon:FindFirstChild("Glyph2")
-	if not (icon and icon:IsA("GuiObject") and isImage(placement) and isImage(cursor)) then
-		return
-	end
-
-	local placementRest = placement.Position
-	local cursorRest = cursor.Position
-	local placementUp = offsetY(placementRest, -SWIPE_OFFSET)
-	local cursorDown = offsetY(cursorRest, SWIPE_OFFSET)
-	local placementTween
-	local cursorTween
-
-	placement.Visible = true
-	cursor.Visible = true
-
-	local function refresh(animate)
-		if placementTween then
-			placementTween:Cancel()
-		end
-		if cursorTween then
-			cursorTween:Cancel()
-		end
-
-		local enabled = screenGui:GetAttribute(Attrs.PlacementControlsEnabled) == true
-		local placementTarget = enabled and placementRest or placementUp
-		local cursorTarget = enabled and cursorDown or cursorRest
-		if not animate then
-			placement.Position = placementTarget
-			cursor.Position = cursorTarget
-			return
-		end
-
-		placementTween = UiMotion.create(placement, PLACEMENT_TWEEN_INFO, { Position = placementTarget })
-		cursorTween = UiMotion.create(cursor, PLACEMENT_TWEEN_INFO, { Position = cursorTarget })
-		placementTween:Play()
-		cursorTween:Play()
-	end
-
-	refresh(false)
-	screenGui:GetAttributeChangedSignal(Attrs.PlacementControlsEnabled):Connect(function()
-		refresh(true)
-	end)
 end
 
 local function bindAutoBuildMode(body, screenGui)
@@ -131,9 +78,60 @@ local function bindAutoBuildMode(body, screenGui)
 	end)
 end
 
+local function bindPlacementControls(body, screenGui)
+	local row = findRow(body, "PlacementControls")
+	local icon = row and row:FindFirstChild("Icon")
+	local controls = icon and icon:FindFirstChild("PlacementControls")
+	local cursor = icon and icon:FindFirstChild("Cursor")
+	if not (isImage(controls) and isImage(cursor)) then
+		return
+	end
+
+	local controlsTween
+	local cursorTween
+	local center = UDim2.fromScale(0.5, 0.5)
+	local above = UDim2.fromScale(0.5, -0.5)
+	local below = UDim2.fromScale(0.5, 1.5)
+
+	controls.Visible = true
+	cursor.Visible = true
+
+	local function refresh(animate)
+		if controlsTween then
+			controlsTween:Cancel()
+		end
+		if cursorTween then
+			cursorTween:Cancel()
+		end
+
+		local enabled = screenGui:GetAttribute(Attrs.PlacementControlsEnabled) == true
+		local controlsTarget = enabled and center or above
+		local cursorTarget = enabled and below or center
+		if not animate then
+			controls.Position = controlsTarget
+			cursor.Position = cursorTarget
+			return
+		end
+
+		controlsTween = UiMotion.create(controls, PLACEMENT_CONTROLS_SLIDE_INFO, {
+			Position = controlsTarget,
+		})
+		cursorTween = UiMotion.create(cursor, PLACEMENT_CONTROLS_SLIDE_INFO, {
+			Position = cursorTarget,
+		})
+		controlsTween:Play()
+		cursorTween:Play()
+	end
+
+	refresh(false)
+	screenGui:GetAttributeChangedSignal(Attrs.PlacementControlsEnabled):Connect(function()
+		refresh(true)
+	end)
+end
+
 function SettingsToggleGlyphs.new(body, screenGui)
-	bindPlacementControls(body, screenGui)
 	bindAutoBuildMode(body, screenGui)
+	bindPlacementControls(body, screenGui)
 end
 
 return SettingsToggleGlyphs

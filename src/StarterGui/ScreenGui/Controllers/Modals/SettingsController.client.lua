@@ -47,38 +47,34 @@ local musicWaveform = SettingsMusicWaveform.new(body)
 local reducedMotionGlyph = SettingsReducedMotionGlyph.new(body)
 local sfxGlyph = SettingsSfxGlyph.new(body)
 local upgradeReminderPulse = SettingsUpgradeReminderPulse.new(body)
-local currentDeviceType =
-	SettingsConfig.GetDeviceType(
-		UserInputService.TouchEnabled,
-		UserInputService.MouseEnabled,
-		RunService:IsStudio() and UserInputService.PreferredInput == Enum.PreferredInput.Touch
-	)
+local currentDeviceType = SettingsConfig.GetDeviceType(
+	UserInputService.TouchEnabled,
+	UserInputService.MouseEnabled,
+	RunService:IsStudio() and UserInputService.PreferredInput == Enum.PreferredInput.Touch
+)
 
 local SIMPLE = {
 	ReducedMotion = Attrs.ReducedMotionEnabled,
 	Music = Attrs.MusicEnabled,
 	Sfx = Attrs.SfxEnabled,
-	-- On-ground rotate/cancel/confirm pad during placement. Default is device-aware
-	-- (see getDefault): on for touch-only devices, off when a mouse is present.
-	PlacementControls = Attrs.PlacementControlsEnabled,
 	UpgradeReminders = Attrs.UpgradeRemindersEnabled,
 	-- Opening the store also enters build mode (and closing exits). Device-aware default
 	-- (see getDefault): on for touch-only devices (no V key), off when a keyboard is present.
 	AutoBuildMode = Attrs.AutoBuildMode,
+	-- Mobile always receives the reliable fixed controls. PC can opt into the same presentation;
+	-- when off, mouse release confirms placement and R/X remain available.
+	PlacementControls = Attrs.PlacementControlsEnabled,
 }
 local function getDefault(attr)
 	if attr == Attrs.ReducedMotionEnabled then
 		return false
 	end
-	-- Placement pad is opt-out on touch-only devices (no R/Esc/keyboard there) and
-	-- opt-in when a mouse is present. The same rule lives in StoreController so the
-	-- two agree regardless of which controller initializes the attribute first.
-	if attr == Attrs.PlacementControlsEnabled then
-		return currentDeviceType == SettingsConfig.DeviceType.Mobile
-	end
 	-- Auto build mode is opt-out on touch-only devices (tapping the store toggle is the only
 	-- build affordance there) and opt-in on PC, where B and V are separate keys by default.
 	if attr == Attrs.AutoBuildMode then
+		return currentDeviceType == SettingsConfig.DeviceType.Mobile
+	end
+	if attr == Attrs.PlacementControlsEnabled then
 		return currentDeviceType == SettingsConfig.DeviceType.Mobile
 	end
 	return true
@@ -96,7 +92,9 @@ end
 local function findRow(name)
 	for _, panel in ipairs(body:GetChildren()) do
 		local r = panel:IsA("Frame") and panel:FindFirstChild(name)
-		if r then return r end
+		if r then
+			return r
+		end
 	end
 	local found = body:FindFirstChild(name, true)
 	-- UI instances are Studio-owned. Support the previous row name until the authored
@@ -197,11 +195,15 @@ end
 -- ── Simple toggles ────────────────────────────────────────────────────────────
 for rowName, attr in pairs(SIMPLE) do
 	local row = findRow(rowName)
+	local available = rowName ~= "PlacementControls" or currentDeviceType == SettingsConfig.DeviceType.PC
+	if row then
+		row.Visible = available
+	end
 	local tick = row and row:FindFirstChild("Tick")
-	if tick and tick:IsA("TextButton") then
+	ensureAttr(attr)
+	if available and tick and tick:IsA("TextButton") then
 		local offStyle = authoredOffStyle or captureTickStyle(tick)
 		local onStyle = authoredOnStyle or offStyle
-		ensureAttr(attr)
 		local function refresh()
 			styleTick(row, screenGui:GetAttribute(attr) and "on" or "off", offStyle, onStyle)
 		end
@@ -249,8 +251,7 @@ end)
 updateSfxGlyph(false)
 
 local function updateMusicWaveform()
-	local enabled = modal:GetAttribute(Attrs.Open) == true
-		and screenGui:GetAttribute(Attrs.MusicEnabled) == true
+	local enabled = modal:GetAttribute(Attrs.Open) == true and screenGui:GetAttribute(Attrs.MusicEnabled) == true
 	local animate = enabled and screenGui:GetAttribute(Attrs.ReducedMotionEnabled) ~= true
 	musicWaveform.setState(enabled, animate)
 end
@@ -290,11 +291,17 @@ end
 
 local function resolveButton()
 	local container = screenGui:FindFirstChild(GuiNames.Settings, true)
-	if not container then return nil, nil end
+	if not container then
+		return nil, nil
+	end
 	local hitbox = container:FindFirstChild("Hitbox")
-	if hitbox and hitbox:IsA("GuiButton") then return hitbox, container end
+	if hitbox and hitbox:IsA("GuiButton") then
+		return hitbox, container
+	end
 	for _, d in ipairs(container:GetDescendants()) do
-		if d:IsA("GuiButton") then return d, container end
+		if d:IsA("GuiButton") then
+			return d, container
+		end
 	end
 	return nil, container
 end
@@ -324,7 +331,9 @@ function setVisible(value)
 	local deferCompactClose = not value and responsiveLayout.isCompact() and previousOwner == MY
 	modal:SetAttribute(Attrs.Open, value)
 	local _, container = resolveButton()
-	if container then container:SetAttribute(Attrs.Active, value) end
+	if container then
+		container:SetAttribute(Attrs.Active, value)
+	end
 
 	if value then
 		modalSlot.open()
@@ -332,7 +341,10 @@ function setVisible(value)
 		modalSlot.close()
 	end
 
-	if activeTween then activeTween:Cancel(); activeTween = nil end
+	if activeTween then
+		activeTween:Cancel()
+		activeTween = nil
+	end
 	local scale = getResponsiveScale()
 	local rest = restScale()
 	local restPosition = modal.Position
@@ -395,14 +407,8 @@ function setVisible(value)
 			end
 		else
 			local switched
-			activeTween, switched = ModalPageTransition.close(
-				screenGui,
-				modal,
-				MY,
-				ModalCoordinator.current(),
-				restPosition,
-				finishClose
-			)
+			activeTween, switched =
+				ModalPageTransition.close(screenGui, modal, MY, ModalCoordinator.current(), restPosition, finishClose)
 			if not switched then
 				activeTween = ModalPageTransition.closeSession(scale, rest, finishClose)
 			end
@@ -434,14 +440,19 @@ modal:SetAttribute(Attrs.Open, false)
 -- Own the gear/face "Active" state from the start (cleared = closed).
 do
 	local _, container = resolveButton()
-	if container then container:SetAttribute(Attrs.Active, false) end
+	if container then
+		container:SetAttribute(Attrs.Active, false)
+	end
 end
 
 task.defer(function()
 	local button = select(1, resolveButton())
 	if not button then
 		local deadline = tick() + 8
-		repeat task.wait(0.1); button = select(1, resolveButton()) until button or tick() > deadline
+		repeat
+			task.wait(0.1)
+			button = select(1, resolveButton())
+		until button or tick() > deadline
 	end
 	if button then
 		button.Activated:Connect(function()

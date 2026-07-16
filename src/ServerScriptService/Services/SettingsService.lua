@@ -40,7 +40,9 @@ function SettingsService.Init()
 			end
 			for _, deviceAttribute in ipairs(SettingsConfig.DeviceAttributes) do
 				local storageAttribute = SettingsConfig.GetStorageAttribute(deviceAttribute, value)
-				player:SetAttribute(storageAttribute, nil)
+				if storageAttribute then
+					player:SetAttribute(storageAttribute, nil)
+				end
 			end
 			return
 		end

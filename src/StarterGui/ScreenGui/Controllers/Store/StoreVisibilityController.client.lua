@@ -64,7 +64,8 @@ local showHelpButton, showHelpContainer = resolveButton(findMenuControl(GuiNames
 -- This controller is purely reactive: it watches the relevant ScreenGui attributes and tweens the
 -- band to match. (Owners: StoreToggleController writes StoreOpen + seeds AutoBuildMode;
 -- BuildViewController writes BuildModeActive; StorePlacement writes PlacementActive.)
---   visible  <=>  (StoreOpen or (BuildModeActive and AutoBuildMode)) and not PlacementActive
+--   visible  <=>  (StoreOpen or (BuildModeActive and AutoBuildMode))
+--                  and not PlacementActive and not BackgroundSurfacesSuspended
 local storeVisible = false
 local activeTween = nil
 local tweenInfo = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -140,13 +141,15 @@ local function refreshFromAttributes()
 	local buildMode = screenGui:GetAttribute(Attrs.BuildModeActive) == true
 	local autoBuild = screenGui:GetAttribute(Attrs.AutoBuildMode) == true
 	local placing = screenGui:GetAttribute(Attrs.PlacementActive) == true
-	setStoreVisible((storeOpen or (buildMode and autoBuild)) and not placing)
+	local backgroundSuspended = screenGui:GetAttribute(Attrs.BackgroundSurfacesSuspended) == true
+	setStoreVisible((storeOpen or (buildMode and autoBuild)) and not placing and not backgroundSuspended)
 end
 
 screenGui:GetAttributeChangedSignal(Attrs.StoreOpen):Connect(refreshFromAttributes)
 screenGui:GetAttributeChangedSignal(Attrs.BuildModeActive):Connect(refreshFromAttributes)
 screenGui:GetAttributeChangedSignal(Attrs.AutoBuildMode):Connect(refreshFromAttributes)
 screenGui:GetAttributeChangedSignal(Attrs.PlacementActive):Connect(refreshFromAttributes)
+screenGui:GetAttributeChangedSignal(Attrs.BackgroundSurfacesSuspended):Connect(refreshFromAttributes)
 
 -- Initial state: hidden until build mode is entered. We only hide (Visible = false) and
 -- leave the authored open position in place — the closed slide-out pose is computed lazily

@@ -10,6 +10,7 @@ return {
 	SellAll = "SellAll",
 	ClaimDailyReward = "ClaimDailyReward",
 	SelectGooSkin = "SelectGooSkin",
+	DevTuningApply = "DevTuningApply",
 
 	-- client -> server (fire-and-forget actions; RemoteEvent)
 	DamageBuilding = "DamageBuilding",
@@ -21,6 +22,7 @@ return {
 	MarkIntroSeen = "MarkIntroSeen",
 	UpdateSetting = "UpdateSetting",
 	StoryAction = "StoryAction",
+	PlacementControlUsed = "PlacementControlUsed",
 
 	-- debug / test harness only (server handler is gated to Studio or the place creator)
 	DebugPlot = "DebugPlot",
