@@ -2,6 +2,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 
 local CookieService = require(ServerScriptService.Services.CookieService)
+local FloorService = require(ServerScriptService.Services.FloorService)
 local PlayerDataService = require(ServerScriptService.Services.PlayerDataService)
 local ShieldService = require(ServerScriptService.Services.ShieldService)
 local UpgradeService = require(ServerScriptService.Services.UpgradeService)
@@ -58,6 +59,9 @@ function ResetStatsService.ResetPlayer(player)
 	ShieldService.SetTime(player, run and run.ShieldTime or 600)
 	ShieldService.SetEnabled(player, true)
 	resetUpgradeCounts(player)
+	-- Floor ownership is Run progression: reset to Ground before buildings are
+	-- resynchronized, destroying every Ground/floor placement with no relocation/refund.
+	FloorService.ResetPlayer(player)
 	-- Relock all buildings (store silhouettes return). Cleared before SyncPlayerUpgrades
 	-- so its backfill — which only re-marks still-owned buildings — leaves it empty.
 	UpgradeService.ClearUnlockedBuildings(player)

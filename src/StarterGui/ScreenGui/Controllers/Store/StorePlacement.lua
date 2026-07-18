@@ -11,6 +11,9 @@ local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(Shared:WaitForChild("Attrs"))
+local FloorConfig = require(Shared:WaitForChild("FloorConfig"))
+local FloorGeometry = require(Shared:WaitForChild("FloorGeometry"))
+local DevTuning = require(Shared:WaitForChild("DevTuning"):WaitForChild("DevTuning"))
 
 local StorePlacement = {}
 
@@ -32,6 +35,7 @@ function StorePlacement.new(ctx)
 	local placementHighlight = nil
 	local placementFootprint = nil
 	local placementGrid = nil
+	local placementGridColorObservation = nil
 	local placementCFrame = nil
 	local placementIsValid = false
 	local placementRotation = 0
@@ -99,13 +103,20 @@ function StorePlacement.new(ctx)
 		return nil
 	end
 
-	local function getPlacementBasePart(sheet)
-		local base = sheet and sheet:FindFirstChild("Base")
-		if base and base:IsA("BasePart") then
-			return base
-		end
+	local function getActiveFloorId()
+		return FloorConfig.NormalizeId(screenGui:GetAttribute(Attrs.ActiveFloorId))
+	end
 
-		return nil
+	local function getPlacementBasePart(sheet)
+		local surface = FloorGeometry.GetSurface(sheet, getActiveFloorId())
+		if not surface then
+			return nil
+		end
+		return surface.boundsPart or {
+			CFrame = surface.cframe,
+			Position = surface.cframe.Position,
+			Size = surface.size,
+		}
 	end
 
 	-- Project a pointer ray onto the Base's top surface PLANE analytically rather than
@@ -165,6 +176,9 @@ function StorePlacement.new(ctx)
 	end
 
 	local function getBlockedCenterPart(sheet)
+		if getActiveFloorId() ~= FloorConfig.GroundFloorId then
+			return nil
+		end
 		local center = sheet and sheet:FindFirstChild("Center")
 		if center and center:IsA("BasePart") then
 			return center
@@ -173,7 +187,18 @@ function StorePlacement.new(ctx)
 		return nil
 	end
 
-	local function createPlacementGrid(base)
+	local function setPlacementGridColor(grid, color)
+		if not (grid and typeof(color) == "Color3") then
+			return
+		end
+		for _, line in ipairs(grid:GetChildren()) do
+			if line:IsA("BasePart") then
+				line.Color = color
+			end
+		end
+	end
+
+	local function createPlacementGrid(base, color)
 		local grid = Instance.new("Model")
 		grid.Name = "PlacementGrid"
 
@@ -189,7 +214,7 @@ function StorePlacement.new(ctx)
 			line.CanQuery = false
 			line.CanTouch = false
 			line.Material = Enum.Material.Neon
-			line.Color = Color3.fromRGB(120, 210, 255)
+			line.Color = color
 			line.Transparency = 0.65
 			line.Size = Vector3.new(0.08, 0.08, base.Size.Z)
 			line.CFrame = base.CFrame * CFrame.new(x * GRID_SIZE, topY - base.Position.Y, 0)
@@ -204,7 +229,7 @@ function StorePlacement.new(ctx)
 			line.CanQuery = false
 			line.CanTouch = false
 			line.Material = Enum.Material.Neon
-			line.Color = Color3.fromRGB(120, 210, 255)
+			line.Color = color
 			line.Transparency = 0.65
 			line.Size = Vector3.new(base.Size.X, 0.08, 0.08)
 			line.CFrame = base.CFrame * CFrame.new(0, topY - base.Position.Y, z * GRID_SIZE)
@@ -295,6 +320,10 @@ function StorePlacement.new(ctx)
 		if placementFootprint then
 			placementFootprint:Destroy()
 			placementFootprint = nil
+		end
+		if placementGridColorObservation then
+			placementGridColorObservation:Disconnect()
+			placementGridColorObservation = nil
 		end
 		if placementGrid then
 			placementGrid:Destroy()
@@ -435,7 +464,18 @@ function StorePlacement.new(ctx)
 		local sheet = getPlayerSheet()
 		local base = getPlacementBasePart(sheet)
 		if base then
-			placementGrid = createPlacementGrid(base)
+			local floorId = getActiveFloorId()
+			local tuningId = FloorConfig.GetGridColorTuningId(floorId)
+			local initialColor = tuningId and DevTuning.get(tuningId) or Color3.fromRGB(120, 210, 255)
+			local createdGrid = createPlacementGrid(base, initialColor)
+			placementGrid = createdGrid
+			if tuningId then
+				placementGridColorObservation = DevTuning.observe(tuningId, function(color)
+					if placementGrid == createdGrid then
+						setPlacementGridColor(createdGrid, color)
+					end
+				end)
+			end
 		end
 		placementFootprint = Instance.new("Part")
 		placementFootprint.Name = "BuildingPlacementFootprint"
@@ -525,20 +565,6 @@ function StorePlacement.new(ctx)
 		end
 	end
 
-	local function finishPlacement()
-		if placementUpgradeId and multiPlaceSessionActive then
-			stopPlacement(true)
-			task.defer(function()
-				if
-					screenGui:GetAttribute(Attrs.PlacementActive) ~= true
-					and screenGui:GetAttribute(Attrs.BackgroundSurfacesSuspended) ~= true
-				then
-					screenGui:SetAttribute(Attrs.StoreOpen, true)
-				end
-			end)
-		end
-	end
-
 	local function tryConfirm(ignoreStartDelay)
 		local delayPassed = ignoreStartDelay or os.clock() - placementStartedAt >= 0.2
 		if placementCFrame and placementIsValid and delayPassed and not placementPurchaseInFlight then
@@ -563,7 +589,7 @@ function StorePlacement.new(ctx)
 				-- StoreBottom returns as soon as single-place ends, so release the shared hotbar
 				-- immediately instead of letting placement controls overlap its upward tween.
 				stopPlacement(success)
-			end)
+			end, getActiveFloorId())
 		elseif not placementIsValid then
 			ctx.showStatus("Can't place there: it overlaps the Center or another building.")
 		end
@@ -588,6 +614,14 @@ function StorePlacement.new(ctx)
 				ctx.placementControls.reportKeyboard("Rotate")
 			end
 			rotatePlacement()
+			return
+		end
+
+		if input.KeyCode == Enum.KeyCode.C and placementUpgradeId then
+			if ctx.placementControls then
+				ctx.placementControls.reportKeyboard("Confirm")
+			end
+			tryConfirm(true)
 			return
 		end
 
@@ -724,7 +758,6 @@ function StorePlacement.new(ctx)
 	return {
 		start = startPlacement,
 		cancel = cancelPlacement,
-		finish = finishPlacement,
 		rotate = rotatePlacement,
 		confirm = tryConfirm,
 		tick = tick,

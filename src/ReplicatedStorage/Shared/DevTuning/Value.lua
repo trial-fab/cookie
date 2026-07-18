@@ -38,6 +38,23 @@ function Value.canonicalize(definition, candidateValue)
 			return false, nil, "ExpectedBoolean"
 		end
 		return true, candidateValue
+	elseif definition.kind == "string" then
+		if type(candidateValue) ~= "string" then
+			return false, nil, "ExpectedString"
+		end
+		-- Reject obviously oversized payloads before UTF-8 traversal. A valid UTF-8
+		-- codepoint uses at most four bytes, so this does not reject a valid value.
+		if #candidateValue > definition.maxLength * 4 then
+			return false, nil, "StringTooLong"
+		end
+		local length = utf8.len(candidateValue)
+		if not length then
+			return false, nil, "InvalidUtf8"
+		end
+		if length > definition.maxLength then
+			return false, nil, "StringTooLong"
+		end
+		return true, candidateValue
 	elseif definition.kind == "Color3" then
 		if typeof(candidateValue) ~= "Color3" then
 			return false, nil, "ExpectedColor3"

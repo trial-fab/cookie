@@ -11,6 +11,7 @@ local Net = require(shared:WaitForChild("Net"))
 local Attrs = require(shared:WaitForChild("Attrs"))
 
 local BuildSuggestionNudge = {}
+local PLACEMENT_CONTROLS_GAP_PIXELS = 8
 
 function BuildSuggestionNudge.new(ctx)
 	local player = ctx.player
@@ -30,7 +31,46 @@ function BuildSuggestionNudge.new(ctx)
 		suggestionDontShowAgain = nil
 	end
 	local suggestionDontShowCheck = suggestionDontShowAgain and suggestionDontShowAgain:FindFirstChild("check")
+	local hotbar = screenGui:FindFirstChild("Hotbar")
+	local defaultSuggestionPosition = suggestion and suggestion.Position
+
+	local function placementControlsExist()
+		if not (hotbar and hotbar:IsA("GuiObject")) then
+			return false
+		end
+		if screenGui:GetAttribute(Attrs.PlacementControlsEnabled) == true then
+			for _, slotName in ipairs({ "SlotLeft", "SlotCenter", "SlotRight" }) do
+				local slot = hotbar:FindFirstChild(slotName)
+				if slot and slot:FindFirstChild("PlacementFace") then
+					return true
+				end
+			end
+		end
+		if screenGui:GetAttribute(Attrs.MultiPlaceSessionActive) == true then
+			local centerSlot = hotbar:FindFirstChild("SlotCenter")
+			return centerSlot and centerSlot:FindFirstChild("MultiPlaceFace") ~= nil
+		end
+		return false
+	end
+
+	local function updateSuggestionPosition()
+		if not (suggestion and defaultSuggestionPosition) then
+			return
+		end
+		if placementControlsExist() then
+			local hotbarTopOffset = hotbar.Position.Y.Offset - hotbar.AbsoluteSize.Y * hotbar.AnchorPoint.Y
+			suggestion.Position = UDim2.new(
+				defaultSuggestionPosition.X.Scale,
+				defaultSuggestionPosition.X.Offset,
+				hotbar.Position.Y.Scale,
+				math.round(hotbarTopOffset - PLACEMENT_CONTROLS_GAP_PIXELS)
+			)
+		else
+			suggestion.Position = defaultSuggestionPosition
+		end
+	end
 	if suggestion then
+		updateSuggestionPosition()
 		suggestion.Visible = false
 	end
 
@@ -75,7 +115,16 @@ function BuildSuggestionNudge.new(ctx)
 		end
 		-- Shown on PC and mobile the first time a placement starts this session.
 		setDontShowAgainChecked(false)
+		updateSuggestionPosition()
 		suggestion.Visible = true
+	end
+
+	for _, attribute in ipairs({ Attrs.PlacementControlsEnabled, Attrs.MultiPlaceSessionActive }) do
+		screenGui:GetAttributeChangedSignal(attribute):Connect(updateSuggestionPosition)
+	end
+	if hotbar and hotbar:IsA("GuiObject") then
+		hotbar:GetPropertyChangedSignal("Position"):Connect(updateSuggestionPosition)
+		hotbar:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateSuggestionPosition)
 	end
 
 	if suggestionDontShowAgain then

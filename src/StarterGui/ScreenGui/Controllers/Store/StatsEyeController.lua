@@ -1,4 +1,4 @@
--- StatsEyeController: the buildings-tab "lock all stats" eye toggle.
+-- StatsEyeController: the buildings-tab "lock all store stats" eye toggle.
 --
 -- Clicking the eye locks every building card's stats panel open (via ctx.cookieStats.setLockAll)
 -- on top of the per-row right-click / long-press locks. The toggle is the StatsEyeToggle
@@ -27,6 +27,7 @@ local UserInputService = game:GetService("UserInputService")
 local GuiService = game:GetService("GuiService")
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local Attrs = require(Shared:WaitForChild("Attrs"))
+local CursorTooltipTuning = require(Shared:WaitForChild("CursorTooltipTuning"))
 local IconButton = require(Shared:WaitForChild("IconButton"))
 local UiMotion = require(Shared:WaitForChild("UiMotion"))
 
@@ -206,6 +207,7 @@ function StatsEyeController.new(ctx)
 	end)
 
 	local locked = false
+	local tooltipRegistration = nil
 	local function setLocked(on)
 		on = on and true or false
 		if locked == on then
@@ -219,9 +221,23 @@ function StatsEyeController.new(ctx)
 		end
 		UiMotion.create(lines, LOCK_TWEEN_INFO, { ImageTransparency = on and 0 or 1 }):Play()
 		UiMotion.create(middle, LOCK_TWEEN_INFO, { ImageColor3 = on and ACTIVE_COLOR or IDLE_COLOR }):Play()
+		if tooltipRegistration then
+			tooltipRegistration:refresh()
+		end
 	end
 
 	if hitbox then
+		if ctx.cursorTooltip then
+			tooltipRegistration = ctx.cursorTooltip:registerGui(hitbox, {
+				trigger = ctx.cursorTooltip.Trigger.Hover,
+				getContent = function()
+					if UserInputService.PreferredInput ~= Enum.PreferredInput.KeyboardAndMouse then
+						return nil
+					end
+					return CursorTooltipTuning.getHint("StatsEye", locked)
+				end,
+			})
+		end
 		hitbox.Activated:Connect(function()
 			setLocked(not locked)
 		end)

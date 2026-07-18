@@ -13,7 +13,6 @@ local VALID_ACTIONS = {
 	Cancel = true,
 	Rotate = true,
 	Confirm = true,
-	Finish = true,
 }
 local VALID_SOURCES = {
 	Screen = true,

@@ -1,8 +1,7 @@
 -- CursorTooltip: one client-side presenter for information that follows the pointer.
 --
--- The module never creates or clones player-facing UI. It binds the first persistent
--- ScreenGui child named CursorTooltip, falling back to the approved MultiPlaceCounter
--- TextLabel until a richer CursorTooltip frame is authored in Studio.
+-- The module never creates or clones player-facing UI. It binds the persistent
+-- Studio-authored ScreenGui child named CursorTooltip.
 --
 -- Producers publish content through a source handle:
 --   local source = CursorTooltip.get(screenGui):createSource({ priority = 200 })
@@ -22,9 +21,9 @@
 -- back to a child named "Hint"). Adding a mode is pure Studio work - author a new
 -- named child frame; this module needs no change.
 --
--- Future building-stat controllers should publish manually after an intentional click,
--- or while a dedicated stats-view tool is active. This module does not raycast or enable
--- passive world-hover stats.
+-- World-stat controllers remain responsible for hit testing and selection. They can provide
+-- getScreenPoint + placement = "Above" when a touch tooltip should follow a world object
+-- instead of the mouse; this presenter only renders and positions their published content.
 local GuiService = game:GetService("GuiService")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -131,11 +130,6 @@ local function findRoot(screenGui)
 		return root
 	end
 
-	root = screenGui:FindFirstChild("MultiPlaceCounter")
-	if root and root:IsA("GuiObject") then
-		return root
-	end
-
 	return nil
 end
 
@@ -144,6 +138,7 @@ local function newPresenter(screenGui)
 	local entries = {}
 	local sequence = 0
 	local activeSource = nil
+	local activeContent = nil
 	local renderConnection = nil
 
 	local presenter = {
@@ -153,37 +148,69 @@ local function newPresenter(screenGui)
 
 	local lastFollowPoint = nil
 
-	local function updatePosition(force)
-		if not (root and root.Parent and root.Visible) then
-			return
+	local positionProviderWarned = false
+	local function getFollowPoint()
+		if activeContent and type(activeContent.getScreenPoint) == "function" then
+			local ok, result = pcall(activeContent.getScreenPoint)
+			if ok and typeof(result) == "Vector2" then
+				return result, activeContent.placement == "Above" and "Above" or "Cursor"
+			end
+			if not ok and not positionProviderWarned then
+				positionProviderWarned = true
+				warn("CursorTooltip screen-position provider failed:", result)
+			end
+			return nil, nil
 		end
 
 		local point = UserInputService:GetMouseLocation()
 		if not screenGui.IgnoreGuiInset then
 			point -= GuiService:GetGuiInset()
 		end
-		if not force and point == lastFollowPoint then
+		return point, "Cursor"
+	end
+
+	local function updatePosition(force)
+		if not (root and root.Parent and root.Visible) then
+			if not (root and root.Parent and activeContent) then
+				return
+			end
+		end
+
+		local point, placement = getFollowPoint()
+		if not point then
+			root.Visible = false
+			return
+		end
+		if not force and point == lastFollowPoint and root.Visible then
 			return
 		end
 		lastFollowPoint = point
 
-		-- Lock the near edge exactly OffsetX/OffsetY from the cursor; flip to the
-		-- opposite side of the cursor rather than shrinking that gap when the
-		-- viewport edge is close, then clamp as a last resort.
+		-- Cursor hints flip to the opposite side before clamping. World-anchored
+		-- panels stay above their target and clamp at the viewport edge so a camera
+		-- pitch change cannot make the entire panel jump below the building.
 		local camera = Workspace.CurrentCamera
 		local viewport = camera and camera.ViewportSize or Vector2.new(math.huge, math.huge)
 		local size = root.AbsoluteSize
-		local x = point.X + CursorTooltipConfig.OffsetX
-		if x + size.X > viewport.X then
-			x = point.X - CursorTooltipConfig.OffsetX - size.X
-		end
-		local y = point.Y + CursorTooltipConfig.OffsetY
-		if y + size.Y > viewport.Y then
+		local x
+		local y
+		if placement == "Above" then
+			x = point.X - size.X / 2
 			y = point.Y - CursorTooltipConfig.OffsetY - size.Y
+		else
+			x = point.X + CursorTooltipConfig.OffsetX
+			if x + size.X > viewport.X then
+				x = point.X - CursorTooltipConfig.OffsetX - size.X
+			end
+			y = point.Y + CursorTooltipConfig.OffsetY
+			if y + size.Y > viewport.Y then
+				y = point.Y - CursorTooltipConfig.OffsetY - size.Y
+			end
 		end
 		x = math.clamp(x, 0, math.max(0, viewport.X - size.X))
 		y = math.clamp(y, 0, math.max(0, viewport.Y - size.Y))
 		root.Position = UDim2.fromOffset(math.round(x), math.round(y))
+		root.Visible = true
 	end
 
 	local function setFollowing(active)
@@ -215,6 +242,8 @@ local function newPresenter(screenGui)
 		if not root then
 			return
 		end
+		activeContent = content
+		positionProviderWarned = false
 
 		local modeName = type(content.mode) == "string" and content.mode or "Hint"
 		local selected = root
@@ -288,6 +317,7 @@ local function newPresenter(screenGui)
 		if record then
 			renderContent(record.content)
 		elseif root then
+			activeContent = nil
 			root.Visible = false
 			setFollowing(false)
 		end
@@ -512,7 +542,7 @@ local function newPresenter(screenGui)
 			root = nil
 		end)
 	else
-		warn("CursorTooltip disabled: ScreenGui.CursorTooltip or ScreenGui.MultiPlaceCounter was not found")
+		warn("CursorTooltip disabled: ScreenGui.CursorTooltip was not found")
 	end
 
 	return presenter

@@ -12,9 +12,8 @@ local Attrs = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"
 	Plots are evenly spaced around a shared circle centered on Workspace.Baseplate.
 	Slot i sits at angle theta = (i-1) * 2*pi/PLOT_CAP (slot 1 -> +X). Each plot's INNER
 	edge (the hub-facing side) is pinned at radius R_INNER from the center; the plot
-	extends OUTWARD along its local +Z. Plots grow outward via Base Expansion
-	(UpgradeService), so the inner edge / spawn / cookie stay put near the hub while
-	build space expands toward the rim and beyond.
+	extends OUTWARD along its local +Z. Base Expansion now unlocks vertical floors,
+	so the authored Ground footprint remains fixed.
 
 	Slots are assigned, not players: a slot persists as an "open plot" when its owner
 	leaves and is reused by the next joiner (lowest free slot first). Only TRAILING
@@ -26,7 +25,7 @@ local Attrs = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"
 
 local CONFIG = {
 	PLOT_CAP = 10,   -- plots evenly spaced around the circle (10 -> 36 deg apart)
-	R_INNER = 250,   -- inner (hub-facing) edge distance from center; plots grow outward from here
+	R_INNER = 251,   -- Base inner face; the 1-stud-wider Edge inner face remains at radius 250
 	                 -- (~22.5-stud gap between adjacent plots at the inner edge; the zero-gap
 	                 --  minimum for 10 plots @ 132 wide is ~214. Pair with baseplate radius >= ~310.)
 }
@@ -127,6 +126,7 @@ SheetService.SyncEdge = syncEdge
 -- inner edge sits back at R_INNER. Used for fresh tiles and when reusing an open plot that a
 -- previous owner may have expanded.
 local function placeSheet(sheet, slot)
+	sheet:SetAttribute(Attrs.PlotSlotIndex, slot)
 	local base = getSheetCenter(sheet)
 	if base and sheetBaseSize then
 		base.Size = sheetBaseSize
@@ -230,6 +230,7 @@ local function createTileAtTail()
 
 	local sheet = sheetTemplate:Clone()
 	sheet.Name = ("CookieSheet_%d"):format(slot)
+	sheet:SetAttribute(Attrs.PlotSlotIndex, slot)
 	resetGeneratedSheet(sheet)
 	sheet.Parent = cookieSheetsFolder
 	placeSheet(sheet, slot)

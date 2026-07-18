@@ -209,7 +209,10 @@ local function buildSlider(ctx, definition, row)
 		UserInputService.InputChanged:Connect(function(input)
 			if
 				dragging
-				and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch)
+				and (
+					input.UserInputType == Enum.UserInputType.MouseMovement
+					or input.UserInputType == Enum.UserInputType.Touch
+				)
 			then
 				handle(input.Position.X, false)
 			end
@@ -220,7 +223,10 @@ local function buildSlider(ctx, definition, row)
 		UserInputService.InputEnded:Connect(function(input)
 			if
 				dragging
-				and (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch)
+				and (
+					input.UserInputType == Enum.UserInputType.MouseButton1
+					or input.UserInputType == Enum.UserInputType.Touch
+				)
 			then
 				dragging = false
 				handle(input.Position.X, true)
@@ -267,6 +273,22 @@ local function buildValueControl(ctx, definition, valueArea, rowState)
 		)
 		return function(value)
 			selector.Text = value.Name .. "  \u{25B8}"
+		end
+	elseif definition.kind == "string" then
+		local box = makeTextBox("ValueBox", valueArea, ctx)
+		box.Size = UDim2.new(1, -84, 1, 0)
+		local apply = makeButton("ApplyButton", "Apply", valueArea, ctx)
+		apply.AnchorPoint = Vector2.new(1, 0)
+		apply.Position = UDim2.fromScale(1, 0)
+		apply.Size = UDim2.fromOffset(76, CONTROL_HEIGHT)
+		table.insert(
+			ctx.connections,
+			apply.Activated:Connect(function()
+				submitAsync(ctx, definition, box.Text)
+			end)
+		)
+		return function(value)
+			box.Text = value
 		end
 	elseif definition.kind == "Color3" then
 		local box = makeTextBox("ValueBox", valueArea, ctx)
@@ -416,14 +438,14 @@ local function buildFeature(ctx, feature, layoutOrder)
 	separator.BorderSizePixel = 0
 	separator.Parent = group
 
-	local heading = Instance.new("TextLabel")
+	local heading = Instance.new("TextButton")
 	heading.Name = "Heading"
 	heading.LayoutOrder = 0
 	heading.Size = UDim2.new(1, 0, 0, 30)
+	heading.AutoButtonColor = false
 	heading.BackgroundTransparency = 1
 	heading.BorderSizePixel = 0
 	heading.Font = Enum.Font.ArialBold
-	heading.Text = "  " .. feature.name
 	heading.TextColor3 = ctx.colors.text
 	heading.TextSize = 17
 	heading.TextXAlignment = Enum.TextXAlignment.Left
@@ -431,6 +453,8 @@ local function buildFeature(ctx, feature, layoutOrder)
 
 	local groupRecord = {
 		instance = group,
+		heading = heading,
+		collapsed = feature.collapsedByDefault == true,
 		rows = {},
 	}
 	for index, definition in ipairs(feature.tunables) do
@@ -438,10 +462,28 @@ local function buildFeature(ctx, feature, layoutOrder)
 		table.insert(groupRecord.rows, rowRecord)
 		table.insert(ctx.rows, rowRecord)
 	end
+
+	local function updateHeading()
+		heading.Text = "  " .. feature.name .. (groupRecord.collapsed and "  [Show]" or "  [Hide]")
+		heading.TextColor3 = groupRecord.collapsed and ctx.colors.muted or ctx.colors.text
+	end
+	for _, row in ipairs(groupRecord.rows) do
+		row.instance.Visible = not groupRecord.collapsed
+	end
+	updateHeading()
+	table.insert(
+		ctx.connections,
+		heading.Activated:Connect(function()
+			groupRecord.collapsed = not groupRecord.collapsed
+			updateHeading()
+			DevTuningControls.applySearch(ctx, ctx.searchQuery or "")
+		end)
+	)
 	return groupRecord
 end
 
 function DevTuningControls.mount(ctx)
+	ctx.searchQuery = ""
 	for index, feature in ipairs(ctx.catalog.features) do
 		table.insert(ctx.groups, buildFeature(ctx, feature, index))
 	end
@@ -449,14 +491,18 @@ end
 
 function DevTuningControls.applySearch(ctx, query)
 	query = string.lower(query or "")
+	ctx.searchQuery = query
 	for _, group in ipairs(ctx.groups) do
-		local anyVisible = false
+		local anyMatch = false
 		for _, row in ipairs(group.rows) do
-			local visible = query == "" or string.find(row.searchText, query, 1, true) ~= nil
+			local matches = query == "" or string.find(row.searchText, query, 1, true) ~= nil
+			local visible = matches and (query ~= "" or not group.collapsed)
 			row.instance.Visible = visible
-			anyVisible = anyVisible or visible
+			anyMatch = anyMatch or matches
 		end
-		group.instance.Visible = anyVisible
+		-- With no search, keep collapsed headers visible so they can be reopened.
+		-- Active searches temporarily expose matching rows without changing collapse state.
+		group.instance.Visible = query == "" or anyMatch
 	end
 end
 

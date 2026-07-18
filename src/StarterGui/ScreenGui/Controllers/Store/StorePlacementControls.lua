@@ -2,9 +2,11 @@
 -- placement actions. HotbarPlacementMode owns the visual face/geometry swap; this module owns
 -- action routing and the visible disabled state of Confirm.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(Shared:WaitForChild("Attrs"))
+local CursorTooltipTuning = require(Shared:WaitForChild("CursorTooltipTuning"))
 local Net = require(Shared:WaitForChild("Net"))
 
 local StorePlacementControls = {}
@@ -26,6 +28,7 @@ function StorePlacementControls.new(ctx, placement)
 	local disabledOverlay = confirmFace and confirmFace:FindFirstChild("DisabledOverlay")
 	local confirmValid = false
 	local purchaseInFlight = false
+	local tooltipRegistrations = {}
 
 	local function isActive()
 		return screenGui:GetAttribute(Attrs.PlacementActive) == true
@@ -52,7 +55,32 @@ function StorePlacementControls.new(ctx, placement)
 			confirmHitbox.Active = enabled
 			confirmHitbox.Interactable = enabled
 		end
+		for _, registration in ipairs(tooltipRegistrations) do
+			registration:refresh()
+		end
 	end
+
+	local function registerHint(hitbox, target)
+		if not (ctx.cursorTooltip and hitbox) then
+			return
+		end
+		local registration = ctx.cursorTooltip:registerGui(hitbox, {
+			trigger = ctx.cursorTooltip.Trigger.Hover,
+			getContent = function()
+				if UserInputService.PreferredInput ~= Enum.PreferredInput.KeyboardAndMouse or not isActive() then
+					return nil
+				end
+				return CursorTooltipTuning.getHint(target, false)
+			end,
+		})
+		if registration then
+			table.insert(tooltipRegistrations, registration)
+		end
+	end
+
+	registerHint(cancelHitbox, "PlacementCancel")
+	registerHint(rotateHitbox, "PlacementRotate")
+	registerHint(confirmHitbox, "PlacementPlace")
 
 	if cancelHitbox then
 		cancelHitbox.Activated:Connect(function()

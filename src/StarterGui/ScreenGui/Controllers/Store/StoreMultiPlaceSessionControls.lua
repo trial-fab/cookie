@@ -1,25 +1,23 @@
--- StoreMultiPlaceSessionControls: desktop-only affordances for one Multi Place run.
--- The Studio-authored counter follows the cursor in both desktop placement presentations.
--- Classic placement also reuses the center hotbar slot as Cancel at x0 and Done after the
--- first server-confirmed building. HotbarPlacementMode owns face visibility and slot geometry.
+-- StoreMultiPlaceSessionControls: PC affordances for one Multi-Place run.
+-- The cursor counter works in both PC placement modes. With screen controls off, the center
+-- hotbar face stays Cancel-only while the ghost follows the mouse for repeated click placement.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(Shared:WaitForChild("Attrs"))
+local CursorTooltipTuning = require(Shared:WaitForChild("CursorTooltipTuning"))
 local Net = require(Shared:WaitForChild("Net"))
 local SettingsConfig = require(Shared:WaitForChild("SettingsConfig"))
-local UiMotion = require(Shared:WaitForChild("UiMotion"))
 
 local StoreMultiPlaceSessionControls = {}
-local STATE_TRANSITION_SECONDS = 0.2
 
 local function isImage(instance)
 	return instance and (instance:IsA("ImageLabel") or instance:IsA("ImageButton"))
 end
 
-function StoreMultiPlaceSessionControls.new(ctx, placement)
+function StoreMultiPlaceSessionControls.new(ctx)
 	local screenGui = ctx.screenGui
 	local hotbar = screenGui:FindFirstChild("Hotbar")
 	local centerSlot = hotbar and hotbar:FindFirstChild("SlotCenter")
@@ -27,9 +25,7 @@ function StoreMultiPlaceSessionControls.new(ctx, placement)
 	local face = centerSlot and centerSlot:FindFirstChild("MultiPlaceFace")
 	local cancelIcon = face and face:FindFirstChild("CancelIcon")
 	local doneIcon = face and face:FindFirstChild("DoneIcon")
-	local confirmFace = hotbar
-		and hotbar:FindFirstChild("SlotRight")
-		and hotbar.SlotRight:FindFirstChild("PlacementFace")
+	local cancelColor = face and face.BackgroundColor3
 	local counterSource = ctx.cursorTooltip
 		and ctx.cursorTooltip:createSource({ priority = ctx.cursorTooltip.Priority.Counter })
 	local deviceType = SettingsConfig.GetDeviceType(
@@ -38,17 +34,7 @@ function StoreMultiPlaceSessionControls.new(ctx, placement)
 		RunService:IsStudio() and UserInputService.PreferredInput == Enum.PreferredInput.Touch
 	)
 	local isDesktop = deviceType == SettingsConfig.DeviceType.PC
-	local redColor = face and face.BackgroundColor3
-	local greenColor = confirmFace and confirmFace.BackgroundColor3 or Color3.fromRGB(64, 200, 96)
-	local showingDone = nil
-	local stateTweens = {}
-
-	local function cancelStateTweens()
-		for _, tween in ipairs(stateTweens) do
-			tween:Cancel()
-		end
-		table.clear(stateTweens)
-	end
+	local tooltipRegistration = nil
 
 	local function sessionActive()
 		return isDesktop
@@ -60,54 +46,12 @@ function StoreMultiPlaceSessionControls.new(ctx, placement)
 		return sessionActive() and screenGui:GetAttribute(Attrs.PlacementControlsEnabled) ~= true
 	end
 
-	local function getCount()
-		local value = screenGui:GetAttribute(Attrs.MultiPlaceSessionCount)
-		return type(value) == "number" and math.max(0, math.floor(value)) or 0
-	end
-
-	local function setDoneState(done, animate)
-		done = done == true
-		if showingDone == done then
-			return
-		end
-		showingDone = done
-		cancelStateTweens()
-		if not (face and isImage(cancelIcon) and isImage(doneIcon) and redColor) then
-			return
-		end
-
-		cancelIcon.Visible = true
-		doneIcon.Visible = true
-		local goals = {
-			face = { BackgroundColor3 = done and greenColor or redColor },
-			cancel = { ImageTransparency = done and 1 or 0 },
-			done = { ImageTransparency = done and 0 or 1 },
-		}
-		local duration = STATE_TRANSITION_SECONDS
-		if not animate or duration <= 0 then
-			face.BackgroundColor3 = goals.face.BackgroundColor3
-			cancelIcon.ImageTransparency = goals.cancel.ImageTransparency
-			doneIcon.ImageTransparency = goals.done.ImageTransparency
-			return
-		end
-
-		local info = TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-		for instance, goal in pairs({
-			[face] = goals.face,
-			[cancelIcon] = goals.cancel,
-			[doneIcon] = goals.done,
-		}) do
-			local tween = UiMotion.create(instance, info, goal)
-			table.insert(stateTweens, tween)
-			tween:Play()
-		end
-	end
-
 	local function refresh()
 		local active = sessionActive()
-		local count = getCount()
 		if counterSource then
 			if active then
+				local count = screenGui:GetAttribute(Attrs.MultiPlaceSessionCount)
+				count = type(count) == "number" and math.max(0, math.floor(count)) or 0
 				counterSource:show({
 					mode = "Counter",
 					text = "x" .. tostring(count),
@@ -116,25 +60,46 @@ function StoreMultiPlaceSessionControls.new(ctx, placement)
 				counterSource:clear()
 			end
 		end
+
 		local classic = classicSessionActive()
 		if classic and hitbox and hitbox:IsA("GuiButton") then
 			hitbox.Active = true
 			hitbox.Interactable = true
 		end
-		setDoneState(count > 0, classic and showingDone ~= nil)
+		if face and cancelColor then
+			face.BackgroundColor3 = cancelColor
+		end
+		if isImage(cancelIcon) then
+			cancelIcon.Visible = true
+			cancelIcon.ImageTransparency = 0
+		end
+		if isImage(doneIcon) then
+			doneIcon.Visible = false
+		end
+		if tooltipRegistration then
+			tooltipRegistration:refresh()
+		end
 	end
 
 	if hitbox and hitbox:IsA("GuiButton") then
+		if ctx.cursorTooltip then
+			tooltipRegistration = ctx.cursorTooltip:registerGui(hitbox, {
+				trigger = ctx.cursorTooltip.Trigger.Hover,
+				getContent = function()
+					if
+						UserInputService.PreferredInput ~= Enum.PreferredInput.KeyboardAndMouse
+						or not classicSessionActive()
+					then
+						return nil
+					end
+					return CursorTooltipTuning.getHint("PlacementCancel", false)
+				end,
+			})
+		end
 		hitbox.Activated:Connect(function()
-			if not classicSessionActive() then
-				return
-			end
-			if getCount() > 0 then
-				Net.fireServer(Net.Names.PlacementControlUsed, "Finish", "Screen")
-				placement.finish()
-			else
+			if classicSessionActive() then
 				Net.fireServer(Net.Names.PlacementControlUsed, "Cancel", "Screen")
-				placement.cancel()
+				ctx.placement.cancel()
 			end
 		end)
 	end
@@ -148,12 +113,7 @@ function StoreMultiPlaceSessionControls.new(ctx, placement)
 		screenGui:GetAttributeChangedSignal(attribute):Connect(refresh)
 	end
 
-	if counterSource then
-		counterSource:clear()
-	end
-	setDoneState(false, false)
 	refresh()
-
 	return {}
 end
 

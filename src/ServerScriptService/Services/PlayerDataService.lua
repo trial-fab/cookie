@@ -7,7 +7,8 @@ local Workspace = game:GetService("Workspace")
 
 local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
-local GridPlacement = require(ReplicatedStorage.Shared.GridPlacement)
+local FloorConfig = require(ReplicatedStorage.Shared.FloorConfig)
+local FloorGeometry = require(ReplicatedStorage.Shared.FloorGeometry)
 local PlayerMetricConfig = require(ReplicatedStorage.Shared.PlayerMetricConfig)
 local PlayerMetricsService = require(script.Parent.PlayerMetricsService)
 local SettingsConfig = require(ReplicatedStorage.Shared.SettingsConfig)
@@ -18,7 +19,7 @@ local DATASTORE_NAME = RunService:IsStudio() and "ClickGamePlayerData_v1_Studio"
 local AUTOSAVE_SECONDS = 60
 local MIN_SAVE_INTERVAL_SECONDS = 20
 local MAX_RETRIES = 3
-local DEFAULT_DIMENSION = "Earth"
+local DEFAULT_DIMENSION = FloorConfig.DimensionId
 local SERVER_SESSION_ID = HttpService:GenerateGUID(false)
 local FORCE_SAVE_WAIT_SECONDS = 10
 
@@ -35,8 +36,11 @@ local DEFAULT_RUN_DATA = {
 	CanBeStolenFrom = false,
 	ShieldTime = 600,
 	UpgradeCounts = {},
+	PlacementSchemaVersion = FloorConfig.PlacementSchemaVersion,
 	Placements = {
-		Earth = {},
+		Earth = {
+			Ground = {},
+		},
 	},
 }
 
@@ -113,17 +117,26 @@ local function mergeKnownFields(defaults, source)
 	return merged
 end
 
--- Placements are dimension-keyed ({ Earth = { upgradeId = {...} } }). No legacy flat-format
--- migration: the game is pre-release, so saves only ever use the current shape.
-local function normalizePlacements(placements)
+-- Placement schema v2 is { dimension -> floor -> building -> placement list }.
+-- Pre-release saves are hard reset by scope lock, so v1 is deliberately discarded
+-- instead of carrying a one-off compatibility branch into launch code.
+local function normalizePlacements(placements, schemaVersion)
 	local normalized = copyDictionary(DEFAULT_RUN_DATA.Placements)
-	if type(placements) ~= "table" then
+	if tonumber(schemaVersion) ~= FloorConfig.PlacementSchemaVersion or type(placements) ~= "table" then
 		return normalized
 	end
 
 	for dimensionName, dimensionPlacements in pairs(placements) do
 		if type(dimensionName) == "string" and type(dimensionPlacements) == "table" then
-			normalized[dimensionName] = copyDictionary(dimensionPlacements)
+			local normalizedDimension = {}
+			for _, floor in ipairs(FloorConfig.GetDefinitions()) do
+				local floorPlacements = dimensionPlacements[floor.Id]
+				if type(floorPlacements) == "table" then
+					normalizedDimension[floor.Id] = copyDictionary(floorPlacements)
+				end
+			end
+			normalizedDimension[FloorConfig.GroundFloorId] = normalizedDimension[FloorConfig.GroundFloorId] or {}
+			normalized[dimensionName] = normalizedDimension
 		end
 	end
 
@@ -142,7 +155,8 @@ local function migrateFlatData(data)
 		ShieldTime = data.ShieldTime,
 		UpgradeCounts = data.UpgradeCounts,
 	})
-	migrated.Run.Placements = normalizePlacements(data.Placements)
+	migrated.Run.PlacementSchemaVersion = FloorConfig.PlacementSchemaVersion
+	migrated.Run.Placements = copyDictionary(DEFAULT_RUN_DATA.Placements)
 
 	migrated.Persistent = mergeKnownFields(DEFAULT_PERSISTENT_DATA, {
 		RealPlayTime = data.RealPlayTime,
@@ -174,7 +188,11 @@ local function mergeDefaults(data)
 
 	local merged = copyDictionary(DEFAULT_DATA)
 	merged.Run = mergeKnownFields(DEFAULT_RUN_DATA, data.Run)
-	merged.Run.Placements = normalizePlacements(data.Run and data.Run.Placements)
+	merged.Run.PlacementSchemaVersion = FloorConfig.PlacementSchemaVersion
+	merged.Run.Placements = normalizePlacements(
+		data.Run and data.Run.Placements,
+		data.Run and data.Run.PlacementSchemaVersion
+	)
 	merged.Persistent = mergeKnownFields(DEFAULT_PERSISTENT_DATA, data.Persistent)
 
 	return merged
@@ -230,8 +248,6 @@ local function migrateLegacyLeveledUtilityCounts(counts)
 	local legacyLevels = {
 		["Offline Earnings I"] = { UpgradeId = "Offline Earnings", Level = 1 },
 		["Offline Earnings II"] = { UpgradeId = "Offline Earnings", Level = 2 },
-		["Base Expansion I"] = { UpgradeId = "Base Expansion", Level = 1 },
-		["Base Expansion II"] = { UpgradeId = "Base Expansion", Level = 2 },
 	}
 
 	for legacyId, target in pairs(legacyLevels) do
@@ -308,30 +324,31 @@ end
 
 local function serializeBuildingPlacements(player)
 	local sheet = getPlayerSheet(player)
-	local base = sheet and sheet:FindFirstChild("Base")
-	if not sheet or not base or not base:IsA("BasePart") then
+	if not sheet then
 		return nil
 	end
 
-	local placements = {}
+	local placements = copyDictionary(DEFAULT_RUN_DATA.Placements[DEFAULT_DIMENSION])
 	for _, child in ipairs(sheet:GetChildren()) do
 		if child:IsA("Model") then
 			local upgradeId = child:GetAttribute(Attrs.UpgradeId)
 			if type(upgradeId) == "string" then
-				local boundingCFrame = child:GetBoundingBox()
-				-- Store relative to the fixed inner-edge anchor so positions survive the
-				-- Base growing outward (matches getSavedBuildingCFrame on load).
-				local anchor = GridPlacement.getPlacementAnchorCFrame(base)
-				local relative = anchor:ToObjectSpace(boundingCFrame)
-				local _, rotationY = relative:ToOrientation()
-				rotationY = tonumber(child:GetAttribute(Attrs.PlacementRotationY)) or rotationY
-				placements[upgradeId] = placements[upgradeId] or {}
-				table.insert(placements[upgradeId], {
-					X = relative.X,
-					Y = relative.Y,
-					Z = relative.Z,
-					RY = rotationY,
-				})
+				local floorId = FloorConfig.NormalizeId(child:GetAttribute(Attrs.FloorId))
+				local surface = FloorGeometry.GetSurface(sheet, floorId)
+				if surface then
+					local boundingCFrame = child:GetBoundingBox()
+					local relative = surface.originCFrame:ToObjectSpace(boundingCFrame)
+					local _, rotationY = relative:ToOrientation()
+					rotationY = tonumber(child:GetAttribute(Attrs.PlacementRotationY)) or rotationY
+					placements[floorId] = placements[floorId] or {}
+					placements[floorId][upgradeId] = placements[floorId][upgradeId] or {}
+					table.insert(placements[floorId][upgradeId], {
+						X = relative.X,
+						Y = relative.Y,
+						Z = relative.Z,
+						RY = rotationY,
+					})
+				end
 			end
 		end
 	end
@@ -533,6 +550,7 @@ function PlayerDataService.UpdateFromPlayerValues(player)
 	local buildingPlacements = serializeBuildingPlacements(player)
 	if buildingPlacements then
 		run.Placements = run.Placements or copyDictionary(DEFAULT_RUN_DATA.Placements)
+		run.PlacementSchemaVersion = FloorConfig.PlacementSchemaVersion
 		run.Placements[DEFAULT_DIMENSION] = buildingPlacements
 	end
 

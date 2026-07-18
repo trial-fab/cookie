@@ -4,6 +4,7 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local CookieService = require(ServerScriptService.Services.CookieService)
+local FloorService = require(ServerScriptService.Services.FloorService)
 local PlayerDataService = require(ServerScriptService.Services.PlayerDataService)
 local SheetService = require(ServerScriptService.Services.SheetService)
 local ShieldService = require(ServerScriptService.Services.ShieldService)
@@ -147,6 +148,7 @@ local function setupPlayer(player)
 	startStealProtectionTimer(player)
 
 	SheetService.AssignSheet(player)
+	FloorService.SetupPlayer(player)
 	StoryService.SetupPlayer(player)
 	UpgradeService.SetupPlayer(
 		player,

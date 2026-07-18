@@ -3,8 +3,7 @@
 -- Pure functions only (no Workspace/Camera access) so the BuildViewController and
 -- verification scripts can both call them. Mirrors the GridPlacement pattern: the
 -- plot's live Base part is the single source of truth -- grid dimensions are never
--- hardcoded, so Base Expansion (22x22 -> 26x26 -> 30x30) and future dimensions get
--- correct framing for free.
+-- hardcoded, so the fixed Ground footprint and future dimensions get correct framing.
 --
 -- Camera model (replaces the old top-down solve): the camera is a FREE point in space
 -- with a FIXED orientation -- a pitched 3/4 view, no mouselook. The controller flies

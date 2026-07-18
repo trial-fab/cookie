@@ -4,6 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
 local PlayerMetricConfig = require(ReplicatedStorage.Shared.PlayerMetricConfig)
 local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
+local FloorConfig = require(ReplicatedStorage.Shared.FloorConfig)
 
 local PlayerMetricsService = {}
 
@@ -117,6 +118,23 @@ function PlayerMetricsService.SetupPlayer(player, persistentData, runData)
 		math.max(readMetric(player, Attrs.BuildingsPlaced), currentBuildings),
 		true
 	)
+	local currentFloors = math.clamp(
+		math.floor(tonumber(counts[FloorConfig.ExpansionUpgradeId]) or 0),
+		0,
+		FloorConfig.UnlockableFloorCount
+	)
+	setMetric(
+		player,
+		Attrs.LifetimeFloorUnlocks,
+		math.max(readMetric(player, Attrs.LifetimeFloorUnlocks), currentFloors),
+		true
+	)
+	setMetric(
+		player,
+		Attrs.HighestFloorUnlocked,
+		math.max(readMetric(player, Attrs.HighestFloorUnlocked), currentFloors),
+		true
+	)
 	flushPlayer(player)
 end
 
@@ -154,6 +172,21 @@ end
 
 function PlayerMetricsService.RecordBuildingPlaced(player)
 	addMetric(player, Attrs.BuildingsPlaced, 1)
+end
+
+function PlayerMetricsService.RecordFloorUnlocked(player, floorOrder)
+	floorOrder = math.max(0, math.floor(tonumber(floorOrder) or 0))
+	if floorOrder <= 0 then
+		return
+	end
+	addMetric(player, Attrs.LifetimeFloorUnlocks, 1)
+	if floorOrder > readMetric(player, Attrs.HighestFloorUnlocked) then
+		setMetric(player, Attrs.HighestFloorUnlocked, floorOrder, false)
+	end
+end
+
+function PlayerMetricsService.RecordBonusFloorBuildingPlaced(player)
+	addMetric(player, Attrs.BonusFloorBuildingsPlaced, 1)
 end
 
 function PlayerMetricsService.RecordCookiesSpent(player, amount)

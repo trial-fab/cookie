@@ -1,7 +1,7 @@
 -- HotbarPlacementMode: temporarily turns the authored item hotbar into placement actions.
--- Full screen-control mode uses Cancel / Rotate / Confirm. Classic desktop Multi Place uses only
--- the center slot as Cancel / Done. Studio owns every face; this module owns visibility, geometry,
--- and the transition back to carousel poses.
+-- Full screen-control mode uses Cancel / Rotate / Confirm. Classic desktop Multi-Place with
+-- screen controls off uses only the center Cancel face while the ghost continues following the
+-- mouse. Studio owns every face; this module owns visibility, geometry, and transitions.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")

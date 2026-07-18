@@ -55,6 +55,15 @@ return {
 	-- placement so HotbarPlacementMode clears its controls before StoreBottom returns.
 	PlacementInstantExit = "PlacementInstantExit",
 	PlacementRotationY = "PlacementRotationY",
+	-- Stable vertical-floor identity. The server writes FloorId on every placed
+	-- building; placement clients own ActiveFloorId locally until floor-selection UI ships.
+	FloorId = "FloorId",
+	FloorOrder = "FloorOrder",
+	FloorUnlocked = "FloorUnlocked",
+	UnlockedFloorCount = "UnlockedFloorCount",
+	ActiveFloorId = "ActiveFloorId",
+	-- Stable radial slot identity for a generated CookieSheet and its matching crater sector.
+	PlotSlotIndex = "PlotSlotIndex",
 	MultiPlaceEnabled = "MultiPlaceEnabled",
 	-- Client-owned state for one live Multi Place run. The active flag controls the desktop
 	-- session affordances; the count increments only after a successful server purchase.
@@ -109,6 +118,9 @@ return {
 	GoldenCookiesEarned = "GoldenCookiesEarned",
 	GoldenCookiesSpent = "GoldenCookiesSpent",
 	BuildingsPlaced = "BuildingsPlaced",
+	LifetimeFloorUnlocks = "LifetimeFloorUnlocks",
+	HighestFloorUnlocked = "HighestFloorUnlocked",
+	BonusFloorBuildingsPlaced = "BonusFloorBuildingsPlaced",
 	WheelSpins = "WheelSpins",
 	BestLoginStreak = "BestLoginStreak",
 	LongestSessionSeconds = "LongestSessionSeconds",

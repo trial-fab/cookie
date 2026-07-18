@@ -8,7 +8,10 @@ local VALID_KINDS = {
 	boolean = true,
 	Color3 = true,
 	enum = true,
+	string = true,
 }
+
+local MAX_STRING_LENGTH = 500
 
 local VALID_SCOPES = {
 	server = true,
@@ -64,6 +67,25 @@ local function validateDefault(sourceName, fullId, tunable)
 	elseif tunable.kind == "boolean" then
 		if type(tunable.default) ~= "boolean" then
 			return fail(sourceName, fullId .. " default must be a boolean")
+		end
+	elseif tunable.kind == "string" then
+		if type(tunable.default) ~= "string" then
+			return fail(sourceName, fullId .. " default must be a string")
+		end
+		if
+			type(tunable.maxLength) ~= "number"
+			or tunable.maxLength % 1 ~= 0
+			or tunable.maxLength < 1
+			or tunable.maxLength > MAX_STRING_LENGTH
+		then
+			return fail(sourceName, fullId .. " maxLength must be an integer from 1 to 500")
+		end
+		local defaultLength = utf8.len(tunable.default)
+		if not defaultLength then
+			return fail(sourceName, fullId .. " default must be valid UTF-8")
+		end
+		if defaultLength > tunable.maxLength then
+			return fail(sourceName, fullId .. " default exceeds maxLength")
 		end
 	elseif tunable.kind == "Color3" then
 		if typeof(tunable.default) ~= "Color3" then
@@ -127,6 +149,9 @@ function Schema.validate(moduleDefinitions)
 			return fail(sourceName, ("duplicate feature name %q"):format(definition.feature))
 		end
 		seenFeatures[definition.feature] = true
+		if definition.collapsedByDefault ~= nil and type(definition.collapsedByDefault) ~= "boolean" then
+			return fail(sourceName, "collapsedByDefault must be a boolean when provided")
+		end
 
 		if not isArray(definition.tunables) or #definition.tunables == 0 then
 			return fail(sourceName, "tunables must be a non-empty array")
@@ -134,6 +159,7 @@ function Schema.validate(moduleDefinitions)
 
 		local featureRecord = {
 			name = definition.feature,
+			collapsedByDefault = definition.collapsedByDefault == true,
 			tunables = {},
 		}
 
@@ -173,6 +199,7 @@ function Schema.validate(moduleDefinitions)
 				min = tunable.min,
 				max = tunable.max,
 				step = tunable.step,
+				maxLength = tunable.maxLength,
 				options = tunable.options,
 				scope = tunable.scope,
 				description = tunable.description,

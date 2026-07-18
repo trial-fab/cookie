@@ -376,6 +376,7 @@ local ctx = {
 	NumberFormat = NumberFormat,
 	ProductionFormula = ProductionFormula,
 	GridPlacement = GridPlacement,
+	Attrs = Attrs,
 	upgradeCountData = upgradeCountData,
 	cookiesValue = cookiesValue,
 	-- Shared row map (stable table identity) so StoreAffordance can look up rows by id.
@@ -405,6 +406,9 @@ local ctx = {
 	preview = nil,
 	cookieStats = nil,
 	cursorTooltip = nil,
+	buildingStatsTooltip = nil,
+	multiPlaceToolbar = nil,
+	sellModeTooltip = nil,
 	placement = nil,
 	robuxTab = nil,
 	-- late-bound orchestrator callbacks (assigned once their definitions exist):
@@ -570,6 +574,10 @@ ctx.getOwnedCount = getOwnedCount
 -- Multi-Place preference lives in StoreMultiPlace; the orchestrator reaches it through
 -- ctx.multiPlace.* (no top-level re-alias — that would re-spend the freed register budget).
 ctx.multiPlace = require(script.Parent.StoreMultiPlace).new(ctx)
+
+-- The Multi-Place row's duplicating-block icon pose/tween lives in
+-- StoreMultiPlaceIconAnim; reached via ctx.multiPlaceIconAnim.* (no re-alias).
+ctx.multiPlaceIconAnim = require(script.Parent.StoreMultiPlaceIconAnim).new(ctx)
 
 -- Building lock state + alien-name reveal live in StoreBuildingState; reached via
 -- ctx.buildingState.* (no top-level re-alias). ctx.isBuildingLocked (read by StorePreview)
@@ -927,6 +935,9 @@ local function updateRow(upgradeId)
 		stateIconActive = multiPlaceActive
 	end
 	ctx.stateIcon.updateUpgradeStateIcon(row, config, stateIconActive)
+	if ctx.multiPlace.isUpgradeId(upgradeId) then
+		ctx.multiPlaceIconAnim.updateRow(row, multiPlaceActive)
+	end
 
 	local displayName = config.DisplayName or upgradeId
 	local productionMultiplier = getProductionMultiplier(upgradeId, config)
@@ -1196,9 +1207,11 @@ local function scheduleOrderingRefresh()
 end
 
 ctx.cursorTooltip = require(shared:WaitForChild("CursorTooltip")).get(screenGui)
+ctx.multiPlaceToolbar = require(script.Parent.StoreMultiPlaceToolbar).new(ctx)
+ctx.sellModeTooltip = require(script.Parent.StoreSellModeTooltip).new(ctx)
 ctx.placement = require(script.Parent.StorePlacement).new(ctx)
 ctx.placementControls = require(script.Parent.StorePlacementControls).new(ctx, ctx.placement)
-ctx.multiPlaceSessionControls = require(script.Parent.StoreMultiPlaceSessionControls).new(ctx, ctx.placement)
+ctx.multiPlaceSessionControls = require(script.Parent.StoreMultiPlaceSessionControls).new(ctx)
 upgradeNudge = require(script.Parent.StoreUpgradeNudge).new(ctx)
 countBadge = require(script.Parent.StoreCountBadge).new(ctx)
 screenGui:GetAttributeChangedSignal(Attrs.UpgradeRemindersEnabled):Connect(updateAllRows)
@@ -1213,7 +1226,8 @@ local updateStatsSlideHover = ctx.cookieStats.updateHover
 
 ctx.storeDescription = require(script.Parent.StoreDescription).new(ctx)
 
--- Buildings-tab eye toggle: locks every card's stats open + the mouse-tracking iris.
+-- Placed-building inspection is independent; Stats Eye only locks Store-card stats open.
+ctx.buildingStatsTooltip = require(script.Parent.StoreBuildingStatsTooltip).new(ctx)
 ctx.statsEye = require(script.Parent.StatsEyeController).new(ctx)
 
 -- Centered "Sell all N X?" confirmation. Its Confirm button calls
@@ -1540,6 +1554,9 @@ end
 
 local function onUpgradeCountChanged(upgradeId)
 	updateRow(upgradeId)
+	if ctx.multiPlace.isUpgradeId(upgradeId) and ctx.multiPlaceToolbar then
+		ctx.multiPlaceToolbar.refresh()
+	end
 
 	-- Buying the first of a building flips its preview out of the silhouette state,
 	-- so rebuild the viewport if the row is on screen.
@@ -1623,9 +1640,9 @@ end
 
 -- InvokeServer blocks the calling thread, so spawn it: the input handler stays responsive and
 -- the result is applied when the round-trip completes.
-function invokePurchase(upgradeId, placementCFrame, callback)
+function invokePurchase(upgradeId, placementCFrame, callback, placementFloorId)
 	task.spawn(function()
-		local result = Net.invoke(Names.PurchaseUpgrade, upgradeId, placementCFrame)
+		local result = Net.invoke(Names.PurchaseUpgrade, upgradeId, placementCFrame, placementFloorId)
 		applyPurchaseResult(result)
 		if callback then
 			callback(result)

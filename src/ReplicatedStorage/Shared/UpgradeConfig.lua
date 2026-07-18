@@ -1,6 +1,8 @@
 -- Economy values are governed by docs/economy-rebalance-spec.md (v3).
 -- Producers: §3 ladder. Clicking Power: §4b. Gear: §5. Building upgrades: §4a.
 -- Re-run tools/economy_sim.py after any value change here.
+local FloorConfig = require(script.Parent.FloorConfig)
+
 local UpgradeConfig = {
 	Cookie = {
 		DisplayName = "Cookie",
@@ -221,7 +223,7 @@ local UpgradeConfig = {
 		DisplayName = "Research Facility",
 		Description = "Research cookie cloning and creation.",
 		InitialCount = 0,
-		BaseCost = 330000000,
+		BaseCost = 500000000,
 		CostMultiplier = 1.15,
 		TemplateKind = "Building",
 		TemplateName = "Research Facility",
@@ -236,7 +238,7 @@ local UpgradeConfig = {
 		DisplayName = "Portal",
 		Description = "Transports cookies from unknown regions of space.",
 		InitialCount = 0,
-		BaseCost = 5100000000,
+		BaseCost = 8000000000,
 		CostMultiplier = 1.15,
 		TemplateKind = "Building",
 		TemplateName = "Portal",
@@ -251,7 +253,7 @@ local UpgradeConfig = {
 		DisplayName = "Time Machine",
 		Description = "Brings cookies from the past.",
 		InitialCount = 0,
-		BaseCost = 75000000000,
+		BaseCost = 120000000000,
 		CostMultiplier = 1.15,
 		TemplateKind = "Building",
 		TemplateName = "Time Machine",
@@ -476,14 +478,16 @@ local UpgradeConfig = {
 	["Multi-Place"] = {
 		DisplayName = "Multi-Place",
 		Description = "Place multiple buildings without reopening the store.",
-		IconFill = "rbxassetid://110048456377257",
-		IconOutline = "rbxassetid://99460809814929",
+		-- Duplicating-block icon (StoreMultiPlaceIconAnim): three block images
+		-- authored as the expanded composition — On shows all three at their
+		-- authored spots. IconDetail1 is the middle block; IconFill/IconOutline
+		-- hold the top and bottom copies, which slide inward to hide behind the
+		-- middle while Multi-Place is Off. State reads from the pose plus the
+		-- On/Off count text — no check/X state icon.
+		IconFill = "rbxassetid://109100867158174",
+		IconOutline = "rbxassetid://99745630810241",
+		IconDetails = { "rbxassetid://109946281031187" },
 		IconTint = false,
-		ActiveIcon = "rbxassetid://105869790587533",
-		InactiveIcon = "rbxassetid://117985787938297",
-		StateIconColor = Color3.fromRGB(0, 0, 0),
-		StateIconName = "IconState",
-		CreateStateIcon = true,
 		InitialCount = 0,
 		BaseCost = 50000,
 		CostMultiplier = 1,
@@ -567,26 +571,15 @@ local UpgradeConfig = {
 
 	["Base Expansion"] = {
 		DisplayName = "Base Expansion",
-		Description = "Pushes your plot's frontier outward, adding build space.",
+		Description = "Unlocks the next production floor above your base.",
 		InitialCount = 0,
-		BaseCost = 50000,
+		BaseCost = FloorConfig.GetByOrder(1).Price,
 		CostMultiplier = 1,
 		TemplateKind = "Stat",
 		TemplateName = "Base Expansion",
 		Sellable = false,
-		-- Plot starts 22 wide x 6 deep; each level adds 4 cells of DEPTH (grows outward).
-		-- Depth stays even (see PLOT_*_CELLS in UpgradeService). Costs are PLACEHOLDERS pending
-		-- balance now that expansion is the core early build-space loop.
-		Levels = {
-			{ Cost = 50000,        Effects = { GridExpansion = 4 }, EffectText = "Depth -> 22x10" },
-			{ Cost = 400000,       Effects = { GridExpansion = 4 }, EffectText = "Depth -> 22x14" },
-			{ Cost = 3000000,      Effects = { GridExpansion = 4 }, EffectText = "Depth -> 22x18" },
-			{ Cost = 25000000,     Effects = { GridExpansion = 4 }, EffectText = "Depth -> 22x22" },
-			{ Cost = 200000000,    Effects = { GridExpansion = 4 }, EffectText = "Depth -> 22x26" },
-			{ Cost = 1600000000,   Effects = { GridExpansion = 4 }, EffectText = "Depth -> 22x30" },
-			{ Cost = 13000000000,  Effects = { GridExpansion = 4 }, EffectText = "Depth -> 22x34" },
-			{ Cost = 100000000000, Effects = { GridExpansion = 4 }, EffectText = "Depth -> 22x38" },
-		},
+		-- Approved 2026-07-16 ladder, generated from the shared floor source of truth.
+		Levels = FloorConfig.GetExpansionLevels(),
 	},
 }
 

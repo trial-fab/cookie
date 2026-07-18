@@ -3,6 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UpgradeConfig = require(script.Parent.UpgradeConfig)
 local WheelConfig = require(script.Parent.WheelConfig)
 local Attrs = require(script.Parent.Attrs)
+local FloorConfig = require(script.Parent.FloorConfig)
 local SkinFeatureConfig = require(script.Parent.SkinFeatureConfig)
 
 local ProductionFormula = {}
@@ -114,7 +115,15 @@ function ProductionFormula.GetEventMultiplier()
 	return math.max(0, multiplier)
 end
 
-function ProductionFormula.GetMultiplier(player, buildingId, config)
+function ProductionFormula.GetFloorMultiplier(buildingId, floorContext)
+	local floorId = floorContext
+	if typeof(floorContext) == "Instance" then
+		floorId = floorContext:GetAttribute(Attrs.FloorId)
+	end
+	return FloorConfig.GetProductionMultiplier(FloorConfig.NormalizeId(floorId), buildingId)
+end
+
+function ProductionFormula.GetMultiplier(player, buildingId, config, floorContext)
 	if not config or config.TemplateKind ~= "Building" then
 		return 1
 	end
@@ -122,24 +131,25 @@ function ProductionFormula.GetMultiplier(player, buildingId, config)
 	return ProductionFormula.GetUpgradeMultiplier(player, buildingId)
 		* ProductionFormula.GetSkinMultiplier(player, buildingId)
 		* ProductionFormula.GetEventMultiplier()
+		* ProductionFormula.GetFloorMultiplier(buildingId, floorContext)
 end
 
-function ProductionFormula.GetCps(player, buildingId, config)
+function ProductionFormula.GetCps(player, buildingId, config, floorContext)
 	if not config or config.TemplateKind ~= "Building" then
 		return 0
 	end
 
 	local updateTime = math.max(1, config.UpdateTime or 30)
 	local baseCps = (config.CookiesGained or 0) / updateTime
-	return baseCps * ProductionFormula.GetMultiplier(player, buildingId, config)
+	return baseCps * ProductionFormula.GetMultiplier(player, buildingId, config, floorContext)
 end
 
-function ProductionFormula.GetTickOutput(player, buildingId, config)
+function ProductionFormula.GetTickOutput(player, buildingId, config, floorContext)
 	if not config or config.TemplateKind ~= "Building" then
 		return 0
 	end
 
-	return (config.CookiesGained or 0) * ProductionFormula.GetMultiplier(player, buildingId, config)
+	return (config.CookiesGained or 0) * ProductionFormula.GetMultiplier(player, buildingId, config, floorContext)
 end
 
 return ProductionFormula

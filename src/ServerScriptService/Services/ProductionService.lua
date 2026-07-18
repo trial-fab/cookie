@@ -8,6 +8,7 @@ local ProductionRateObserver = require(ServerScriptService.Services.ProductionRa
 local SheetService = require(ServerScriptService.Services.SheetService)
 local AutoclickFormula = require(ReplicatedStorage.Shared.AutoclickFormula)
 local ProductionFormula = require(ReplicatedStorage.Shared.ProductionFormula)
+local FloorConfig = require(ReplicatedStorage.Shared.FloorConfig)
 local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
 local Net = require(ReplicatedStorage.Shared.Net)
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
@@ -37,25 +38,35 @@ local function getBuildingOwner(building)
 	return nil
 end
 
-local function getPlacedBuildingsByType(player)
+local function getPlacedBuildingGroups(player)
 	local sheet = SheetService.GetPlayerSheet(player)
 	if not sheet or getSheetOwner(sheet) ~= player then
 		return nil
 	end
 
-	local buildingsByType = {}
+	local groups = {}
 	for _, child in ipairs(sheet:GetChildren()) do
 		if child:IsA("Model") and getBuildingOwner(child) == player then
 			local upgradeId = child:GetAttribute(Attrs.UpgradeId)
 			local config = type(upgradeId) == "string" and UpgradeConfig[upgradeId]
 			if config and config.TemplateKind == "Building" then
-				buildingsByType[upgradeId] = buildingsByType[upgradeId] or {}
-				table.insert(buildingsByType[upgradeId], child)
+				local floorId = FloorConfig.NormalizeId(child:GetAttribute(Attrs.FloorId))
+				local key = floorId .. "\0" .. upgradeId
+				local group = groups[key]
+				if not group then
+					group = {
+						upgradeId = upgradeId,
+						floorId = floorId,
+						buildings = {},
+					}
+					groups[key] = group
+				end
+				table.insert(group.buildings, child)
 			end
 		end
 	end
 
-	return buildingsByType
+	return groups
 end
 
 local function getWholeCookiesFromCarry(carry)
@@ -93,8 +104,8 @@ local function distributeEarnings(buildings, totalAmount, payload)
 end
 
 local function computeTick(player, elapsedSeconds)
-	local buildingsByType = getPlacedBuildingsByType(player)
-	if not buildingsByType then
+	local groups = getPlacedBuildingGroups(player)
+	if not groups then
 		carryByPlayer[player] = {}
 		return 0, {}
 	end
@@ -108,24 +119,24 @@ local function computeTick(player, elapsedSeconds)
 	local totalCookies = 0
 	local payload = {}
 
-	for upgradeId in pairs(playerCarry) do
-		if not buildingsByType[upgradeId] then
-			playerCarry[upgradeId] = nil
+	for key in pairs(playerCarry) do
+		if not groups[key] then
+			playerCarry[key] = nil
 		end
 	end
 
-	for upgradeId, buildings in pairs(buildingsByType) do
-		local config = UpgradeConfig[upgradeId]
-		local placedCount = #buildings
-		local cpsPerBuilding = ProductionFormula.GetCps(player, upgradeId, config)
-		local rawCookies = placedCount * cpsPerBuilding * elapsedSeconds + (playerCarry[upgradeId] or 0)
+	for key, group in pairs(groups) do
+		local config = UpgradeConfig[group.upgradeId]
+		local placedCount = #group.buildings
+		local cpsPerBuilding = ProductionFormula.GetCps(player, group.upgradeId, config, group.floorId)
+		local rawCookies = placedCount * cpsPerBuilding * elapsedSeconds + (playerCarry[key] or 0)
 		local cookiesGained = getWholeCookiesFromCarry(rawCookies)
 
-		playerCarry[upgradeId] = rawCookies - cookiesGained
+		playerCarry[key] = rawCookies - cookiesGained
 
 		if cookiesGained ~= 0 then
 			totalCookies += cookiesGained
-			distributeEarnings(buildings, cookiesGained, payload)
+			distributeEarnings(group.buildings, cookiesGained, payload)
 		end
 	end
 
@@ -133,15 +144,15 @@ local function computeTick(player, elapsedSeconds)
 end
 
 function ProductionService.GetCps(player)
-	local buildingsByType = getPlacedBuildingsByType(player)
-	if not buildingsByType then
+	local groups = getPlacedBuildingGroups(player)
+	if not groups then
 		return 0
 	end
 
 	local totalCps = 0
-	for upgradeId, buildings in pairs(buildingsByType) do
-		local config = UpgradeConfig[upgradeId]
-		totalCps += #buildings * ProductionFormula.GetCps(player, upgradeId, config)
+	for _, group in pairs(groups) do
+		local config = UpgradeConfig[group.upgradeId]
+		totalCps += #group.buildings * ProductionFormula.GetCps(player, group.upgradeId, config, group.floorId)
 	end
 
 	return totalCps

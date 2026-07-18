@@ -5,15 +5,18 @@ local Workspace = game:GetService("Workspace")
 local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
-local ProximityPromptService = game:GetService("ProximityPromptService")
 
 local CookieService = require(ServerScriptService.Services.CookieService)
+local FloorAnalyticsService = require(ServerScriptService.Services.FloorAnalyticsService)
+local FloorService = require(ServerScriptService.Services.FloorService)
 local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
 local StoryService = require(ServerScriptService.Services.StoryService)
 local SheetService = require(ServerScriptService.Services.SheetService)
 local XpService = require(ServerScriptService.Services.XpService)
 local NumberFormat = require(ReplicatedStorage.Shared.NumberFormat)
 local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
+local FloorConfig = require(ReplicatedStorage.Shared.FloorConfig)
+local FloorGeometry = require(ReplicatedStorage.Shared.FloorGeometry)
 local GridPlacement = require(ReplicatedStorage.Shared.GridPlacement)
 local Net = require(ReplicatedStorage.Shared.Net)
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
@@ -23,20 +26,7 @@ local UpgradeService = {}
 
 local SELL_REFUND_RATIO = 0.5
 local UPGRADE_TEMPLATES_FOLDER = "UpgradeTemplates"
-local DEFAULT_DIMENSION = "Earth"
--- GRID_SIZE drives Base Expansion sizing; per-footprint placement math now lives in
--- ReplicatedStorage.Shared.GridPlacement.
-local GRID_SIZE = GridPlacement.GRID_SIZE
--- Plot is fixed-width (tangential) and grows in DEPTH (radial) OUTWARD via Base Expansion.
--- Depth must stay an EVEN number of cells so the Base-local placement grid stays aligned
--- with the inner-edge anchor that persisted buildings are stored against (each expansion
--- moves the Base center outward by depth/2; even cells keep that a whole-cell multiple).
-local PLOT_WIDTH_CELLS = 22         -- 132 studs, fixed tangential width
-local PLOT_INITIAL_DEPTH_CELLS = 6  -- 36 studs starting radial depth
--- First expansion (ring 1) can be gated behind the portal item. Off until the portal
--- teleport flow is wired, so expansion is pure cookies for now.
-local RING1_PORTAL_GATE_ENABLED = false
-local PORTAL_UNLOCK_ATTRIBUTE = "ExpansionPortalUnlocked"
+local DEFAULT_DIMENSION = FloorConfig.DimensionId
 local MAX_TOOL_DAMAGE_DISTANCE = 18
 local TOUCH_DAMAGE_OWNER_PROTECTION_ENABLED = false
 local BASE_MAX_HEALTH = 100
@@ -195,15 +185,6 @@ local function getBuildingSlotIndex(upgradeId)
 	return 1
 end
 
-local function getPlacementBasePart(sheet)
-	local base = sheet:FindFirstChild("Base")
-	if base and base:IsA("BasePart") then
-		return base
-	end
-
-	return nil
-end
-
 local function getBlockedCenterPart(sheet)
 	local center = sheet:FindFirstChild("Center")
 	if center and center:IsA("BasePart") then
@@ -213,9 +194,9 @@ local function getBlockedCenterPart(sheet)
 	return nil
 end
 
-local function getBuildingCFrame(sheet, upgradeId, offsetIndex)
-	local base = getPlacementBasePart(sheet)
-	if not base then
+local function getBuildingCFrame(sheet, upgradeId, offsetIndex, floorId)
+	local surface = FloorGeometry.GetSurface(sheet, floorId)
+	if not surface then
 		return nil
 	end
 
@@ -225,12 +206,12 @@ local function getBuildingCFrame(sheet, upgradeId, offsetIndex)
 	local xOffset = (column - 1.5) * 34
 	local zOffset = 34 + row * 34
 
-	return base.CFrame * CFrame.new(xOffset, 0, zOffset)
+	return surface.cframe * CFrame.new(xOffset, 0, zOffset)
 end
 
-local function getSavedBuildingCFrame(sheet, placement)
-	local base = getPlacementBasePart(sheet)
-	if not base or type(placement) ~= "table" then
+local function getSavedBuildingCFrame(sheet, floorId, placement)
+	local surface = FloorGeometry.GetSurface(sheet, floorId)
+	if not surface or type(placement) ~= "table" then
 		return nil
 	end
 
@@ -241,8 +222,7 @@ local function getSavedBuildingCFrame(sheet, placement)
 		return nil
 	end
 
-	local anchor = GridPlacement.getPlacementAnchorCFrame(base)
-	return anchor * CFrame.new(x, y, z) * CFrame.Angles(0, tonumber(placement.RY) or 0, 0)
+	return surface.originCFrame * CFrame.new(x, y, z) * CFrame.Angles(0, tonumber(placement.RY) or 0, 0)
 end
 
 local function getAlignedModelPivotCFrame(model, desiredBoundingCFrame)
@@ -251,9 +231,9 @@ local function getAlignedModelPivotCFrame(model, desiredBoundingCFrame)
 	return desiredBoundingCFrame * pivotOffset
 end
 
-local function getPlotPlacementCFrame(sheet, requestedCFrame, template, config)
-	local base = getPlacementBasePart(sheet)
-	if not base then
+local function getPlotPlacementCFrame(sheet, floorId, requestedCFrame, template, config)
+	local surface = FloorGeometry.GetSurface(sheet, floorId)
+	if not surface then
 		return nil
 	end
 
@@ -261,35 +241,45 @@ local function getPlotPlacementCFrame(sheet, requestedCFrame, template, config)
 		return nil
 	end
 
-	local localPosition = base.CFrame:PointToObjectSpace(requestedCFrame.Position)
+	local localPosition = surface.cframe:PointToObjectSpace(requestedCFrame.Position)
 	local _, templateSize = template:GetBoundingBox()
 	local _, rotationY = requestedCFrame:ToOrientation()
 	local cellsX, cellsZ = GridPlacement.getFootprintCells(config, rotationY)
-	local solved = GridPlacement.solvePlacement(localPosition, base.Size, cellsX, cellsZ)
+	local solved = GridPlacement.solvePlacement(localPosition, surface.size, cellsX, cellsZ)
 	if not solved.inBounds then
 		return nil
 	end
 
 	local snappedX, snappedZ = solved.snappedX, solved.snappedZ
-	local worldPosition = base.CFrame:PointToWorldSpace(Vector3.new(
+	local worldPosition = surface.cframe:PointToWorldSpace(Vector3.new(
 		snappedX,
-		base.Size.Y / 2 + templateSize.Y / 2,
+		surface.size.Y / 2 + templateSize.Y / 2,
 		snappedZ
 	))
 	local desiredBoundingCFrame = CFrame.new(worldPosition) * CFrame.Angles(0, rotationY, 0)
-	local footprintCFrame = GridPlacement.getFootprintCFrame(base.CFrame, base.Size.Y, snappedX, snappedZ)
+	local footprintCFrame = GridPlacement.getFootprintCFrame(
+		surface.cframe,
+		surface.size.Y,
+		snappedX,
+		snappedZ
+	)
 
 	return getAlignedModelPivotCFrame(template, desiredBoundingCFrame), footprintCFrame, rotationY
 end
 
-local function getBuildingFootprintCFrame(sheet, buildingCFrame)
-	local base = getPlacementBasePart(sheet)
-	if not base then
+local function getBuildingFootprintCFrame(sheet, floorId, buildingCFrame)
+	local surface = FloorGeometry.GetSurface(sheet, floorId)
+	if not surface then
 		return nil
 	end
 
-	local localPosition = base.CFrame:PointToObjectSpace(buildingCFrame.Position)
-	return GridPlacement.getFootprintCFrame(base.CFrame, base.Size.Y, localPosition.X, localPosition.Z)
+	local localPosition = surface.cframe:PointToObjectSpace(buildingCFrame.Position)
+	return GridPlacement.getFootprintCFrame(
+		surface.cframe,
+		surface.size.Y,
+		localPosition.X,
+		localPosition.Z
+	)
 end
 
 local function setBuildingOwner(building, player)
@@ -737,10 +727,17 @@ local function connectBuildingTouchDamage(building, config)
 	building.DescendantAdded:Connect(connectPart)
 end
 
-local function placeBuilding(player, upgradeId, config, requestedCFrame, offsetIndex)
+local function placeBuilding(player, upgradeId, config, requestedCFrame, offsetIndex, requestedFloorId)
 	local sheet = SheetService.GetPlayerSheet(player) or SheetService.AssignSheet(player)
 	if not sheet then
 		return false, "No cookie sheet is available."
+	end
+	local floorId = FloorConfig.NormalizeId(requestedFloorId)
+	if requestedFloorId ~= nil and FloorConfig.Get(requestedFloorId) == nil then
+		return false, "Unknown floor."
+	end
+	if not FloorService.IsUnlocked(player, floorId) then
+		return false, "Unlock this floor before placing buildings on it."
 	end
 
 	local template = findUpgradeTemplate(config)
@@ -752,25 +749,31 @@ local function placeBuilding(player, upgradeId, config, requestedCFrame, offsetI
 	local footprintCFrame
 	local placementRotationY
 	if requestedCFrame then
-		cframe, footprintCFrame, placementRotationY = getPlotPlacementCFrame(sheet, requestedCFrame, template, config)
+		cframe, footprintCFrame, placementRotationY = getPlotPlacementCFrame(
+			sheet,
+			floorId,
+			requestedCFrame,
+			template,
+			config
+		)
 		if not cframe then
-			return false, "Place buildings on your cookie sheet."
+			return false, "Place buildings inside the selected floor's bounds."
 		end
 	end
 
-	cframe = cframe or getBuildingCFrame(sheet, upgradeId, offsetIndex)
+	cframe = cframe or getBuildingCFrame(sheet, upgradeId, offsetIndex, floorId)
 	if not cframe then
-		return false, "Cookie sheet is missing Base."
+		return false, "Floor placement data is missing."
 	end
 
-	footprintCFrame = footprintCFrame or getBuildingFootprintCFrame(sheet, cframe)
+	footprintCFrame = footprintCFrame or getBuildingFootprintCFrame(sheet, floorId, cframe)
 	if not footprintCFrame then
-		return false, "Cookie sheet is missing Base."
+		return false, "Floor placement data is missing."
 	end
 
 	local cellsX, cellsZ = GridPlacement.getFootprintCells(config, placementRotationY)
 	local footprintSize = GridPlacement.getFootprintSize(cellsX, cellsZ)
-	local blockedCenter = getBlockedCenterPart(sheet)
+	local blockedCenter = floorId == FloorConfig.GroundFloorId and getBlockedCenterPart(sheet) or nil
 	if blockedCenter and GridPlacement.footprintOverlapsPartXZ(footprintCFrame, footprintSize, blockedCenter) then
 		return false, "Place buildings outside the center."
 	end
@@ -781,6 +784,7 @@ local function placeBuilding(player, upgradeId, config, requestedCFrame, offsetI
 
 	local building = template:Clone()
 	building:SetAttribute(Attrs.UpgradeId, upgradeId)
+	building:SetAttribute(Attrs.FloorId, floorId)
 	if placementRotationY then
 		building:SetAttribute(Attrs.PlacementRotationY, placementRotationY)
 	else
@@ -898,82 +902,6 @@ function UpgradeService.DamageBuilding(player, targetPart, hitPosition)
 	end
 end
 
--- Move the physical ExpansionButton to the plot's current outer (frontier) edge.
-local function repositionExpansionButton(sheet, base, outward, depth)
-	local btn = sheet:FindFirstChild("ExpansionButton")
-	if not (btn and btn:IsA("Model") and btn.PrimaryPart) then
-		return
-	end
-	local outerEdge = base.Position + outward * (depth / 2)
-	local baseTop = base.Position.Y + base.Size.Y / 2
-	local pos = Vector3.new(outerEdge.X, baseTop + 2.5, outerEdge.Z) + outward * 2
-	local rot = btn:GetPivot().Rotation
-	btn:PivotTo(CFrame.new(pos) * rot)
-end
-
--- Refresh the ExpansionButton billboard/prompt with the next expansion's cookie cost
--- (or the portal-gate / MAXED state).
-local function updateExpansionButton(player)
-	local sheet = SheetService.GetPlayerSheet(player)
-	if not sheet then
-		return
-	end
-	local btn = sheet:FindFirstChild("ExpansionButton")
-	if not (btn and btn:IsA("Model")) then
-		return
-	end
-
-	local countValue = getUpgradeCountValue(player, "Base Expansion")
-	local count = countValue and countValue.Value or 0
-	local nextCost = UpgradeService.GetCost("Base Expansion", count)
-
-	local label, action
-	if RING1_PORTAL_GATE_ENABLED and count == 0 and not player:GetAttribute(PORTAL_UNLOCK_ATTRIBUTE) then
-		label, action = "ENTER PORTAL", "Locked"
-	elseif nextCost == nil then
-		label, action = "MAXED", "Maxed"
-	else
-		label, action = "Expand\n" .. NumberFormat.abbreviate(nextCost), "Expand"
-	end
-
-	local prompt = btn:FindFirstChild("ExpandPrompt", true)
-	if prompt and prompt:IsA("ProximityPrompt") then
-		prompt.ActionText = action
-		prompt.Enabled = (action == "Expand")
-	end
-	local textLabel = btn:FindFirstChild("CostLabel", true)
-	if textLabel and textLabel:IsA("TextLabel") then
-		textLabel.Text = label
-	end
-end
-UpgradeService.UpdateExpansionButton = updateExpansionButton
-
--- Base Expansion effect (GridExpansion, in cells): grows the plot OUTWARD only. Width stays
--- fixed; depth grows along the plot's local +Z (radial). The inner (hub-facing) edge stays
--- pinned, so the cookie/spawn cluster and persisted buildings (stored against the inner-edge
--- anchor) don't move. Recomputed from owned-upgrade totals so it stays correct on rejoin.
-local function applyGridExpansion(player)
-	local sheet = SheetService.GetPlayerSheet(player)
-	local base = sheet and getPlacementBasePart(sheet)
-	if not base then
-		return
-	end
-
-	local expansionCells = getEffectTotal(player, "GridExpansion")
-	local width = PLOT_WIDTH_CELLS * GRID_SIZE
-	local newDepth = (PLOT_INITIAL_DEPTH_CELLS + expansionCells) * GRID_SIZE
-
-	-- Grow outward: keep the inner edge fixed, advance the center along +Z.
-	local outward = -base.CFrame.LookVector
-	local innerEdge = base.Position - outward * (base.Size.Z / 2)
-	base.Size = Vector3.new(width, base.Size.Y, newDepth)
-	base.Position = innerEdge + outward * (newDepth / 2)
-
-	SheetService.SyncEdge(sheet)
-	repositionExpansionButton(sheet, base, outward, newDepth)
-	updateExpansionButton(player)
-end
-
 local EffectHandlers = {
 	MaxHealthBonus = {
 		apply = function(player, value, amount)
@@ -985,9 +913,13 @@ local EffectHandlers = {
 			CookieService.RefreshCookiesPerClickDisplay(player)
 		end,
 	},
-	GridExpansion = {
-		apply = function(player)
-			applyGridExpansion(player)
+	FloorUnlock = {
+		apply = function(player, floorOrder, amount)
+			local definition = FloorConfig.GetByOrder(floorOrder)
+			if not definition then
+				return false, "Floor configuration is invalid."
+			end
+			return FloorService.ApplyUnlock(player, definition.Id, amount)
 		end,
 	},
 	-- Toggles/entitlements query ownership via UpgradeService.HasEffect from
@@ -1013,7 +945,7 @@ function UpgradeService.GetCost(upgradeId, currentCount)
 	return math.floor(baseCost * (multiplier ^ currentCount))
 end
 
-function UpgradeService.ApplyUpgrade(player, upgradeId, amount, placementCFrame)
+function UpgradeService.ApplyUpgrade(player, upgradeId, amount, placementCFrame, placementFloorId)
 	local config = UpgradeConfig[upgradeId]
 	if not config then
 		return false
@@ -1022,7 +954,7 @@ function UpgradeService.ApplyUpgrade(player, upgradeId, amount, placementCFrame)
 	if config.TemplateKind == "Gear" and amount > 0 then
 		return grantTool(player, config)
 	elseif config.TemplateKind == "Building" and amount > 0 then
-		return placeBuilding(player, upgradeId, config, placementCFrame)
+		return placeBuilding(player, upgradeId, config, placementCFrame, nil, placementFloorId)
 	elseif config.TemplateKind == "Building" then
 		removeBuilding(player, upgradeId)
 		return true
@@ -1032,13 +964,20 @@ function UpgradeService.ApplyUpgrade(player, upgradeId, amount, placementCFrame)
 		for effectName, value in pairs(effects) do
 			local handler = EffectHandlers[effectName]
 			if handler then
-				handler.apply(player, value, amount, config)
+				local applied, applyMessage = handler.apply(player, value, amount, config)
+				if applied == false then
+					return false, applyMessage
+				end
 			end
 		end
+		return true
 	end
 
 	if config.Effects then
-		applyEffects(config.Effects)
+		local applied, applyMessage = applyEffects(config.Effects)
+		if not applied then
+			return false, applyMessage
+		end
 	end
 
 	if config.Levels then
@@ -1046,14 +985,17 @@ function UpgradeService.ApplyUpgrade(player, upgradeId, amount, placementCFrame)
 		local levelIndex = countValue and (amount > 0 and countValue.Value or countValue.Value + 1) or nil
 		local level = levelIndex and config.Levels[levelIndex]
 		if level and level.Effects then
-			applyEffects(level.Effects)
+			local applied, applyMessage = applyEffects(level.Effects)
+			if not applied then
+				return false, applyMessage
+			end
 		end
 	end
 
 	return true
 end
 
-function UpgradeService.Purchase(player, upgradeId, placementCFrame)
+function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFloorId)
 	local config = UpgradeConfig[upgradeId]
 	if not config then
 		return false, "Unknown upgrade."
@@ -1129,14 +1071,25 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame)
 	end
 
 	if config.TemplateKind == "Stat" then
+		-- Stat effects can now fail (FloorUnlock validates order/state), so use the
+		-- same atomic transaction as yielding grants: deduct, apply, then refund and
+		-- roll back the count on failure.
+		CookieService.AddCookies(player, -cost, PlayerMetricsService.CookieSources.PendingPurchase)
 		countValue.Value += 1
-		local applied, applyMessage = UpgradeService.ApplyUpgrade(player, upgradeId, 1, placementCFrame)
+		local applied, applyMessage = UpgradeService.ApplyUpgrade(
+			player,
+			upgradeId,
+			1,
+			placementCFrame,
+			placementFloorId
+		)
 		if not applied then
 			countValue.Value -= 1
+			CookieService.AddCookies(player, cost, PlayerMetricsService.CookieSources.Refund)
 			return false, applyMessage or "Upgrade could not be applied."
 		end
 
-		CookieService.AddCookies(player, -cost, PlayerMetricsService.CookieSources.Purchase)
+		PlayerMetricsService.RecordCookiesSpent(player, cost)
 		return true, "Purchased " .. (config.DisplayName or upgradeId) .. "."
 	end
 
@@ -1144,7 +1097,13 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame)
 	-- yield lets two overlapped purchases both pass the funds check above. Refund if
 	-- the apply then fails.
 	CookieService.AddCookies(player, -cost, PlayerMetricsService.CookieSources.PendingPurchase)
-	local applied, applyMessage = UpgradeService.ApplyUpgrade(player, upgradeId, 1, placementCFrame)
+	local applied, applyMessage, placedBuilding = UpgradeService.ApplyUpgrade(
+		player,
+		upgradeId,
+		1,
+		placementCFrame,
+		placementFloorId
+	)
 	if not applied then
 		CookieService.AddCookies(player, cost, PlayerMetricsService.CookieSources.Refund)
 		return false, applyMessage or "Upgrade could not be applied."
@@ -1155,6 +1114,15 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame)
 
 	if config.TemplateKind == "Building" then
 		PlayerMetricsService.RecordBuildingPlaced(player)
+		local floorId = placedBuilding and FloorConfig.NormalizeId(placedBuilding:GetAttribute(Attrs.FloorId))
+			or FloorConfig.GroundFloorId
+		local bonusApplied = FloorConfig.GetProductionMultiplier(floorId, upgradeId) > 1
+		if bonusApplied then
+			PlayerMetricsService.RecordBonusFloorBuildingPlaced(player)
+		end
+		if floorId ~= FloorConfig.GroundFloorId then
+			FloorAnalyticsService.RecordBuildingPlaced(player, floorId, upgradeId, bonusApplied)
+		end
 		local newlyUnlocked = markBuildingUnlocked(player, upgradeId)
 		if newlyUnlocked then
 			XpService.AwardBuildingUnlock(player, upgradeId, config)
@@ -1277,6 +1245,29 @@ local function getDimensionPlacements(buildingPlacements)
 	return buildingPlacements[DEFAULT_DIMENSION]
 end
 
+local function getSavedPlacements(dimensionPlacements, player, upgradeId)
+	local saved = {}
+	if type(dimensionPlacements) ~= "table" then
+		return saved
+	end
+
+	for _, floor in ipairs(FloorConfig.GetDefinitions()) do
+		if FloorService.IsUnlocked(player, floor.Id) then
+			local floorPlacements = dimensionPlacements[floor.Id]
+			local buildingPlacements = type(floorPlacements) == "table" and floorPlacements[upgradeId] or nil
+			if type(buildingPlacements) == "table" then
+				for _, placement in ipairs(buildingPlacements) do
+					table.insert(saved, {
+						floorId = floor.Id,
+						placement = placement,
+					})
+				end
+			end
+		end
+	end
+	return saved
+end
+
 function UpgradeService.SyncPlayerUpgrades(player, buildingPlacements)
 	local dimensionPlacements = getDimensionPlacements(buildingPlacements)
 
@@ -1284,9 +1275,8 @@ function UpgradeService.SyncPlayerUpgrades(player, buildingPlacements)
 		ensureUpgradeCountValue(player, upgradeId, config)
 	end
 
-	-- Expand the sheet before restoring buildings so saved placements in the
-	-- expansion area validate and resume producing after rejoin.
-	applyGridExpansion(player)
+	-- Publish persisted ownership before restoring floor-keyed placements.
+	FloorService.RefreshPlayer(player)
 
 	for upgradeId, config in pairs(UpgradeConfig) do
 		local countValue = ensureUpgradeCountValue(player, upgradeId, config)
@@ -1310,10 +1300,12 @@ function UpgradeService.SyncPlayerUpgrades(player, buildingPlacements)
 				end
 
 				local sheet = SheetService.GetPlayerSheet(player) or SheetService.AssignSheet(player)
-				local savedPlacements = type(dimensionPlacements) == "table" and dimensionPlacements[upgradeId] or nil
+				local savedPlacements = getSavedPlacements(dimensionPlacements, player, upgradeId)
 				for index = existingCount + 1, desiredCount do
-					local savedCFrame = sheet and getSavedBuildingCFrame(sheet, savedPlacements and savedPlacements[index])
-					placeBuilding(player, upgradeId, config, savedCFrame, index)
+					local saved = savedPlacements[index]
+					local floorId = saved and saved.floorId or FloorConfig.GroundFloorId
+					local savedCFrame = sheet and saved and getSavedBuildingCFrame(sheet, floorId, saved.placement)
+					placeBuilding(player, upgradeId, config, savedCFrame, index, floorId)
 				end
 			end
 		elseif countValue then
@@ -1347,56 +1339,8 @@ function UpgradeService.HasEffect(player, effectName)
 	return hasEffect(player, effectName)
 end
 
--- Walk up from a prompt to the CookieSheet model that owns it (has a SheetOwner value).
-local function sheetFromPrompt(prompt)
-	local node = prompt.Parent
-	while node and node ~= game do
-		if node:IsA("Model") and node:FindFirstChild("SheetOwner") then
-			return node
-		end
-		node = node.Parent
-	end
-	return nil
-end
-
--- Physical ExpansionButton press: buy a Base Expansion for the plot's owner (reusing the
--- full purchase pipeline — cost check, count, GridExpansion effect). Optionally gated on the
--- portal item for the first expansion.
-local function handleExpansionPrompt(player, prompt)
-	local sheet = sheetFromPrompt(prompt)
-	local owner = sheet and sheet:FindFirstChild("SheetOwner")
-	if not (owner and owner.Value == player) then
-		return -- only the plot's owner can expand it
-	end
-
-	if RING1_PORTAL_GATE_ENABLED then
-		local countValue = getUpgradeCountValue(player, "Base Expansion")
-		local count = countValue and countValue.Value or 0
-		if count == 0 and not player:GetAttribute(PORTAL_UNLOCK_ATTRIBUTE) then
-			return -- first expansion gated behind the portal item
-		end
-	end
-
-	UpgradeService.Purchase(player, "Base Expansion")
-	updateExpansionButton(player)
-end
-
--- Collecting the OtherDimension ExpansionItem unlocks the first (ring-1) expansion.
-local function handleExpansionItemCollect(player)
-	player:SetAttribute(PORTAL_UNLOCK_ATTRIBUTE, true)
-	updateExpansionButton(player)
-end
-
 function UpgradeService.Init()
 	local Names = Net.Names
-
-	ProximityPromptService.PromptTriggered:Connect(function(prompt, player)
-		if prompt.Name == "ExpandPrompt" then
-			handleExpansionPrompt(player, prompt)
-		elseif prompt.Name == "CollectPrompt" then
-			handleExpansionItemCollect(player)
-		end
-	end)
 
 	-- Pre-create the request/response channels so a client that boots first finds them
 	-- immediately instead of hanging at WaitForChild until the first purchase/sell.
@@ -1406,12 +1350,15 @@ function UpgradeService.Init()
 	-- Request/response: the result returns to the calling client (Net.onInvoke pcall-isolates
 	-- the handler and substitutes a failure table on error). `upgradeId` is echoed back so the
 	-- building-sell path (which sends an Instance) can tell the client which row to refresh.
-	Net.onInvoke(Names.PurchaseUpgrade, function(player, upgradeId, placementCFrame)
+	Net.onInvoke(Names.PurchaseUpgrade, function(player, upgradeId, placementCFrame, placementFloorId)
 		if type(upgradeId) ~= "string" then
 			return { success = false, message = "Invalid upgrade." }
 		end
+		if placementFloorId ~= nil and type(placementFloorId) ~= "string" then
+			return { success = false, message = "Invalid floor." }
+		end
 
-		local success, message = UpgradeService.Purchase(player, upgradeId, placementCFrame)
+		local success, message = UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFloorId)
 		return { success = success, message = message, upgradeId = upgradeId }
 	end)
 
