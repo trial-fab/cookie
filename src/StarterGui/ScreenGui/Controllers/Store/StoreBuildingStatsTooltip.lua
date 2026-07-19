@@ -152,21 +152,53 @@ function StoreBuildingStatsTooltip.new(ctx)
 			return nil
 		end
 
-		local ok, boundingCFrame, boundingSize = pcall(building.GetBoundingBox, building)
-		if not ok then
-			return nil
+		local minX = math.huge
+		local maxX = -math.huge
+		local minY = math.huge
+		local projectedCorner = false
+		-- Derive the building's actual screen-space silhouette instead of projecting the
+		-- world-space bounding-box top center. Under a pitched mobile camera that center can
+		-- sit far above the rendered building, especially for deep or rotated models.
+		for _, descendant in ipairs(building:GetDescendants()) do
+			if descendant:IsA("BasePart") and descendant.Transparency < 0.99 then
+				local half = descendant.Size / 2
+				for xSign = -1, 1, 2 do
+					for ySign = -1, 1, 2 do
+						for zSign = -1, 1, 2 do
+							local worldPoint = descendant.CFrame:PointToWorldSpace(
+								Vector3.new(half.X * xSign, half.Y * ySign, half.Z * zSign)
+							)
+							local screenPoint = ctx.screenGui.IgnoreGuiInset and camera:WorldToScreenPoint(worldPoint)
+								or camera:WorldToViewportPoint(worldPoint)
+							if screenPoint.Z > 0 then
+								projectedCorner = true
+								minX = math.min(minX, screenPoint.X)
+								maxX = math.max(maxX, screenPoint.X)
+								minY = math.min(minY, screenPoint.Y)
+							end
+						end
+					end
+				end
+			end
 		end
-		local worldPoint = boundingCFrame.Position + Vector3.yAxis * (boundingSize.Y / 2)
-		local screenPoint, onScreen
-		if ctx.screenGui.IgnoreGuiInset then
-			screenPoint, onScreen = camera:WorldToScreenPoint(worldPoint)
-		else
-			screenPoint, onScreen = camera:WorldToViewportPoint(worldPoint)
+		return projectedCorner and Vector2.new((minX + maxX) / 2, minY) or nil
+	end
+
+	local function getBuildingTooltipScale(building)
+		if not (building and building.Parent) then
+			return 1
 		end
-		if not onScreen or screenPoint.Z <= 0 then
-			return nil
+		local camera = Workspace.CurrentCamera
+		if not camera then
+			return 1
 		end
-		return Vector2.new(screenPoint.X, screenPoint.Y)
+		local boundingCFrame = building:GetBoundingBox()
+		local distance = math.max(1, (camera.CFrame.Position - boundingCFrame.Position).Magnitude)
+		return math.clamp(
+			BuildingInspectionConfig.TouchTooltipScaleReferenceDistance / distance,
+			BuildingInspectionConfig.TouchTooltipMinScale,
+			BuildingInspectionConfig.TouchTooltipMaxScale
+		)
 	end
 
 	local function buildContent(building, upgradeId, config, inputMode)
@@ -178,6 +210,7 @@ function StoreBuildingStatsTooltip.new(ctx)
 		local productionPerMinute = ctx.ProductionFormula.GetCps(player, upgradeId, config, building) * 60
 		local content = {
 			mode = "BuildingStats",
+			zIndex = BuildingInspectionConfig.TooltipZIndex,
 			title = sections.showTitle and (config.DisplayName or upgradeId) or nil,
 			fields = {
 				Owned = sections.showOwned and ("x" .. ctx.NumberFormat.abbreviate(ctx.getOwnedCount(upgradeId))) or "",
@@ -187,8 +220,12 @@ function StoreBuildingStatsTooltip.new(ctx)
 		}
 		if inputMode == "Touch" then
 			content.placement = "Above"
+			content.offsetY = BuildingInspectionConfig.TouchTooltipGapPixels
 			content.getScreenPoint = function()
 				return getBuildingScreenPoint(building)
+			end
+			content.getScale = function()
+				return getBuildingTooltipScale(building)
 			end
 		end
 		return content

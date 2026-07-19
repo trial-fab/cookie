@@ -140,6 +140,11 @@ local function newPresenter(screenGui)
 	local activeSource = nil
 	local activeContent = nil
 	local renderConnection = nil
+	local defaultRootZIndex = root and root.ZIndex or 1
+	local worldScale = root and root:FindFirstChild("WorldScale")
+	if worldScale and not worldScale:IsA("UIScale") then
+		worldScale = nil
+	end
 
 	local presenter = {
 		Priority = CursorTooltip.Priority,
@@ -147,8 +152,24 @@ local function newPresenter(screenGui)
 	}
 
 	local lastFollowPoint = nil
+	local lastContentScale = nil
 
 	local positionProviderWarned = false
+	local scaleProviderWarned = false
+	local function getContentScale()
+		if activeContent and type(activeContent.getScale) == "function" then
+			local ok, result = pcall(activeContent.getScale)
+			if ok and type(result) == "number" then
+				return math.clamp(result, 0.05, 4)
+			end
+			if not ok and not scaleProviderWarned then
+				scaleProviderWarned = true
+				warn("CursorTooltip scale provider failed:", result)
+			end
+		end
+		return 1
+	end
+
 	local function getFollowPoint()
 		if activeContent and type(activeContent.getScreenPoint) == "function" then
 			local ok, result = pcall(activeContent.getScreenPoint)
@@ -176,15 +197,20 @@ local function newPresenter(screenGui)
 			end
 		end
 
+		local contentScale = getContentScale()
+		if worldScale then
+			worldScale.Scale = contentScale
+		end
 		local point, placement = getFollowPoint()
 		if not point then
 			root.Visible = false
 			return
 		end
-		if not force and point == lastFollowPoint and root.Visible then
+		if not force and point == lastFollowPoint and contentScale == lastContentScale and root.Visible then
 			return
 		end
 		lastFollowPoint = point
+		lastContentScale = contentScale
 
 		-- Cursor hints flip to the opposite side before clamping. World-anchored
 		-- panels stay above their target and clamp at the viewport edge so a camera
@@ -195,8 +221,9 @@ local function newPresenter(screenGui)
 		local x
 		local y
 		if placement == "Above" then
+			local offsetY = math.max(0, tonumber(activeContent.offsetY) or CursorTooltipConfig.OffsetY)
 			x = point.X - size.X / 2
-			y = point.Y - CursorTooltipConfig.OffsetY - size.Y
+			y = point.Y - offsetY - size.Y
 		else
 			x = point.X + CursorTooltipConfig.OffsetX
 			if x + size.X > viewport.X then
@@ -209,7 +236,19 @@ local function newPresenter(screenGui)
 		end
 		x = math.clamp(x, 0, math.max(0, viewport.X - size.X))
 		y = math.clamp(y, 0, math.max(0, viewport.Y - size.Y))
-		root.Position = UDim2.fromOffset(math.round(x), math.round(y))
+		local desiredPosition = Vector2.new(math.round(x), math.round(y))
+		root.Position = UDim2.fromOffset(desiredPosition.X, desiredPosition.Y)
+		-- ScreenGui.ScreenInsets can transform UDim offsets before they become an
+		-- AbsolutePosition (DeviceSafeInsets currently shifts this root by the top inset).
+		-- Correct against the rendered result so world points, mouse points, and the panel
+		-- all share one screen coordinate space on desktop and every mobile safe area.
+		local positionCorrection = desiredPosition - root.AbsolutePosition
+		if positionCorrection.Magnitude >= 0.5 then
+			root.Position = UDim2.fromOffset(
+				desiredPosition.X + math.round(positionCorrection.X),
+				desiredPosition.Y + math.round(positionCorrection.Y)
+			)
+		end
 		root.Visible = true
 	end
 
@@ -222,6 +261,7 @@ local function newPresenter(screenGui)
 			renderConnection:Disconnect()
 			renderConnection = nil
 			lastFollowPoint = nil
+			lastContentScale = nil
 		end
 	end
 
@@ -244,6 +284,8 @@ local function newPresenter(screenGui)
 		end
 		activeContent = content
 		positionProviderWarned = false
+		scaleProviderWarned = false
+		root.ZIndex = math.clamp(math.round(tonumber(content.zIndex) or defaultRootZIndex), 1, 10000)
 
 		local modeName = type(content.mode) == "string" and content.mode or "Hint"
 		local selected = root
@@ -318,6 +360,7 @@ local function newPresenter(screenGui)
 			renderContent(record.content)
 		elseif root then
 			activeContent = nil
+			root.ZIndex = defaultRootZIndex
 			root.Visible = false
 			setFollowing(false)
 		end
@@ -531,7 +574,11 @@ local function newPresenter(screenGui)
 	end
 
 	if root then
-		root.AnchorPoint = Vector2.new(0, root.AnchorPoint.Y)
+		if worldScale then
+			worldScale.Scale = 1
+		end
+		-- Every placement calculation above resolves the root's top-left corner.
+		root.AnchorPoint = Vector2.zero
 		root.Active = false
 		if isTextObject(root) then
 			root.TextXAlignment = Enum.TextXAlignment.Left

@@ -1,15 +1,14 @@
--- Shared framing math for the free-fly "Build View" placement camera.
+-- Shared framing and bounds math for both Build View camera drivers.
 --
 -- Pure functions only (no Workspace/Camera access) so the BuildViewController and
 -- verification scripts can both call them. Mirrors the GridPlacement pattern: the
 -- plot's live Base part is the single source of truth -- grid dimensions are never
 -- hardcoded, so the fixed Ground footprint and future dimensions get correct framing.
 --
--- Camera model (replaces the old top-down solve): the camera is a FREE point in space
--- with a FIXED orientation -- a pitched 3/4 view, no mouselook. The controller flies
--- the position around (momentum glide + height + dolly); this module only converts a
--- position into a CFrame, supplies the movement basis, frames the plot on entry, and
--- eases an out-of-bounds position back toward the player's unlocked build surfaces
+-- Camera model (replaces the old top-down solve): the camera is a free point in space
+-- with driver-owned yaw and pitch. This module converts that pose into a CFrame, supplies
+-- the movement basis, frames the plot on entry, and eases an out-of-bounds position back
+-- toward the player's unlocked build surfaces
 -- (Ground plus unlocked terraced floors -- loose "free roam" bounds that grow with
 -- each floor unlock and shrink back to the single plot after a stat reset).
 local BuildViewCamera = {}
@@ -24,8 +23,8 @@ BuildViewCamera.PITCH_DEGREES = 55
 
 -- Range the player may tilt the view to (degrees below horizontal) via right-drag. Kept
 -- off the horizon (so you never look up under the plot) and short of straight-down.
-BuildViewCamera.MIN_PITCH_DEGREES = 20
-BuildViewCamera.MAX_PITCH_DEGREES = 85
+BuildViewCamera.MIN_PITCH_DEGREES = 1
+BuildViewCamera.MAX_PITCH_DEGREES = 89
 
 -- Breathing room (studs) added around the editable grid when framing on entry so the
 -- plot edge never sits flush against the screen edge. ~1.5 cells (GRID_SIZE 6).
@@ -51,14 +50,14 @@ BuildViewCamera.ROAM_SLACK_STUDS = 0
 -- everywhere). Cresting off a terrace edge eases the camera back down over the lower
 -- ground. Entry framing is clamped through softBounds, so a ceiling below the framing
 -- height simply lands the fly-in closer. Baked from the user's live-tuning pass
--- 2026-07-18.
-BuildViewCamera.MIN_HEIGHT = 8
+-- 2026-07-19.
+BuildViewCamera.MIN_HEIGHT = 2
 BuildViewCamera.CEILING_ALLOWANCE = 60
 
 -- Extra horizontal allowance (studs) on top of ROAM_SLACK for the camera body to sit
 -- back from a surface edge. Total legal drift past a surface edge = margin + ROAM_SLACK
--- + CAMERA_STANDOFF. Baked at zero from the user's live-tuning pass 2026-07-18.
-BuildViewCamera.CAMERA_STANDOFF_STUDS = 0
+-- + CAMERA_STANDOFF. Baked at 20 from the user's live-tuning pass 2026-07-19.
+BuildViewCamera.CAMERA_STANDOFF_STUDS = 20
 
 -- Fly movement (the controller reads these). MOVE_SPEED is the base horizontal speed
 -- (studs/s) before height scaling and the acceleration ramp; VERT_SPEED is its vertical
@@ -75,15 +74,33 @@ BuildViewCamera.ACCEL_MAX_MULTIPLIER = 2
 BuildViewCamera.MIN_DISTANCE = 16
 BuildViewCamera.MAX_DISTANCE = 2200
 
+-- Entry framing and controller motion values baked from the user's 2026-07-19 live-
+-- tuning pass. They live beside the camera math instead of as scattered controller literals.
+BuildViewCamera.ENTRY_FRAME_SCALE = 1.1
+BuildViewCamera.WHEEL_DOLLY_STEP = 11
+BuildViewCamera.WHEEL_ZOOM_TAU = 0.1
+BuildViewCamera.EDGE_PAN_ZONE_PX = 72
+BuildViewCamera.EDGE_PAN_SPEED = 72
+BuildViewCamera.ACCEL_TAU = 0.02
+BuildViewCamera.DECEL_TAU = 0.3
+BuildViewCamera.BOUNDS_TAU = 0.02
+BuildViewCamera.PINCH_SENSITIVITY = 0.6
+BuildViewCamera.TOUCH_THROW_TAU = 0.22
+BuildViewCamera.TOUCH_VELOCITY_WINDOW = 0.15
+BuildViewCamera.MIN_FLING_PX_PER_SEC = 0
+BuildViewCamera.YAW_DRAG_SENSITIVITY = 0.005
+BuildViewCamera.PITCH_DRAG_SENSITIVITY = 0.004
+BuildViewCamera.KEYBOARD_YAW_SPEED_DEGREES = 90
+
 local function clamp(value, lo, hi)
 	return math.max(lo, math.min(hi, value))
 end
 
 -- Resolve the framing margin for a device class (studs added to each half-extent).
-function BuildViewCamera.getMargin(isMobile, marginStuds)
+function BuildViewCamera.getMargin(isMobile, marginStuds, mobileMarginScale)
 	local margin = marginStuds or BuildViewCamera.PLACEMENT_MARGIN_STUDS
 	if isMobile then
-		margin = margin * BuildViewCamera.MOBILE_MARGIN_SCALE
+		margin = margin * (mobileMarginScale or BuildViewCamera.MOBILE_MARGIN_SCALE)
 	end
 	return margin
 end
@@ -133,14 +150,19 @@ end
 -- Uses the plot's in-plane bounding radius (conservative -- guarantees the whole plot is
 -- visible at any yaw) and the limiting half-FOV to choose a dolly distance, then steps
 -- back from the plot center along -lookDirection. Returns a Vector3.
-function BuildViewCamera.framePose(baseCFrame, baseSize, viewportSize, isMobile, fov, yaw, pitch)
+function BuildViewCamera.framePose(baseCFrame, baseSize, viewportSize, isMobile, fov, yaw, pitch, options)
+	options = options or {}
 	fov = fov or BuildViewCamera.DEFAULT_FOV
-	local margin = BuildViewCamera.getMargin(isMobile)
+	local margin = BuildViewCamera.getMargin(isMobile, options.marginStuds, options.mobileMarginScale)
 
 	local vx = (viewportSize and viewportSize.X) or 1280
 	local vy = (viewportSize and viewportSize.Y) or 720
-	if vx <= 0 then vx = 1280 end
-	if vy <= 0 then vy = 720 end
+	if vx <= 0 then
+		vx = 1280
+	end
+	if vy <= 0 then
+		vy = 720
+	end
 	local aspect = vx / vy
 
 	local halfX = baseSize.X / 2 + margin
@@ -150,9 +172,12 @@ function BuildViewCamera.framePose(baseCFrame, baseSize, viewportSize, isMobile,
 	local vertHalf = math.rad(fov / 2)
 	local horizHalf = math.atan(math.tan(vertHalf) * aspect)
 	local limitingHalf = math.min(vertHalf, horizHalf)
-	-- 1.1 keeps a little air around the plot rather than framing it edge-to-edge.
-	local distance = clamp((boundingRadius / math.tan(limitingHalf)) * 1.1,
-		BuildViewCamera.MIN_DISTANCE, BuildViewCamera.MAX_DISTANCE)
+	-- The entry scale keeps a little air around the plot rather than framing it edge-to-edge.
+	local distance = clamp(
+		(boundingRadius / math.tan(limitingHalf)) * (options.entryFrameScale or BuildViewCamera.ENTRY_FRAME_SCALE),
+		options.minDistance or BuildViewCamera.MIN_DISTANCE,
+		options.maxDistance or BuildViewCamera.MAX_DISTANCE
+	)
 
 	local lookDir = BuildViewCamera.lookDirection(baseCFrame, yaw, pitch)
 	-- Center on the Base top surface so the plot, not its underside, is framed.
@@ -181,8 +206,11 @@ end
 -- Ground-first array of { cframe, size } (FloorGeometry.GetUnlockedSurfaces order).
 -- `options` (all optional):
 --   isMobile         -- widens the framing margin (see getMargin)
+--   marginStuds      -- overrides PLACEMENT_MARGIN_STUDS
+--   mobileMarginScale -- overrides MOBILE_MARGIN_SCALE
 --   roamSlack        -- overrides ROAM_SLACK_STUDS (verification/tests)
 --   cameraStandoff   -- overrides CAMERA_STANDOFF_STUDS (verification/tests)
+--   minHeight        -- overrides MIN_HEIGHT
 --   ceilingAllowance -- overrides CEILING_ALLOWANCE (verification/tests)
 --   supportTopY      -- world Y of the map surface directly beneath the camera (the
 --                       controller's terrain probe); the WHOLE vertical band rides it:
@@ -210,7 +238,7 @@ function BuildViewCamera.softBounds(cameraPos, surfaces, options)
 		return cameraPos
 	end
 	options = options or {}
-	local margin = BuildViewCamera.getMargin(options.isMobile)
+	local margin = BuildViewCamera.getMargin(options.isMobile, options.marginStuds, options.mobileMarginScale)
 	local allowance = margin
 		+ (options.roamSlack or BuildViewCamera.ROAM_SLACK_STUDS)
 		+ (options.cameraStandoff or BuildViewCamera.CAMERA_STANDOFF_STUDS)
@@ -230,8 +258,7 @@ function BuildViewCamera.softBounds(cameraPos, surfaces, options)
 			bestDelta = nil
 			break
 		end
-		local corrected = surface.cframe:PointToWorldSpace(
-			Vector3.new(clampedX, localPos.Y, clampedZ))
+		local corrected = surface.cframe:PointToWorldSpace(Vector3.new(clampedX, localPos.Y, clampedZ))
 		local delta = corrected - cameraPos
 		if delta.Magnitude < bestMagnitude then
 			bestDelta = delta
@@ -245,7 +272,7 @@ function BuildViewCamera.softBounds(cameraPos, surfaces, options)
 
 	local groundTopY = surfaces[1].cframe.Position.Y + surfaces[1].size.Y / 2
 	local supportTopY = options.supportTopY or groundTopY
-	local minY = supportTopY + BuildViewCamera.MIN_HEIGHT
+	local minY = supportTopY + (options.minHeight or BuildViewCamera.MIN_HEIGHT)
 	local maxY = supportTopY + (options.ceilingAllowance or BuildViewCamera.CEILING_ALLOWANCE)
 	local clampedY = clamp(target.Y, minY, math.max(maxY, minY))
 	if clampedY ~= target.Y then

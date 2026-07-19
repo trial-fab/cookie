@@ -19,6 +19,11 @@ local SLOT_NAME_FORMAT = "Slot%02d"
 local TUNING_PREFIX = "VerticalFloors."
 
 local sheetRecords = setmetatable({}, { __mode = "k" })
+-- Crater gates are static for the server lifetime, so retain strong authored-geometry
+-- snapshots. Weak Instance keys can be collected even while the engine still owns the
+-- instance; a later stat reset would then recapture the 0.05-stud revealed size as locked.
+local lockedGateCFrames = {}
+local lockedGateSizes = {}
 local initialized = false
 
 local function tuning(key)
@@ -57,26 +62,106 @@ local function getGates(sheet, floorId)
 end
 
 local function getLockedGateCFrame(gate)
+	local cached = lockedGateCFrames[gate]
+	if cached then
+		return cached
+	end
 	local locked = gate:GetAttribute("LockedCFrame")
-	return typeof(locked) == "CFrame" and locked or gate.CFrame
+	local cframe = typeof(locked) == "CFrame" and locked or gate.CFrame
+	lockedGateCFrames[gate] = cframe
+	return cframe
 end
 
-local function getGateRevealCFrame(gate)
-	local locked = getLockedGateCFrame(gate)
-	local offset = gate:GetAttribute("RevealWorldOffset")
-	if typeof(offset) ~= "Vector3" or offset.Magnitude < 1e-6 then
-		return locked
+local function getLockedGateSize(gate)
+	local cached = lockedGateSizes[gate]
+	if cached then
+		return cached
 	end
-	return locked + offset.Unit * tuning("GateSlideDistance")
+	local authored = gate:GetAttribute("LockedSize")
+	local size = typeof(authored) == "Vector3" and authored or gate.Size
+	if typeof(authored) ~= "Vector3" then
+		-- Recovery for a hot-reloaded or legacy session already left retracted. The Studio-
+		-- authored RevealWorldOffset is one full gate-width along the opening axis (67 studs
+		-- for the current crater), so it reconstructs the missing locked dimension without
+		-- guessing from the 0.05-stud sliver.
+		local offset = gate:GetAttribute("RevealWorldOffset")
+		if typeof(offset) == "Vector3" and offset.Magnitude > 1e-6 then
+			local lockedCFrame = getLockedGateCFrame(gate)
+			local direction = offset.Unit
+			local xScore = math.abs(lockedCFrame.RightVector:Dot(direction))
+			local yScore = math.abs(lockedCFrame.UpVector:Dot(direction))
+			local zScore = math.abs(lockedCFrame.LookVector:Dot(direction))
+			if xScore >= yScore and xScore >= zScore then
+				size = Vector3.new(math.max(size.X, offset.Magnitude), size.Y, size.Z)
+			elseif yScore >= zScore then
+				size = Vector3.new(size.X, math.max(size.Y, offset.Magnitude), size.Z)
+			else
+				size = Vector3.new(size.X, size.Y, math.max(size.Z, offset.Magnitude))
+			end
+		end
+	end
+	lockedGateSizes[gate] = size
+	return size
+end
+
+local function getGateRevealPose(gate)
+	local lockedCFrame = getLockedGateCFrame(gate)
+	local lockedSize = getLockedGateSize(gate)
+	local authoredOffset = gate:GetAttribute("RevealWorldOffset")
+	local requestedDirection = typeof(authoredOffset) == "Vector3"
+			and authoredOffset.Magnitude > 1e-6
+			and authoredOffset.Unit
+		or nil
+	local axes = {
+		{ key = "X", vector = lockedCFrame.RightVector, length = lockedSize.X },
+		{ key = "Y", vector = lockedCFrame.UpVector, length = lockedSize.Y },
+		{ key = "Z", vector = lockedCFrame.LookVector, length = lockedSize.Z },
+	}
+	local selected = axes[1]
+	if requestedDirection then
+		for _, candidate in ipairs(axes) do
+			if
+				math.abs(candidate.vector:Dot(requestedDirection)) > math.abs(selected.vector:Dot(requestedDirection))
+			then
+				selected = candidate
+			end
+		end
+	end
+	local direction = selected.vector
+	if requestedDirection then
+		direction *= direction:Dot(requestedDirection) >= 0 and 1 or -1
+	elseif string.find(gate.Name, "Left", 1, true) then
+		direction *= -1
+	end
+	local thickness = math.min(selected.length, math.max(0.05, tuning("GateOpenThickness")))
+	local revealedSize = lockedSize
+	if selected.key == "X" then
+		revealedSize = Vector3.new(thickness, lockedSize.Y, lockedSize.Z)
+	elseif selected.key == "Y" then
+		revealedSize = Vector3.new(lockedSize.X, thickness, lockedSize.Z)
+	else
+		revealedSize = Vector3.new(lockedSize.X, lockedSize.Y, thickness)
+	end
+	-- Shift by half the removed length so the outer edge stays fixed and the inner edge
+	-- retracts outward. Every intermediate tween shape remains inside the locked footprint.
+	local revealedCFrame = lockedCFrame + direction * ((selected.length - thickness) / 2)
+	return revealedCFrame, revealedSize
 end
 
 local function snapGate(gate, revealed)
-	gate.CFrame = revealed and getGateRevealCFrame(gate) or getLockedGateCFrame(gate)
-	gate.Transparency = 0
+	local targetCFrame, targetSize
+	if revealed then
+		targetCFrame, targetSize = getGateRevealPose(gate)
+	else
+		targetCFrame, targetSize = getLockedGateCFrame(gate), getLockedGateSize(gate)
+	end
+	gate.CFrame = targetCFrame
+	gate.Size = targetSize
+	gate.Transparency = revealed and 1 or 0
 	gate.CanCollide = not revealed
 	gate.CanQuery = not revealed
 	gate.CanTouch = false
-	gate.CastShadow = true
+	gate.CastShadow = not revealed
 end
 
 local function normalizeCraterGates()
@@ -331,21 +416,39 @@ local function animateFloor(sheet, record, revealed)
 	end
 
 	for _, gate in ipairs(getGates(sheet, record.floorId)) do
+		local gateCFrame, gateSize
+		if revealed then
+			gateCFrame, gateSize = getGateRevealPose(gate)
+		else
+			gateCFrame, gateSize = getLockedGateCFrame(gate), getLockedGateSize(gate)
+		end
 		playTween(
 			record,
 			token,
 			gate,
 			gateTweenInfo,
 			{
-				CFrame = revealed and getGateRevealCFrame(gate) or getLockedGateCFrame(gate),
+				CFrame = gateCFrame,
+				Size = gateSize,
 			},
 			gateTrackDelay,
 			function()
+				-- Make the retracting half visible for both opening and closing. The
+				-- completion callback hides only the fully opened sliver.
+				gate.Transparency = 0
 				gate.CanCollide = false
 				gate.CanQuery = false
 				gate.CanTouch = false
 				gate.CastShadow = true
-			end
+			end,
+			revealed
+					and function()
+						-- Hide at this gate's own completion, independent of the longer staggered
+						-- floor track, so no residual sliver lingers after it is fully open.
+						gate.Transparency = 1
+						gate.CastShadow = false
+					end
+				or nil
 		)
 	end
 

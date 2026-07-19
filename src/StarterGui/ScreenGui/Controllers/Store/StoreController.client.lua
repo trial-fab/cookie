@@ -321,16 +321,6 @@ end
 local robuxSubTabsTween = nil
 local robuxSubTabsTarget = nil
 
-local upgradeSubTabsExpandedSize = upgradeSubTabs and upgradeSubTabs:IsA("GuiObject") and upgradeSubTabs.Size or nil
-local upgradeSubTabsCollapsedSize = upgradeSubTabsExpandedSize
-		and UDim2.new(0, 0, upgradeSubTabsExpandedSize.Y.Scale, upgradeSubTabsExpandedSize.Y.Offset)
-	or nil
-if upgradeSubTabs and upgradeSubTabsCollapsedSize then
-	upgradeSubTabs.Size = upgradeSubTabsCollapsedSize
-	upgradeSubTabs.Visible = false
-end
-local upgradeSubTabsTween = nil
-local upgradeSubTabsTarget = nil
 if buildingTab and buildingTab:IsA("TextButton") then
 	local staleBuildingsText = buildingTab:FindFirstChild("BuildingsText")
 	if staleBuildingsText then
@@ -698,70 +688,25 @@ ctx.completeSellButtonVisual = function()
 	updateSellButton(true)
 end
 
-local function applyUpgradeSubTabLabels()
-	local buildingButton = upgradeSubTabButtons.BuildingUpgrades
-	if buildingButton and buildingButton:IsA("TextButton") then
-		buildingButton.Text = UPGRADE_SUBTAB_TITLES[UPGRADE_SECTION_BUILDING]
-	end
-
-	local playerButton = upgradeSubTabButtons.PlayerUpgrades
-	if playerButton and playerButton:IsA("TextButton") then
-		playerButton.Text = UPGRADE_SUBTAB_TITLES[UPGRADE_SECTION_PLAYER]
-	end
-end
-applyUpgradeSubTabLabels()
-
 local storeToolbarLayout = require(script.Parent.StoreToolbarLayout).new(ctx)
+
+ctx.upgradeSubTabs = require(script.Parent.StoreUpgradeSubTabs).new(ctx, {
+	root = upgradeSubTabs,
+	buttons = upgradeSubTabButtons,
+	buildingSectionId = UPGRADE_SECTION_BUILDING,
+	playerSectionId = UPGRADE_SECTION_PLAYER,
+	sectionIds = { UPGRADE_SECTION_BUILDING, UPGRADE_SECTION_PLAYER },
+	titleBySection = UPGRADE_SUBTAB_TITLES,
+	activeColor = UPGRADE_TAB_COLOR,
+	setTabActive = setTabActive,
+	layoutTweenInfo = SELL_TAB_LAYOUT_TWEEN_INFO,
+	scrollTweenInfo = SELL_TAB_LAYOUT_TWEEN_INFO,
+})
 
 local function setActiveRobuxSubTab(sectionId)
 	for key, button in pairs(robuxSubTabButtons) do
 		setTabActive(button, key == sectionId, ROBUX_TAB_COLOR)
 	end
-end
-
-local function setActiveUpgradeSubTab(sectionId)
-	for key, button in pairs(upgradeSubTabButtons) do
-		setTabActive(button, key == sectionId, UPGRADE_TAB_COLOR)
-	end
-end
-
-local function updateUpgradeSubTabLayout()
-	if
-		not (
-			upgradeSubTabs
-			and upgradeSubTabs:IsA("GuiObject")
-			and upgradeSubTabsExpandedSize
-			and upgradeSubTabsCollapsedSize
-		)
-	then
-		return
-	end
-
-	local showSubTabs = currentCategory == "Upgrade"
-	if upgradeSubTabsTarget == showSubTabs then
-		return
-	end
-	upgradeSubTabsTarget = showSubTabs
-
-	if upgradeSubTabsTween then
-		upgradeSubTabsTween:Cancel()
-	end
-
-	if showSubTabs then
-		upgradeSubTabs.Visible = true
-		setActiveUpgradeSubTab(UPGRADE_SECTION_BUILDING)
-	end
-
-	local tween = UiMotion.create(upgradeSubTabs, SELL_TAB_LAYOUT_TWEEN_INFO, {
-		Size = showSubTabs and upgradeSubTabsExpandedSize or upgradeSubTabsCollapsedSize,
-	})
-	upgradeSubTabsTween = tween
-	tween.Completed:Connect(function(state)
-		if upgradeSubTabsTween == tween and state == Enum.PlaybackState.Completed and not showSubTabs then
-			upgradeSubTabs.Visible = false
-		end
-	end)
-	tween:Play()
 end
 
 -- Reveals/hides the Robux subcategory chips with the same clip+Size tween used by the sell tab.
@@ -823,7 +768,6 @@ local function updateCategoryButton()
 	end
 
 	storeToolbarLayout.update()
-	updateUpgradeSubTabLayout()
 	updateRobuxSubTabLayout()
 end
 
@@ -1052,6 +996,7 @@ end
 -- ScrollingFrame scrolls. The UIListLayout positions rows by LayoutOrder, so we assign
 -- LayoutOrder from the current sort and let layout handle placement.
 local function renderRows()
+	ctx.upgradeSubTabs.update(currentCategory, orderedUpgradeIds)
 	local visibleByUpgradeId = {}
 	table.clear(firstUpgradeRowBySection)
 	for index, upgradeId in ipairs(orderedUpgradeIds) do
@@ -1138,23 +1083,6 @@ ctx.openUpgradeCategory = function(targetUpgradeId)
 	task.defer(function()
 		scrollToUpgradeRow(targetUpgradeId)
 	end)
-end
-
-local function scrollUpgradeToSection(sectionId)
-	if not pageContainer:IsA("ScrollingFrame") then
-		return
-	end
-
-	local row = firstUpgradeRowBySection[sectionId]
-	if not row or not row:IsA("GuiObject") or not row.Visible then
-		return
-	end
-
-	local current = pageContainer.CanvasPosition
-	local rowLeft = row.AbsolutePosition.X - pageContainer.AbsolutePosition.X + current.X
-	local maxX = math.max(0, pageContainer.AbsoluteCanvasSize.X - pageContainer.AbsoluteSize.X)
-	pageContainer.CanvasPosition = Vector2.new(math.clamp(rowLeft - 8, 0, maxX), current.Y)
-	setActiveUpgradeSubTab(sectionId)
 end
 
 -- Horizontal twin of scrollToUpgradeRow: scrolls the strip so the first card of a Robux
@@ -1484,11 +1412,11 @@ for sectionId, button in pairs(upgradeSubTabButtons) do
 				currentCategory = "Upgrade"
 				refreshCategory()
 				task.defer(function()
-					scrollUpgradeToSection(sectionId)
+					ctx.upgradeSubTabs.scrollToSection(sectionId, firstUpgradeRowBySection)
 				end)
 				return
 			end
-			scrollUpgradeToSection(sectionId)
+			ctx.upgradeSubTabs.scrollToSection(sectionId, firstUpgradeRowBySection)
 		end)
 	end
 end
@@ -1531,26 +1459,7 @@ end
 -- While on the Upgrades tab, highlight the chip for whichever section is nearest the left edge.
 if pageContainer:IsA("ScrollingFrame") and upgradeSubTabs then
 	pageContainer:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
-		if currentCategory ~= "Upgrade" then
-			return
-		end
-
-		local viewLeft = pageContainer.AbsolutePosition.X
-		local bestSection, bestDistance
-		for _, sectionId in ipairs({ UPGRADE_SECTION_BUILDING, UPGRADE_SECTION_PLAYER }) do
-			local row = firstUpgradeRowBySection[sectionId]
-			if row and row:IsA("GuiObject") and row.Visible then
-				local distance = math.abs(row.AbsolutePosition.X - viewLeft)
-				if not bestDistance or distance < bestDistance then
-					bestDistance = distance
-					bestSection = sectionId
-				end
-			end
-		end
-
-		if bestSection then
-			setActiveUpgradeSubTab(bestSection)
-		end
+		ctx.upgradeSubTabs.updateActiveFromCanvas(firstUpgradeRowBySection)
 	end)
 end
 

@@ -36,16 +36,6 @@ return {
 			description = "Signed radial start offset; positive starts inward and negative starts outward.",
 		},
 		{
-			key = "GateSlideDistance",
-			default = REVEAL_DEFAULTS.GateSlideDistance,
-			kind = "number",
-			min = -134,
-			max = 134,
-			step = 1,
-			scope = "server",
-			description = "Signed sideways crater-gate travel; negative reverses each half's direction.",
-		},
-		{
 			key = "FloorRevealDuration",
 			default = REVEAL_DEFAULTS.FloorRevealDuration,
 			kind = "number",
@@ -54,6 +44,16 @@ return {
 			step = 0.05,
 			scope = "server",
 			description = "Duration of the floor-parts track while revealing.",
+		},
+		{
+			key = "GateOpenThickness",
+			default = REVEAL_DEFAULTS.GateOpenThickness,
+			kind = "number",
+			min = 0.05,
+			max = 20,
+			step = 0.05,
+			scope = "server",
+			description = "Final thickness of each retracted gate half before it becomes transparent.",
 		},
 		{
 			key = "FloorRelockDuration",
@@ -99,7 +99,7 @@ return {
 			kind = "enum",
 			options = EASING_STYLES,
 			scope = "server",
-			description = "Easing curve used only by the sliding crater gates.",
+			description = "Easing curve used by the retracting crater-gate halves.",
 		},
 		{
 			key = "PartStagger",
