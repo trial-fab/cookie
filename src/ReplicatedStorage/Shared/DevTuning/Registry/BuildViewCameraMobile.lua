@@ -136,23 +136,7 @@ return {
 			"Hard cap on mobile one-finger pan and momentum distance per pixel."
 		),
 		number("PinchSensitivity", Config.PINCH_SENSITIVITY, 0.1, 3, 0.05, "Pinch zoom response exponent."),
-		number(
-			"PinchScaleLimitPerGesture",
-			Config.PINCH_SCALE_LIMIT_PER_GESTURE,
-			1.01,
-			10,
-			0.05,
-			"Maximum zoom scale change accepted during one continuous pinch gesture."
-		),
 		number("TwistSensitivity", Config.TWIST_SENSITIVITY, 0, 3, 0.05, "Two-finger twist yaw multiplier."),
-		number(
-			"PitchDragSensitivity",
-			Config.PITCH_DRAG_SENSITIVITY,
-			0.0005,
-			0.02,
-			0.0005,
-			"Parallel two-finger pitch radians per vertical pixel."
-		),
 		number(
 			"PitchDeadZonePixels",
 			Config.PITCH_DEAD_ZONE_PX,

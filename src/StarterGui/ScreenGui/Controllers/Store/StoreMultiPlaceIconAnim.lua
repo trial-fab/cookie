@@ -6,6 +6,10 @@
 -- slide inward (top down, bottom up) so their drawn blocks coincide with and
 -- hide behind the middle block, reading as a single block. Offsets were
 -- live-tuned against the authored art and baked in 2026-07-16.
+-- The generated Store row additionally uses the approved collapsed offset from
+-- UpgradeIconConfig. When turning On, it first returns to the position authored on
+-- the Studio template, then expands. The toolbar shortcut deliberately keeps its
+-- original position-only behavior.
 -- StoreUpgradeIconProgression repaints images but never touches layer
 -- Position, so the poses survive row refreshes.
 --
@@ -17,6 +21,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
+local UpgradeIconConfig = require(Shared:WaitForChild("UpgradeIconConfig"))
 local UiMotion = require(Shared:WaitForChild("UiMotion"))
 
 local StoreMultiPlaceIconAnim = {}
@@ -45,19 +50,58 @@ local function findLayers(row)
 		return nil
 	end
 
-	return { top = top, bottom = bottom, middle = middle }
+	return { icon = icon, top = top, bottom = bottom, middle = middle }
 end
 
 function StoreMultiPlaceIconAnim.new(_ctx)
 	local lastRow = nil
 	local currentActive = nil
+	local authoredPosition = nil
 	local activeTweens = {}
+	local transitionGeneration = 0
 
 	local function cancelTweens()
+		transitionGeneration += 1
 		for _, tween in ipairs(activeTweens) do
 			tween:Cancel()
 		end
 		table.clear(activeTweens)
+	end
+
+	local function isGeneratedStoreRow(row)
+		return row:GetAttribute("GeneratedByStoreController") == true
+	end
+
+	local function getOffPosition(row)
+		if isGeneratedStoreRow(row) then
+			return UDim2.new(
+				authoredPosition.X.Scale,
+				authoredPosition.X.Offset + UpgradeIconConfig.MultiPlaceOffOffset.X,
+				authoredPosition.Y.Scale,
+				authoredPosition.Y.Offset + UpgradeIconConfig.MultiPlaceOffOffset.Y
+			)
+		end
+		return authoredPosition
+	end
+
+	local function playPosition(icon, target, animate, generation, callback)
+		if not animate or TWEEN_SECONDS <= 0 or icon.Position == target then
+			icon.Position = target
+			if transitionGeneration == generation then
+				callback()
+			end
+			return
+		end
+
+		local info = TweenInfo.new(TWEEN_SECONDS, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		local tween = UiMotion.create(icon, info, { Position = target })
+		table.insert(activeTweens, tween)
+		tween.Completed:Connect(function(state)
+			if transitionGeneration == generation and state == Enum.PlaybackState.Completed then
+				callback()
+			end
+		end)
+		tween:Play()
 	end
 
 	-- The top copy renders below the middle block while stacked, but lies on top of
@@ -73,16 +117,7 @@ function StoreMultiPlaceIconAnim.new(_ctx)
 		layers.top.ZIndex = above and (layers.middle.ZIndex + 1) or base
 	end
 
-	local function applyPose(row, active, animate)
-		local layers = findLayers(row)
-		if not layers then
-			return
-		end
-
-		cancelTweens()
-		-- The images are authored as the expanded composition: On is all three at
-		-- their authored (0,0) spots. Off slides the top copy down and the bottom
-		-- copy up so their drawn blocks coincide with (and hide behind) the middle.
+	local function playLayerPose(layers, active, animate, generation, callback)
 		local goals = {
 			[layers.top] = UDim2.new(0, 0, active and 0 or TOP_OFFSET_SCALE, 0),
 			[layers.bottom] = UDim2.new(0, 0, active and 0 or -BOTTOM_OFFSET_SCALE, 0),
@@ -94,14 +129,59 @@ function StoreMultiPlaceIconAnim.new(_ctx)
 			for layer, position in pairs(goals) do
 				layer.Position = position
 			end
+			if transitionGeneration == generation then
+				callback()
+			end
 			return
 		end
 
 		local info = TweenInfo.new(TWEEN_SECONDS, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		local layerTweens = {}
+		local completionTween = nil
 		for layer, position in pairs(goals) do
 			local tween = UiMotion.create(layer, info, { Position = position })
 			table.insert(activeTweens, tween)
+			table.insert(layerTweens, tween)
+			completionTween = completionTween or tween
+		end
+		completionTween.Completed:Connect(function(state)
+			if transitionGeneration == generation and state == Enum.PlaybackState.Completed then
+				callback()
+			end
+		end)
+		for _, tween in ipairs(layerTweens) do
 			tween:Play()
+		end
+	end
+
+	local function applyPose(row, active, animate)
+		local layers = findLayers(row)
+		if not layers then
+			return
+		end
+
+		cancelTweens()
+		local generation = transitionGeneration
+
+		if not animate then
+			layers.icon.Position = active and authoredPosition or getOffPosition(row)
+			playLayerPose(layers, active, false, generation, function() end)
+			return
+		end
+
+		if active then
+			-- Keep the single-block pose intact while returning to the Studio-authored
+			-- position. If it is already there, playPosition skips this tween entirely.
+			playLayerPose(layers, false, false, generation, function() end)
+			playPosition(layers.icon, authoredPosition, true, generation, function()
+				playLayerPose(layers, true, true, generation, function() end)
+			end)
+		else
+			-- Reverse the sequence: collapse at the authored position, then settle at
+			-- the configured Off position.
+			playLayerPose(layers, false, true, generation, function()
+				playPosition(layers.icon, getOffPosition(row), true, generation, function() end)
+			end)
 		end
 	end
 
@@ -115,6 +195,10 @@ function StoreMultiPlaceIconAnim.new(_ctx)
 
 		active = active == true
 		local firstAttach = lastRow ~= row
+		if firstAttach then
+			local layers = findLayers(row)
+			authoredPosition = layers and layers.icon.Position or nil
+		end
 		if not firstAttach and currentActive == active then
 			return
 		end

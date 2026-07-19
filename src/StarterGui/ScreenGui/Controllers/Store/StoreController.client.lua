@@ -408,6 +408,7 @@ local ctx = {
 	robuxTab = nil,
 	robuxSubTabScroller = nil,
 	gooTintedUpgradeIcon = nil,
+	upgradeIconLayout = nil,
 	-- late-bound orchestrator callbacks (assigned once their definitions exist):
 	--   showStatus      -> StorePlacement status messages
 	--   isBuildingLocked -> StorePreview locked-silhouette state
@@ -783,6 +784,7 @@ local spinPreviews = ctx.preview.spinPreviews
 -- reached via ctx.stateIcon.* (no top-level re-alias).
 ctx.stateIcon = require(script.Parent.StoreStateIcon).new(ctx)
 ctx.gooTintedUpgradeIcon = require(script.Parent.StoreGooTintedUpgradeIcon).new(ctx)
+ctx.upgradeIconLayout = require(script.Parent.StoreUpgradeIconLayout).new(ctx)
 
 local function updateRow(upgradeId)
 	local row = rowsByUpgradeId[upgradeId]
@@ -801,6 +803,7 @@ local function updateRow(upgradeId)
 
 		ctx.stateIcon.applyUpgradeIcon(row, config, displayLevel, maxLevels)
 		ctx.gooTintedUpgradeIcon.apply(row, config)
+		ctx.upgradeIconLayout.apply(row, upgradeId)
 		ctx.stateIcon.updateUpgradeStateIcon(row, config, levelsOwned > 0)
 
 		local countText = "Lv " .. levelsOwned
@@ -876,6 +879,7 @@ local function updateRow(upgradeId)
 	end
 	ctx.stateIcon.applyUpgradeIcon(row, config, displayLevel, config.IconProgressionSteps or config.MaxCount)
 	ctx.gooTintedUpgradeIcon.apply(row, config)
+	ctx.upgradeIconLayout.apply(row, upgradeId)
 	local multiPlaceActive = ctx.multiPlace.isUpgradeId(upgradeId) and ctx.multiPlace.isEnabled()
 	local stateIconActive = count > (config.InitialCount or 0)
 	if ctx.multiPlace.isUpgradeId(upgradeId) then

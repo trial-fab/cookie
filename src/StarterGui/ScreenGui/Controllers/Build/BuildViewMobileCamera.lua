@@ -7,6 +7,7 @@ local Workspace = game:GetService("Workspace")
 
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local BuildViewCamera = require(shared:WaitForChild("BuildViewCamera"))
+local Config = require(shared:WaitForChild("BuildViewMobileCameraConfig"))
 local DevTuning = require(shared:WaitForChild("DevTuning"):WaitForChild("DevTuning"))
 
 local FEATURE = "BuildViewCameraMobile"
@@ -164,11 +165,7 @@ function BuildViewMobileCamera.new(ctx)
 			return
 		end
 		local centroid, spacing, angle = multiMetrics(active)
-		-- Cap the scale represented by one continuous gesture. A digitizer can report a
-		-- near-zero spacing when fingers lift quickly; without this guard, that single bad
-		-- sample can request the full maximum camera distance.
-		local scaleLimit = math.max(1.01, tuning("PinchScaleLimitPerGesture"))
-		local relativeSpacing = math.clamp(spacing / multiStart.spacing, 1 / scaleLimit, scaleLimit)
+		local relativeSpacing = spacing / multiStart.spacing
 		local effectiveSpacing = relativeSpacing ^ tuning("PinchSensitivity")
 		local minDistance, maxDistance = distanceLimits()
 		local distance = math.clamp(multiStart.distance / effectiveSpacing, minDistance, maxDistance)
@@ -178,7 +175,7 @@ function BuildViewMobileCamera.new(ctx)
 		local effectiveVertical = math.sign(verticalTravel) * math.max(0, math.abs(verticalTravel) - deadZone)
 		local minPitch, maxPitch = pitchLimits()
 		local pitch =
-			math.clamp(multiStart.pitch + effectiveVertical * tuning("PitchDragSensitivity"), minPitch, maxPitch)
+			math.clamp(multiStart.pitch + effectiveVertical * Config.PITCH_DRAG_SENSITIVITY, minPitch, maxPitch)
 		ctx.setYaw(yaw)
 		ctx.setPitch(pitch)
 		-- Twist and vertical pitch rotate in place. Only pinch translates the camera, and
