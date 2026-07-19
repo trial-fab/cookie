@@ -5,7 +5,7 @@
 --   • updateRowAffordability: drives the AffordBar (progress silhouette) and fades every blue
 --     (0,170,255) accent in a row when the next purchase is out of reach; in sell mode it
 --     recolours the accents red instead.
---   • getLockedRequirement: the gating building + owned/required counts for a locked row
+--   • getLockedRequirement: the gating upgrade/building + owned/required counts for a locked row
 --     (mirrors UpgradeService.Purchase). Shared by the affordance chrome and getPurchaseBlock.
 --   • getPurchaseBlock: which explanatory widget ("Requirement"/"cookieCost") blocks a buy tap.
 --   • flashNumberText / pulseRequirementPreview: the red flash + preview pulse on a blocked tap.
@@ -50,6 +50,7 @@ function StoreAffordance.new(ctx)
 	local getOwnedCount = ctx.getOwnedCount
 	local getUpgradeCost = ctx.getUpgradeCost
 	local UpgradeConfig = ctx.UpgradeConfig
+	local UpgradeRequirement = ctx.UpgradeRequirement
 	local cookiesValue = ctx.cookiesValue
 	local setText = ctx.setText
 	local rowsByUpgradeId = ctx.rowsByUpgradeId
@@ -58,8 +59,8 @@ function StoreAffordance.new(ctx)
 	local function getLockedRequirement(upgradeId, config, nextLevel)
 		local requirement = config.UnlockRequirement
 		if type(requirement) == "table" then
-			local requiredId = requirement.Building or requirement.TargetBuilding
-			local requiredCount = requirement.Count or 1
+			local requiredId = UpgradeRequirement.GetRequiredId(requirement)
+			local requiredCount = UpgradeRequirement.GetRequiredCount(requirement)
 			local ownedCount = type(requiredId) == "string" and getOwnedCount(requiredId) or 0
 			if type(requiredId) == "string" and requiredCount > 0 and ownedCount < requiredCount then
 				return requiredId, requiredCount, ownedCount
@@ -90,8 +91,8 @@ function StoreAffordance.new(ctx)
 		-- gating building is and mark the row as locked.
 		local requirement = config.UnlockRequirement
 		if type(requirement) == "table" then
-			local requiredId = requirement.Building or requirement.TargetBuilding
-			local requiredCount = requirement.Count or 1
+			local requiredId = UpgradeRequirement.GetRequiredId(requirement)
+			local requiredCount = UpgradeRequirement.GetRequiredCount(requirement)
 			if type(requiredId) == "string" and requiredCount > 0 then
 				local owned = getOwnedCount(requiredId)
 				if owned < requiredCount then
@@ -182,6 +183,10 @@ function StoreAffordance.new(ctx)
 		local accents = { backgrounds = {}, borders = {}, images = {}, strokes = {}, textStrokes = {}, texts = {} }
 		local function captureAccent(object)
 			if object.Name == "AffordBar" or object:FindFirstAncestor("AffordBar") or isInsideUpgradeNudge(object) then
+				return
+			end
+			local rowConfig = UpgradeConfig[row.Name]
+			if rowConfig and rowConfig.IconUsesSelectedGooColor == true and object.Name == "IconFill" then
 				return
 			end
 

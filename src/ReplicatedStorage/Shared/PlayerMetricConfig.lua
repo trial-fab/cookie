@@ -11,6 +11,7 @@ PlayerMetricConfig.PersistentAttributes = {
 	Attrs.ManualCookiesEarned,
 	Attrs.BuildingCookiesEarned,
 	Attrs.AutoclickCookiesEarned,
+	Attrs.LifetimeAutoclickerUnlocks,
 	Attrs.OfflineCookiesEarned,
 	Attrs.RewardCookiesEarned,
 	Attrs.StolenCookiesEarned,

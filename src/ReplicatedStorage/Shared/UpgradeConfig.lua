@@ -2,6 +2,7 @@
 -- Producers: §3 ladder. Clicking Power: §4b. Gear: §5. Building upgrades: §4a.
 -- Re-run tools/economy_sim.py after any value change here.
 local FloorConfig = require(script.Parent.FloorConfig)
+local AutoclickerConfig = require(script.Parent.AutoclickerConfig)
 
 local UpgradeConfig = {
 	Cookie = {
@@ -497,19 +498,39 @@ local UpgradeConfig = {
 		Effects = { UnlocksMultiPlace = 1 },
 	},
 
-	-- §4c IDLE ROUTE: two INDEPENDENT autoclick lines (not synced to manual click
+	-- §4c IDLE ROUTE: a cheap one-time prerequisite introduces the mechanic, then
+	-- reveals two INDEPENDENT autoclick lines (not synced to manual click
 	-- power). autoclickCps = AutoclickPayout (this line, cookies per auto-click) ×
 	-- autoclick speed (clicks/s, the "Autoclick Speed" line below, base 2/s) ×
 	-- world-event multiplier. Autoclicks never roll golden-cookie drops (§6) and
 	-- are NOT counted by OfflineEarningsService (in-session/idle engine only).
 	--
-	-- Power line: cheap session-1 entry (L1 = 550), then cost ×10 / output ×5 per
-	-- level so cost-per-CpS grows ×2 — autoclick is the early/early-mid hook +
+	[AutoclickerConfig.UnlockUpgradeId] = {
+		DisplayName = "Autoclicker",
+		Description = "Your goo starts clicking for you and unlocks Autoclick Power and Autoclick Speed.",
+		IconFill = AutoclickerConfig.SlimeIcon,
+		IconOutline = AutoclickerConfig.CursorIcon,
+		IconTint = false,
+		IconUsesSelectedGooColor = true,
+		InitialCount = 0,
+		BaseCost = AutoclickerConfig.UnlockCost,
+		CostMultiplier = 1,
+		CostTuningId = AutoclickerConfig.UnlockCostTuningId,
+		TemplateKind = "Stat",
+		TemplateName = "Autoclicker",
+		MaxCount = 1,
+		HideWhenOwned = true,
+		Sellable = false,
+		Effects = { UnlocksAutoclicker = AutoclickerConfig.GrantedPowerLevel },
+	},
+
+	-- Power line: the 200-cookie Autoclicker grants L1, then later costs rise ×10
+	-- while output rises ×5 so cost-per-CpS grows ×2 — autoclick is the early/early-mid hook +
 	-- supplement and DELIBERATELY tapers late (buildings are the real idle engine;
 	-- spec §2). Validated supplement: peaks ~7% of building CpS, never dominates.
 	-- EffectText shows CpS at base speed (2/s); it rises further with speed levels.
 	-- Numbers governed by tools/economy_sim.py — re-run after any change.
-	Autoclicker = {
+	[AutoclickerConfig.PowerUpgradeId] = {
 		DisplayName = "Autoclick Power",
 		Description = "An auto-clicker taps your cookie for you. Each level raises cookies per auto-click. Buy Autoclick Speed to tap faster.",
 		IconFill = "rbxassetid://84671355431653",
@@ -519,8 +540,13 @@ local UpgradeConfig = {
 		InitialCount = 0,
 		BaseCost = 550,
 		TemplateKind = "Stat",
-		TemplateName = "Autoclicker",
+		TemplateName = "Autoclick Power",
 		Sellable = false,
+		UnlockRequirement = {
+			Upgrade = AutoclickerConfig.UnlockUpgradeId,
+			Count = 1,
+			HideUntilOwned = true,
+		},
 		Levels = {
 			{ Cost = 550,        AutoclickPayout = 1,    EffectText = "2 cookies/s" },
 			{ Cost = 5000,       AutoclickPayout = 5,    EffectText = "10 cookies/s" },
@@ -547,6 +573,11 @@ local UpgradeConfig = {
 		TemplateKind = "Stat",
 		TemplateName = "Autoclick Speed",
 		Sellable = false,
+		UnlockRequirement = {
+			Upgrade = AutoclickerConfig.UnlockUpgradeId,
+			Count = 1,
+			HideUntilOwned = true,
+		},
 		Levels = {
 			{ Cost = 25000,    AutoclickSpeed = 3, EffectText = "3 clicks/s" },
 			{ Cost = 1000000,  AutoclickSpeed = 4, EffectText = "4 clicks/s" },

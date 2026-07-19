@@ -114,6 +114,7 @@ return {
 	ManualCookiesEarned = "ManualCookiesEarned",
 	BuildingCookiesEarned = "BuildingCookiesEarned",
 	AutoclickCookiesEarned = "AutoclickCookiesEarned",
+	LifetimeAutoclickerUnlocks = "LifetimeAutoclickerUnlocks",
 	OfflineCookiesEarned = "OfflineCookiesEarned",
 	RewardCookiesEarned = "RewardCookiesEarned",
 	StolenCookiesEarned = "StolenCookiesEarned",

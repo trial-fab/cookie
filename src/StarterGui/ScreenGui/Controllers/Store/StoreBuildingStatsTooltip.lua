@@ -10,6 +10,7 @@ local Workspace = game:GetService("Workspace")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local BuildingInspectionConfig = require(Shared:WaitForChild("BuildingInspectionConfig"))
 local CursorTooltipTuning = require(Shared:WaitForChild("CursorTooltipTuning"))
+local StoreBuildingTooltipPresenter = require(script.Parent:WaitForChild("StoreBuildingTooltipPresenter"))
 
 local StoreBuildingStatsTooltip = {}
 
@@ -34,7 +35,9 @@ end
 function StoreBuildingStatsTooltip.new(ctx)
 	local source = ctx.cursorTooltip
 		and ctx.cursorTooltip:createSource({ priority = ctx.cursorTooltip.Priority.BuildingStats })
+	local touchPresenter = StoreBuildingTooltipPresenter.new(ctx.screenGui)
 	if not source then
+		touchPresenter:destroy()
 		return {
 			destroy = function() end,
 		}
@@ -120,6 +123,7 @@ function StoreBuildingStatsTooltip.new(ctx)
 		selectionInput = nil
 		highlight.Adornee = nil
 		source:clear()
+		touchPresenter:clear()
 		if ctx.screenGui:GetAttribute(ctx.Attrs.MultiplierContextMode) == "Inspection" then
 			ctx.screenGui:SetAttribute(ctx.Attrs.MultiplierContextMode, nil)
 			ctx.screenGui:SetAttribute(ctx.Attrs.MultiplierContextBuildingId, nil)
@@ -249,7 +253,13 @@ function StoreBuildingStatsTooltip.new(ctx)
 		selectedDestroyConnection = building.Destroying:Once(clearSelection)
 		local content = buildContent(building, upgradeId, config, inputMode)
 		if content then
-			source:show(content)
+			if inputMode == "Touch" then
+				source:clear()
+				touchPresenter:show(content)
+			else
+				touchPresenter:clear()
+				source:show(content)
+			end
 		else
 			clearSelection()
 		end
@@ -260,7 +270,14 @@ function StoreBuildingStatsTooltip.new(ctx)
 			clearSelection()
 			return
 		end
-		source:show(buildContent(selectedBuilding, selectedUpgradeId, selectedConfig, selectionInput))
+		local content = buildContent(selectedBuilding, selectedUpgradeId, selectedConfig, selectionInput)
+		if selectionInput == "Touch" then
+			source:clear()
+			touchPresenter:show(content)
+		else
+			touchPresenter:clear()
+			source:show(content)
+		end
 	end
 
 	local function updateMouseHover()
@@ -428,6 +445,7 @@ function StoreBuildingStatsTooltip.new(ctx)
 				connection:Disconnect()
 			end
 			effectContainer:Destroy()
+			touchPresenter:destroy()
 			source:destroy()
 		end,
 	}

@@ -362,6 +362,10 @@ local ctx = {
 	buildingPreviews = buildingPreviews,
 	placeholderIcon = PREVIEW_PLACEHOLDER_ICON,
 	UpgradeConfig = UpgradeConfig,
+	AutoclickerConfig = require(shared:WaitForChild("AutoclickerConfig")),
+	DevTuning = require(shared:WaitForChild("DevTuning"):WaitForChild("DevTuning")),
+	UpgradePricing = require(shared:WaitForChild("UpgradePricing")),
+	UpgradeRequirement = require(shared:WaitForChild("UpgradeRequirement")),
 	MonetizationConfig = MonetizationConfig,
 	NumberFormat = NumberFormat,
 	ProductionFormula = ProductionFormula,
@@ -402,6 +406,8 @@ local ctx = {
 	sellModeTooltip = nil,
 	placement = nil,
 	robuxTab = nil,
+	robuxSubTabScroller = nil,
+	gooTintedUpgradeIcon = nil,
 	-- late-bound orchestrator callbacks (assigned once their definitions exist):
 	--   showStatus      -> StorePlacement status messages
 	--   isBuildingLocked -> StorePreview locked-silhouette state
@@ -496,19 +502,7 @@ end
 
 local function getUpgradeCost(upgradeId, currentCount)
 	local config = UpgradeConfig[upgradeId]
-	if not config then
-		return nil
-	end
-
-	-- Leveled upgrades: cost is the next unowned level's cost (nil when maxed).
-	if config.Levels then
-		local nextLevel = config.Levels and config.Levels[currentCount + 1]
-		return nextLevel and nextLevel.Cost or nil
-	end
-
-	local baseCost = config.BaseCost or 0
-	local multiplier = config.CostMultiplier or 1
-	return math.floor(baseCost * (multiplier ^ currentCount))
+	return ctx.UpgradePricing.GetCost(config, currentCount)
 end
 -- StoreAffordance reads costs through this; getUpgradeCost stays here (also used by sell/refund).
 ctx.getUpgradeCost = getUpgradeCost
@@ -589,7 +583,7 @@ local function getSortCost(config)
 		return target and target.BaseCost or 0
 	end
 
-	return config.BaseCost or 0
+	return ctx.UpgradePricing.GetCost(config, 0) or config.BaseCost or 0
 end
 
 local function getSortedUpgradeIds()
@@ -599,6 +593,7 @@ local function getSortedUpgradeIds()
 			config.StoreVisible ~= false
 			and not PvpConfig.IsUpgradePaused(upgradeId)
 			and getUpgradeCategory(config) == currentCategory
+			and ctx.UpgradeRequirement.ShouldShowInStore(upgradeId, config, getOwnedCount)
 		then
 			if
 				config.TemplateKind ~= "BuildingUpgrade"
@@ -701,6 +696,7 @@ ctx.upgradeSubTabs = require(script.Parent.StoreUpgradeSubTabs).new(ctx, {
 	setTabActive = setTabActive,
 	layoutTweenInfo = SELL_TAB_LAYOUT_TWEEN_INFO,
 	scrollTweenInfo = SELL_TAB_LAYOUT_TWEEN_INFO,
+	fitVisibleContent = true,
 })
 
 local function setActiveRobuxSubTab(sectionId)
@@ -768,6 +764,9 @@ local function updateCategoryButton()
 	end
 
 	storeToolbarLayout.update()
+	if currentCategory ~= "Robux" and ctx.robuxSubTabScroller then
+		ctx.robuxSubTabScroller.cancel()
+	end
 	updateRobuxSubTabLayout()
 end
 
@@ -783,6 +782,7 @@ local spinPreviews = ctx.preview.spinPreviews
 -- Row icon rendering (level/progression icon + toggle state icon) lives in StoreStateIcon;
 -- reached via ctx.stateIcon.* (no top-level re-alias).
 ctx.stateIcon = require(script.Parent.StoreStateIcon).new(ctx)
+ctx.gooTintedUpgradeIcon = require(script.Parent.StoreGooTintedUpgradeIcon).new(ctx)
 
 local function updateRow(upgradeId)
 	local row = rowsByUpgradeId[upgradeId]
@@ -800,6 +800,7 @@ local function updateRow(upgradeId)
 		local displayLevel = math.min(levelsOwned + (nextLevel and 1 or 0), math.max(maxLevels, 1))
 
 		ctx.stateIcon.applyUpgradeIcon(row, config, displayLevel, maxLevels)
+		ctx.gooTintedUpgradeIcon.apply(row, config)
 		ctx.stateIcon.updateUpgradeStateIcon(row, config, levelsOwned > 0)
 
 		local countText = "Lv " .. levelsOwned
@@ -874,6 +875,7 @@ local function updateRow(upgradeId)
 		displayLevel = count
 	end
 	ctx.stateIcon.applyUpgradeIcon(row, config, displayLevel, config.IconProgressionSteps or config.MaxCount)
+	ctx.gooTintedUpgradeIcon.apply(row, config)
 	local multiPlaceActive = ctx.multiPlace.isUpgradeId(upgradeId) and ctx.multiPlace.isEnabled()
 	local stateIconActive = count > (config.InitialCount or 0)
 	if ctx.multiPlace.isUpgradeId(upgradeId) then
@@ -1088,7 +1090,7 @@ end
 -- Horizontal twin of scrollToUpgradeRow: scrolls the strip so the first card of a Robux
 -- section sits at the left edge, and highlights that section's chip.
 local function scrollRobuxToSection(sectionId)
-	if not pageContainer:IsA("ScrollingFrame") or not ctx.robuxTab then
+	if currentCategory ~= "Robux" or not pageContainer:IsA("ScrollingFrame") or not ctx.robuxTab then
 		return
 	end
 
@@ -1097,11 +1099,7 @@ local function scrollRobuxToSection(sectionId)
 		return
 	end
 
-	local current = pageContainer.CanvasPosition
-	local cardLeft = card.AbsolutePosition.X - pageContainer.AbsolutePosition.X + current.X
-	local maxX = math.max(0, pageContainer.AbsoluteCanvasSize.X - pageContainer.AbsoluteSize.X)
-	pageContainer.CanvasPosition = Vector2.new(math.clamp(cardLeft - 8, 0, maxX), current.Y)
-	setActiveRobuxSubTab(sectionId)
+	ctx.robuxSubTabScroller.scrollTo(sectionId, card)
 end
 
 local pageRefreshQueued = false
@@ -1166,6 +1164,8 @@ ctx.sellConfirm = require(script.Parent.StoreSellConfirm).new(ctx)
 local sellConfirm = ctx.sellConfirm
 
 ctx.robuxTab = require(script.Parent.StoreRobuxTab).new(ctx)
+ctx.robuxSubTabScroller =
+	require(script.Parent.StoreSubTabScroller).new(pageContainer, SELL_TAB_LAYOUT_TWEEN_INFO, setActiveRobuxSubTab)
 
 -- ── live cookie counter ───────────────────────────────────────────────────────
 -- Exact, un-abbreviated running cookie total. The shared binder keeps this StoreBottom
@@ -1298,6 +1298,16 @@ applyStoreScale()
 refreshCategory()
 updateSellButton()
 observeWorldEventMultipliers()
+ctx.gooTintedUpgradeIcon.observe(function()
+	updateRow(ctx.AutoclickerConfig.UnlockUpgradeId)
+end)
+ctx.DevTuning.observe(ctx.AutoclickerConfig.UnlockCostTuningId, function()
+	if currentCategory == "Upgrade" then
+		scheduleOrderingRefresh()
+	else
+		updateRow(ctx.AutoclickerConfig.UnlockUpgradeId)
+	end
+end)
 
 if pageContainer:IsA("GuiObject") then
 	pageContainer:GetPropertyChangedSignal("AbsoluteSize"):Connect(schedulePageRefresh)
@@ -1437,22 +1447,7 @@ if pageContainer:IsA("ScrollingFrame") and robuxSubTabs then
 			return
 		end
 
-		local viewLeft = pageContainer.AbsolutePosition.X
-		local bestSection, bestDistance
-		for _, section in ipairs(ctx.robuxTab.getSections()) do
-			local card = ctx.robuxTab.getFirstCardOfSection(section.Id)
-			if card and card:IsA("GuiObject") and card.Visible then
-				local distance = math.abs(card.AbsolutePosition.X - viewLeft)
-				if not bestDistance or distance < bestDistance then
-					bestDistance = distance
-					bestSection = section.Id
-				end
-			end
-		end
-
-		if bestSection then
-			setActiveRobuxSubTab(bestSection)
-		end
+		ctx.robuxSubTabScroller.updateActive(ctx.robuxTab.getSections(), ctx.robuxTab.getFirstCardOfSection, "Id")
 	end)
 end
 
@@ -1500,7 +1495,7 @@ local function onUpgradeCountChanged(upgradeId)
 	-- refresh their rows so the near-miss lock text/bar clears in place.
 	for dependentId, dependentConfig in pairs(UpgradeConfig) do
 		local requirement = dependentConfig.UnlockRequirement
-		if type(requirement) == "table" and (requirement.Building or requirement.TargetBuilding) == upgradeId then
+		if type(requirement) == "table" and ctx.UpgradeRequirement.GetRequiredId(requirement) == upgradeId then
 			updateRow(dependentId)
 		end
 	end

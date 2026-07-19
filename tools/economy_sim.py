@@ -68,7 +68,8 @@ CLICK_COST_GROWTH = 10
 CLICK_RATE = 3.0  # clicks per second, active play
 
 # --- Autoclick "idle route" -------------------------------------------------
-# Two INDEPENDENT lines (not synced to click power); income = power x speed.
+# A 200-cookie one-time unlock grants Power level 1 and reveals two INDEPENDENT
+# lines (not synced to click power); income = power x speed.
 #   power = cookies per auto-click (long line, escalating cost-per-CpS)
 #   speed = auto-clicks per second (short, bounded line; base = 2/s)
 # autoclick CpS = AUTO_POWER_VAL[power_level] * AUTO_SPEED_VAL[speed_level].
@@ -83,6 +84,7 @@ CLICK_RATE = 3.0  # clicks per second, active play
 # DELIBERATELY tapers late (buildings are the real idle engine; spec §2).
 AUTO_POWER_VAL = [0, 1, 5, 25, 125, 625, 3125]
 AUTO_POWER_COST = [0, 550, 5_000, 50_000, 500_000, 5_000_000, 50_000_000]
+AUTO_UNLOCK_COST = 200
 # Speed: clicks/sec per level (level 0 is the free baseline once you own a clicker).
 AUTO_SPEED_VAL = [2, 3, 4, 5]
 AUTO_SPEED_COST = [0, 25_000, 1_000_000, 50_000_000]
@@ -128,6 +130,7 @@ def simulate(click_rate=CLICK_RATE, autoclick=True, seed_bank=0.0,
     upgrades = [0] * len(BUILDINGS)  # upgrade levels bought per building
     floors_owned = [False] * len(FLOORS)
     click_level = 0
+    auto_unlocked = False
     auto_power = 0  # power line level (0 = no autoclicker)
     auto_speed = 0  # speed line level
     bank = float(seed_bank)  # idle players need a tiny seed to place building #1
@@ -197,7 +200,10 @@ def simulate(click_rate=CLICK_RATE, autoclick=True, seed_bank=0.0,
             options.append((c_cost / delta, c_cost, "c", None))
         if autoclick:
             if auto_power + 1 < len(AUTO_POWER_VAL):
-                cost = AUTO_POWER_COST[auto_power + 1]
+                # The one-time prerequisite grants the first Power level. Later
+                # purchases continue at the existing next-level prices.
+                cost = AUTO_UNLOCK_COST if not auto_unlocked \
+                    else AUTO_POWER_COST[auto_power + 1]
                 delta = (AUTO_POWER_VAL[auto_power + 1] - AUTO_POWER_VAL[auto_power]) \
                     * AUTO_SPEED_VAL[auto_speed]
                 if delta > 0:
@@ -264,6 +270,7 @@ def simulate(click_rate=CLICK_RATE, autoclick=True, seed_bank=0.0,
                 print(f"{'Clicking Power lv' + str(click_level):<44}"
                       f"{fmt_time(t):>8}{cost:>16,.0f}{cps():>14,.1f}{ratio():>9.0f}%")
         elif kind == "ap":
+            auto_unlocked = True
             auto_power += 1
             tag = f"Autoclick Power lv{auto_power} ({auto_cps():,.0f}/s)"
             if verbose:

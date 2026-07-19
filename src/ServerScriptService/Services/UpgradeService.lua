@@ -7,6 +7,7 @@ local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 
 local CookieService = require(ServerScriptService.Services.CookieService)
+local AutoclickerAnalyticsService = require(ServerScriptService.Services.AutoclickerAnalyticsService)
 local FloorAnalyticsService = require(ServerScriptService.Services.FloorAnalyticsService)
 local FloorService = require(ServerScriptService.Services.FloorService)
 local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
@@ -14,7 +15,10 @@ local StoryService = require(ServerScriptService.Services.StoryService)
 local SheetService = require(ServerScriptService.Services.SheetService)
 local XpService = require(ServerScriptService.Services.XpService)
 local NumberFormat = require(ReplicatedStorage.Shared.NumberFormat)
+local AutoclickerConfig = require(ReplicatedStorage.Shared.AutoclickerConfig)
 local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
+local UpgradePricing = require(ReplicatedStorage.Shared.UpgradePricing)
+local UpgradeRequirement = require(ReplicatedStorage.Shared.UpgradeRequirement)
 local FloorConfig = require(ReplicatedStorage.Shared.FloorConfig)
 local FloorGeometry = require(ReplicatedStorage.Shared.FloorGeometry)
 local GridPlacement = require(ReplicatedStorage.Shared.GridPlacement)
@@ -922,27 +926,37 @@ local EffectHandlers = {
 			return FloorService.ApplyUnlock(player, definition.Id, amount)
 		end,
 	},
-	-- Toggles/entitlements query ownership via UpgradeService.HasEffect from
-	-- counts, so no apply-time mutation is needed.
+	-- The autoclick unlock grants its first Power level immediately. Other
+	-- toggles/entitlements query ownership via UpgradeService.HasEffect from counts.
+	UnlocksAutoclicker = {
+		apply = function(player, grantedPowerLevel, amount)
+			if amount <= 0 then
+				return true
+			end
+
+			local powerConfig = UpgradeConfig[AutoclickerConfig.PowerUpgradeId]
+			local maxLevel = powerConfig and powerConfig.Levels and #powerConfig.Levels or 0
+			if maxLevel <= 0 then
+				return false, "Autoclick Power configuration is invalid."
+			end
+
+			local powerCount = ensureUpgradeCountValue(player, AutoclickerConfig.PowerUpgradeId, powerConfig)
+			if not powerCount then
+				return false, "Autoclick Power data is not ready."
+			end
+
+			local targetLevel = math.clamp(math.floor(tonumber(grantedPowerLevel) or 1), 1, maxLevel)
+			powerCount.Value = math.max(powerCount.Value, targetLevel)
+			return true
+		end,
+	},
 	UnlocksMultiPlace = { apply = function() end },
 	OfflineCapHours = { apply = function() end },
 }
 
 function UpgradeService.GetCost(upgradeId, currentCount)
 	local config = UpgradeConfig[upgradeId]
-	if not config then
-		return nil
-	end
-
-	-- Leveled upgrades: cost is the next unowned level's cost (nil when maxed).
-	if config.Levels then
-		local nextLevel = config.Levels and config.Levels[currentCount + 1]
-		return nextLevel and nextLevel.Cost or nil
-	end
-
-	local baseCost = config.BaseCost or 0
-	local multiplier = config.CostMultiplier or 1
-	return math.floor(baseCost * (multiplier ^ currentCount))
+	return UpgradePricing.GetCost(config, currentCount)
 end
 
 function UpgradeService.ApplyUpgrade(player, upgradeId, amount, placementCFrame, placementFloorId)
@@ -1051,8 +1065,8 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFl
 	-- Research Facility). BuildingUpgrade levels keep their own per-level UnlockCount.
 	local requirement = config.UnlockRequirement
 	if type(requirement) == "table" then
-		local requiredId = requirement.Building or requirement.TargetBuilding
-		local requiredCount = requirement.Count or 1
+		local requiredId = UpgradeRequirement.GetRequiredId(requirement)
+		local requiredCount = UpgradeRequirement.GetRequiredCount(requirement)
 		if type(requiredId) == "string" and requiredCount > 0 then
 			local ownedValue = getUpgradeCountValue(player, requiredId)
 			local owned = ownedValue and ownedValue.Value or 0
@@ -1090,6 +1104,10 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFl
 		end
 
 		PlayerMetricsService.RecordCookiesSpent(player, cost)
+		if config.Effects and config.Effects.UnlocksAutoclicker then
+			PlayerMetricsService.RecordAutoclickerUnlocked(player)
+			AutoclickerAnalyticsService.RecordUnlocked(player, cost)
+		end
 		return true, "Purchased " .. (config.DisplayName or upgradeId) .. "."
 	end
 

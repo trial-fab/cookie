@@ -174,6 +174,10 @@ function PlayerMetricsService.RecordBuildingPlaced(player)
 	addMetric(player, Attrs.BuildingsPlaced, 1)
 end
 
+function PlayerMetricsService.RecordAutoclickerUnlocked(player)
+	addMetric(player, Attrs.LifetimeAutoclickerUnlocks, 1)
+end
+
 function PlayerMetricsService.RecordFloorUnlocked(player, floorOrder)
 	floorOrder = math.max(0, math.floor(tonumber(floorOrder) or 0))
 	if floorOrder <= 0 then

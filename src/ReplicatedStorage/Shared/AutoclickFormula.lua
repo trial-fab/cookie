@@ -1,10 +1,11 @@
 local ProductionFormula = require(script.Parent.ProductionFormula)
 local UpgradeConfig = require(script.Parent.UpgradeConfig)
+local AutoclickerConfig = require(script.Parent.AutoclickerConfig)
 
 local AutoclickFormula = {}
 
-local POWER_UPGRADE_ID = "Autoclicker"
-local SPEED_UPGRADE_ID = "Autoclick Speed"
+local POWER_UPGRADE_ID = AutoclickerConfig.PowerUpgradeId
+local SPEED_UPGRADE_ID = AutoclickerConfig.SpeedUpgradeId
 local BASE_SPEED = 2
 
 local function getUpgradeLevel(player, upgradeId)

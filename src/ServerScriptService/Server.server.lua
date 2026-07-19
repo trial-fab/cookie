@@ -26,6 +26,7 @@ local PlayerMetricsService = require(Services:WaitForChild("PlayerMetricsService
 local SettingsService = require(Services:WaitForChild("SettingsService"))
 local DevTuningService = require(Services:WaitForChild("DevTuningService"))
 local PlacementAnalyticsService = require(Services:WaitForChild("PlacementAnalyticsService"))
+local AutoclickerAnalyticsService = require(Services:WaitForChild("AutoclickerAnalyticsService"))
 local FloorAnalyticsService = require(Services:WaitForChild("FloorAnalyticsService"))
 local FloorService = require(Services:WaitForChild("FloorService"))
 
@@ -33,6 +34,7 @@ local FloorService = require(Services:WaitForChild("FloorService"))
 PvpService.Init()
 DevTuningService.Init()
 PlacementAnalyticsService.Init()
+AutoclickerAnalyticsService.Init()
 FloorAnalyticsService.Init()
 
 PlayerDataService.Init()

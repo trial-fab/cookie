@@ -4,14 +4,15 @@ local Workspace = game:GetService("Workspace")
 
 local VisualConfig = require(script.Parent.AutoclickVisualConfig)
 local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
+local AutoclickerConfig = require(ReplicatedStorage.Shared.AutoclickerConfig)
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
 
 local screenGui = script:FindFirstAncestorOfClass("ScreenGui")
 
 -- Mouse COUNT tracks the Power line; click CADENCE tracks the Speed line, so
 -- more Power = more mice and more Speed = faster clicking (matches AutoclickService).
-local UPGRADE_ID = "Autoclicker"
-local SPEED_UPGRADE_ID = "Autoclick Speed"
+local UPGRADE_ID = AutoclickerConfig.PowerUpgradeId
+local SPEED_UPGRADE_ID = AutoclickerConfig.SpeedUpgradeId
 local BASE_SPEED = 2 -- clicks/s before any Autoclick Speed level (matches AutoclickService)
 local TEMPLATE_NAME = "mouse"
 local ICON_NAME = "MouseIcon"
