@@ -120,6 +120,11 @@ function StoreBuildingStatsTooltip.new(ctx)
 		selectionInput = nil
 		highlight.Adornee = nil
 		source:clear()
+		if ctx.screenGui:GetAttribute(ctx.Attrs.MultiplierContextMode) == "Inspection" then
+			ctx.screenGui:SetAttribute(ctx.Attrs.MultiplierContextMode, nil)
+			ctx.screenGui:SetAttribute(ctx.Attrs.MultiplierContextBuildingId, nil)
+			ctx.screenGui:SetAttribute(ctx.Attrs.MultiplierContextFloorId, nil)
+		end
 	end
 
 	local function cancelHover(clearActiveMouseSelection)
@@ -201,6 +206,9 @@ function StoreBuildingStatsTooltip.new(ctx)
 		selectedConfig = config
 		selectionInput = inputMode
 		highlight.Adornee = building
+		ctx.screenGui:SetAttribute(ctx.Attrs.MultiplierContextMode, "Inspection")
+		ctx.screenGui:SetAttribute(ctx.Attrs.MultiplierContextBuildingId, upgradeId)
+		ctx.screenGui:SetAttribute(ctx.Attrs.MultiplierContextFloorId, building:GetAttribute(ctx.Attrs.FloorId))
 		selectedDestroyConnection = building.Destroying:Once(clearSelection)
 		local content = buildContent(building, upgradeId, config, inputMode)
 		if content then

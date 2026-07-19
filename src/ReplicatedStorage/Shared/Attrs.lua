@@ -62,6 +62,12 @@ return {
 	FloorUnlocked = "FloorUnlocked",
 	UnlockedFloorCount = "UnlockedFloorCount",
 	ActiveFloorId = "ActiveFloorId",
+	-- Client-only building context published by placement and placed-building inspection.
+	-- The multiplier HUD uses these three attributes to add contextual upgrade/floor sources
+	-- without ever presenting them as player-global bonuses.
+	MultiplierContextMode = "MultiplierContextMode",
+	MultiplierContextBuildingId = "MultiplierContextBuildingId",
+	MultiplierContextFloorId = "MultiplierContextFloorId",
 	-- Stable radial slot identity for a generated CookieSheet and its matching crater sector.
 	PlotSlotIndex = "PlotSlotIndex",
 	MultiPlaceEnabled = "MultiPlaceEnabled",

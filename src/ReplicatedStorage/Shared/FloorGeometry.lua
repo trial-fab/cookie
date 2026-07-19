@@ -29,6 +29,12 @@ end
 local function getAuthoredSurface(sheet, definition)
 	local model = FloorGeometry.GetFloorModel(sheet, definition.Id)
 	local bounds = model and model:FindFirstChild(FloorConfig.Geometry.PlacementBoundsName, true)
+	-- The promoted terraced floors already carry one exact, minimum-part build
+	-- surface named Base. Reuse it when a dedicated marker is absent instead of
+	-- layering an overlapping invisible part over approved geometry.
+	if not (bounds and bounds:IsA("BasePart")) then
+		bounds = model and model:FindFirstChild("Base")
+	end
 	if not (bounds and bounds:IsA("BasePart")) then
 		return nil
 	end
@@ -92,6 +98,29 @@ function FloorGeometry.GetSurface(sheet, floorId)
 	end
 
 	return getAuthoredSurface(sheet, definition) or getDerivedSurface(sheet, definition)
+end
+
+-- Ordered Ground-first list of the surfaces the player may build on right now: Ground
+-- plus every unlocked floor with authored geometry. Derived fallback surfaces are
+-- logic-only (save/load and tests), so they are excluded -- player-facing systems
+-- (placement grids, Build View fly bounds) must never present a surface that does not
+-- physically exist. unlockedCount is the caller-resolved UnlockedFloorCount attribute.
+function FloorGeometry.GetUnlockedSurfaces(sheet, unlockedCount)
+	unlockedCount = math.clamp(
+		math.floor(tonumber(unlockedCount) or 0),
+		0,
+		FloorConfig.UnlockableFloorCount
+	)
+	local surfaces = {}
+	for _, definition in ipairs(FloorConfig.GetDefinitions()) do
+		if definition.Order <= unlockedCount then
+			local surface = FloorGeometry.GetSurface(sheet, definition.Id)
+			if surface and (definition.Order == 0 or not surface.isFallback) then
+				table.insert(surfaces, surface)
+			end
+		end
+	end
+	return surfaces
 end
 
 return FloorGeometry

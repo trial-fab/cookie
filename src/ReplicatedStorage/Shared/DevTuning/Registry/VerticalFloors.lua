@@ -102,20 +102,6 @@ return {
 			description = "Easing curve used only by the sliding crater gates.",
 		},
 		{
-			key = "GroundGridColor",
-			default = Color3.fromRGB(120, 210, 255),
-			kind = "Color3",
-			scope = "client",
-			description = "Placement-grid line color on the Ground floor.",
-		},
-		{
-			key = "IndustryGridColor",
-			default = Color3.fromRGB(255, 159, 67),
-			kind = "Color3",
-			scope = "client",
-			description = "Placement-grid line color on the Industry floor.",
-		},
-		{
 			key = "PartStagger",
 			default = REVEAL_DEFAULTS.PartStagger,
 			kind = "number",
@@ -151,20 +137,6 @@ return {
 			step = 0.05,
 			scope = "server",
 			description = "Signed gap between tracks: positive opens gate first/relocks floor first; negative reverses it.",
-		},
-		{
-			key = "FinanceGridColor",
-			default = Color3.fromRGB(55, 200, 175),
-			kind = "Color3",
-			scope = "client",
-			description = "Placement-grid line color on the Finance and Distribution floor.",
-		},
-		{
-			key = "ScienceGridColor",
-			default = Color3.fromRGB(182, 117, 255),
-			kind = "Color3",
-			scope = "client",
-			description = "Placement-grid line color on the Science floor.",
 		},
 	},
 }

@@ -31,13 +31,26 @@ FloorConfig.Reveal = {
 	GateEasingStyle = Enum.EasingStyle.Quint,
 }
 
+-- Placement grids exist only while a building placement is active. All unlocked
+-- floors are shown together; the directly targeted floor is emphasized.
+FloorConfig.Grid = {
+	ActiveTransparency = 0.5,
+	InactiveTransparency = 0.8,
+	Colors = {
+		Ground = Color3.fromRGB(120, 210, 255),
+		Floor1 = Color3.fromRGB(255, 110, 35),
+		Floor2 = Color3.fromRGB(255, 215, 65),
+		Floor3 = Color3.fromRGB(130, 55, 200),
+	},
+}
+
 local definitions = {
 	{
 		Id = "Ground",
 		Order = 0,
 		DisplayName = "Ground Floor",
 		Theme = "Ground",
-		GridColorTuningId = "VerticalFloors.GroundGridColor",
+		GridColorTuningId = "FloorGrids.GroundColor",
 		Multiplier = 1,
 		Price = 0,
 		BuildingIds = {},
@@ -48,7 +61,7 @@ local definitions = {
 		Order = 1,
 		DisplayName = "Industry Floor",
 		Theme = "Industry",
-		GridColorTuningId = "VerticalFloors.IndustryGridColor",
+		GridColorTuningId = "FloorGrids.IndustryColor",
 		Multiplier = 1.5,
 		Price = 75000,
 		BuildingIds = { "Cookie Mine", "Cookie Factory" },
@@ -59,7 +72,7 @@ local definitions = {
 		Order = 2,
 		DisplayName = "Finance & Distribution Floor",
 		Theme = "Finance & Distribution",
-		GridColorTuningId = "VerticalFloors.FinanceGridColor",
+		GridColorTuningId = "FloorGrids.FinanceColor",
 		Multiplier = 1.5,
 		Price = 500000000,
 		BuildingIds = { "Cookie Bank", "Cookie Distributer" },
@@ -70,7 +83,7 @@ local definitions = {
 		Order = 3,
 		DisplayName = "Science Floor",
 		Theme = "Science",
-		GridColorTuningId = "VerticalFloors.ScienceGridColor",
+		GridColorTuningId = "FloorGrids.ScienceColor",
 		Multiplier = 1.5,
 		Price = 100000000000,
 		BuildingIds = { "Research Facility", "Portal", "Time Machine" },
@@ -100,9 +113,7 @@ for _, definition in ipairs(definitions) do
 end
 
 assert(
-	#definitions == FloorConfig.UnlockableFloorCount + 1
-		and byOrder[0]
-		and byOrder[FloorConfig.UnlockableFloorCount],
+	#definitions == FloorConfig.UnlockableFloorCount + 1 and byOrder[0] and byOrder[FloorConfig.UnlockableFloorCount],
 	"Launch config requires Ground plus three floors"
 )
 

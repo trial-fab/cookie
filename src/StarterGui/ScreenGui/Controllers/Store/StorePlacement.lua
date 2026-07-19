@@ -1,5 +1,6 @@
 -- StorePlacement: the building placement flow plus sell-by-click/tap. Owns placement state
--- (preview model, footprint, grid, validity, and remembered rotation) and the sell highlight.
+-- (preview model, footprint, validity, and remembered rotation) and the sell highlight;
+-- StoreFloorPlacement owns unlocked-floor grids and direct-aim floor selection.
 -- The fixed hotbar controls are bound separately by StorePlacementControls. Projects the pointer
 -- onto the plot Base analytically and
 -- mirrors GridPlacement so the local preview can't drift from server validation. Reads
@@ -12,8 +13,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(Shared:WaitForChild("Attrs"))
 local FloorConfig = require(Shared:WaitForChild("FloorConfig"))
-local FloorGeometry = require(Shared:WaitForChild("FloorGeometry"))
-local DevTuning = require(Shared:WaitForChild("DevTuning"):WaitForChild("DevTuning"))
 
 local StorePlacement = {}
 
@@ -28,14 +27,10 @@ function StorePlacement.new(ctx)
 	-- response). They're referenced at call time, not captured here, because the orchestrator
 	-- binds them onto ctx after constructing this module.
 
-	local GRID_SIZE = GridPlacement.GRID_SIZE
-
 	local placementUpgradeId = nil
 	local placementPreview = nil
 	local placementHighlight = nil
 	local placementFootprint = nil
-	local placementGrid = nil
-	local placementGridColorObservation = nil
 	local placementCFrame = nil
 	local placementIsValid = false
 	local placementRotation = 0
@@ -104,55 +99,7 @@ function StorePlacement.new(ctx)
 	end
 
 	local function getActiveFloorId()
-		return FloorConfig.NormalizeId(screenGui:GetAttribute(Attrs.ActiveFloorId))
-	end
-
-	local function getPlacementBasePart(sheet)
-		local surface = FloorGeometry.GetSurface(sheet, getActiveFloorId())
-		if not surface then
-			return nil
-		end
-		return surface.boundsPart or {
-			CFrame = surface.cframe,
-			Position = surface.cframe.Position,
-			Size = surface.size,
-		}
-	end
-
-	-- Project a pointer ray onto the Base's top surface PLANE analytically rather than
-	-- raycasting the scene. Raycasting hit whatever was nearest the camera — including the
-	-- transparent MainShield dome (its ShieldParts have CanQuery=true) and tall buildings —
-	-- so once the Build View camera dropped below the shield roof the ray struck the shield
-	-- and placement broke. A plane projection ignores every occluder and works at any zoom.
-	-- Returns the world hit position, or nil if the ray can't meet the plane.
-	local function getBasePlaneHit(base, screenPosition)
-		local camera = Workspace.CurrentCamera
-		if not base or not camera then
-			return nil
-		end
-
-		local ray
-		if screenPosition then
-			ray = camera:ScreenPointToRay(screenPosition.X, screenPosition.Y)
-		else
-			ray = mouse.UnitRay -- PC cursor; camera-relative, no GUI-inset math needed
-		end
-
-		local origin = ray.Origin
-		local dir = ray.Direction.Unit
-		local normal = base.CFrame.UpVector
-		local denom = dir:Dot(normal)
-		if math.abs(denom) < 1e-6 then
-			return nil -- ray parallel to the surface
-		end
-
-		local planePoint = base.CFrame:PointToWorldSpace(Vector3.new(0, base.Size.Y / 2, 0))
-		local t = (planePoint - origin):Dot(normal) / denom
-		if t < 0 then
-			return nil -- plane is behind the camera
-		end
-
-		return origin + dir * t
+		return ctx.floorPlacement.getActiveFloorId()
 	end
 
 	local function getBuildingFromScreenPosition(screenPosition)
@@ -185,59 +132,6 @@ function StorePlacement.new(ctx)
 		end
 
 		return nil
-	end
-
-	local function setPlacementGridColor(grid, color)
-		if not (grid and typeof(color) == "Color3") then
-			return
-		end
-		for _, line in ipairs(grid:GetChildren()) do
-			if line:IsA("BasePart") then
-				line.Color = color
-			end
-		end
-	end
-
-	local function createPlacementGrid(base, color)
-		local grid = Instance.new("Model")
-		grid.Name = "PlacementGrid"
-
-		local topY = base.Position.Y + base.Size.Y / 2 + 0.04
-		local halfX = math.floor(base.Size.X / GRID_SIZE / 2)
-		local halfZ = math.floor(base.Size.Z / GRID_SIZE / 2)
-
-		for x = -halfX, halfX do
-			local line = Instance.new("Part")
-			line.Name = "GridLine"
-			line.Anchored = true
-			line.CanCollide = false
-			line.CanQuery = false
-			line.CanTouch = false
-			line.Material = Enum.Material.Neon
-			line.Color = color
-			line.Transparency = 0.65
-			line.Size = Vector3.new(0.08, 0.08, base.Size.Z)
-			line.CFrame = base.CFrame * CFrame.new(x * GRID_SIZE, topY - base.Position.Y, 0)
-			line.Parent = grid
-		end
-
-		for z = -halfZ, halfZ do
-			local line = Instance.new("Part")
-			line.Name = "GridLine"
-			line.Anchored = true
-			line.CanCollide = false
-			line.CanQuery = false
-			line.CanTouch = false
-			line.Material = Enum.Material.Neon
-			line.Color = color
-			line.Transparency = 0.65
-			line.Size = Vector3.new(base.Size.X, 0.08, 0.08)
-			line.CFrame = base.CFrame * CFrame.new(0, topY - base.Position.Y, z * GRID_SIZE)
-			line.Parent = grid
-		end
-
-		grid.Parent = Workspace
-		return grid
 	end
 
 	local function setModelPreviewState(model)
@@ -304,6 +198,11 @@ function StorePlacement.new(ctx)
 		multiPlaceSessionCount = 0
 		screenGui:SetAttribute(Attrs.MultiPlaceSessionActive, false)
 		screenGui:SetAttribute(Attrs.MultiPlaceSessionCount, 0)
+		if screenGui:GetAttribute(Attrs.MultiplierContextMode) == "Placement" then
+			screenGui:SetAttribute(Attrs.MultiplierContextMode, nil)
+			screenGui:SetAttribute(Attrs.MultiplierContextBuildingId, nil)
+			screenGui:SetAttribute(Attrs.MultiplierContextFloorId, nil)
+		end
 		placementUpgradeId = nil
 		placementPurchaseInFlight = false
 		placementCFrame = nil
@@ -321,14 +220,7 @@ function StorePlacement.new(ctx)
 			placementFootprint:Destroy()
 			placementFootprint = nil
 		end
-		if placementGridColorObservation then
-			placementGridColorObservation:Disconnect()
-			placementGridColorObservation = nil
-		end
-		if placementGrid then
-			placementGrid:Destroy()
-			placementGrid = nil
-		end
+		ctx.floorPlacement.stop()
 		placementMouseDown = false
 		placementHighlight = nil
 		refreshConfirmState()
@@ -363,36 +255,45 @@ function StorePlacement.new(ctx)
 		return false
 	end
 
-	local function updatePlacementPreview(screenPosition, reuseLast)
+	local function updatePlacementPreview(screenPosition, reuseLast, useInitialFloorPosition)
 		if not placementUpgradeId or not placementPreview then
 			return
 		end
 
 		local sheet = getPlayerSheet()
-		local base = getPlacementBasePart(sheet)
-		if not base then
-			placementIsValid = false
-			refreshConfirmState()
-			return
-		end
-
 		local _, size = placementPreview:GetBoundingBox()
 
 		-- reuseLast keeps the ghost on its current grid spot (used by Rotate so it
 		-- pivots in place) instead of resampling the pointer. Otherwise we read the
 		-- tap's screenPosition, or the mouse ray, and remember it.
+		local base
 		local localPosition
 		if reuseLast and lastPlacementLocal then
+			base = ctx.floorPlacement.getActiveBase()
 			localPosition = lastPlacementLocal
 		else
-			local hitPosition = getBasePlaneHit(base, screenPosition)
-			if not hitPosition then
+			local hitPosition
+			local activeFloorChanged
+			if useInitialFloorPosition then
+				base, hitPosition, activeFloorChanged = ctx.floorPlacement.resolveInitial()
+			else
+				base, hitPosition, activeFloorChanged = ctx.floorPlacement.resolvePointer(screenPosition)
+			end
+			if activeFloorChanged then
+				lastPlacementLocal = nil
+			end
+			if not base or not hitPosition then
 				placementIsValid = false
 				refreshConfirmState()
 				return
 			end
 			localPosition = base.CFrame:PointToObjectSpace(hitPosition)
 			lastPlacementLocal = localPosition
+		end
+		if not base then
+			placementIsValid = false
+			refreshConfirmState()
+			return
 		end
 
 		local config = UpgradeConfig[placementUpgradeId]
@@ -461,22 +362,17 @@ function StorePlacement.new(ctx)
 			stopPlacement()
 			return
 		end
-		local sheet = getPlayerSheet()
-		local base = getPlacementBasePart(sheet)
-		if base then
-			local floorId = getActiveFloorId()
-			local tuningId = FloorConfig.GetGridColorTuningId(floorId)
-			local initialColor = tuningId and DevTuning.get(tuningId) or Color3.fromRGB(120, 210, 255)
-			local createdGrid = createPlacementGrid(base, initialColor)
-			placementGrid = createdGrid
-			if tuningId then
-				placementGridColorObservation = DevTuning.observe(tuningId, function(color)
-					if placementGrid == createdGrid then
-						setPlacementGridColor(createdGrid, color)
-					end
-				end)
-			end
-		end
+		screenGui:SetAttribute(Attrs.MultiplierContextMode, "Placement")
+		screenGui:SetAttribute(Attrs.MultiplierContextBuildingId, upgradeId)
+		screenGui:SetAttribute(Attrs.MultiplierContextFloorId, nil)
+		ctx.floorPlacement.begin(function(_, activeFloorChanged)
+			lastPlacementLocal = nil
+			task.defer(function()
+				if placementUpgradeId then
+					updatePlacementPreview(lastPlacementScreenPosition, false, activeFloorChanged)
+				end
+			end)
+		end)
 		placementFootprint = Instance.new("Part")
 		placementFootprint.Name = "BuildingPlacementFootprint"
 		placementFootprint.Anchored = true
@@ -497,9 +393,9 @@ function StorePlacement.new(ctx)
 		-- Placement is live: lets BuildViewController offer its Build View nudge on touch.
 		screenGui:SetAttribute(Attrs.PlacementActive, true)
 		local displayName = UpgradeConfig[upgradeId].DisplayName or upgradeId
-		-- Seed the ghost at the pointer so it shows immediately; from here it holds its
-		-- grid spot until the player taps or drags it to another one.
-		updatePlacementPreview(nil, false)
+		-- Classic mouse mode seeds from the pointer. Fixed-control modes seed from the
+		-- character-nearest or Build View center-ray floor, then park until direct input.
+		updatePlacementPreview(nil, false, usesScreenPlacementControls())
 		if usesScreenPlacementControls() then
 			ctx.showStatus("Tap or drag to position " .. displayName .. " then use the bottom controls")
 		else

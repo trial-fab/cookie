@@ -408,6 +408,7 @@ local ctx = {
 	cursorTooltip = nil,
 	buildingStatsTooltip = nil,
 	multiPlaceToolbar = nil,
+	floorPlacement = nil,
 	sellModeTooltip = nil,
 	placement = nil,
 	robuxTab = nil,
@@ -1209,6 +1210,7 @@ end
 ctx.cursorTooltip = require(shared:WaitForChild("CursorTooltip")).get(screenGui)
 ctx.multiPlaceToolbar = require(script.Parent.StoreMultiPlaceToolbar).new(ctx)
 ctx.sellModeTooltip = require(script.Parent.StoreSellModeTooltip).new(ctx)
+ctx.floorPlacement = require(script.Parent.StoreFloorPlacement).new(ctx)
 ctx.placement = require(script.Parent.StorePlacement).new(ctx)
 ctx.placementControls = require(script.Parent.StorePlacementControls).new(ctx, ctx.placement)
 ctx.multiPlaceSessionControls = require(script.Parent.StoreMultiPlaceSessionControls).new(ctx)

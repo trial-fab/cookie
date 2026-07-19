@@ -13,6 +13,25 @@ local ProductionFormula = {}
 -- this is a backstop set to the highest legitimate value — the exclusive ceiling — and must
 -- not sit below it or it would silently neuter the day-7 mythical reward.
 local MAX_SKIN_MULTIPLIER = WheelConfig.MaxExclusiveSkinMultiplier
+local WORLD_EVENT_FOLDER_NAME = "WorldEventMultipliers"
+local SERVER_BOOST_VALUE_NAME = "ServerBoost"
+local SERVER_BOOST_ENDS_AT_ATTRIBUTE = "ServerBoostEndsAt"
+
+local function isActiveMultiplier(value)
+	return type(value) == "number" and math.abs(value - 1) > 1e-6
+end
+
+local function displayNameFromId(id)
+	local text = tostring(id or "Multiplier")
+	text = text:gsub("[_%-]+", " ")
+	text = text:gsub("(%l)(%u)", "%1 %2")
+	return text
+end
+
+local function addSource(sources, source)
+	source.Active = isActiveMultiplier(source.Multiplier)
+	table.insert(sources, source)
+end
 
 local function getUpgradeCount(player, upgradeId)
 	local upgradeCountData = player and player:FindFirstChild("UpgradeCountData")
@@ -26,26 +45,6 @@ local function getUpgradeCount(player, upgradeId)
 	end
 
 	return 0
-end
-
-local function multiplyNumericAttributes(multiplier, container)
-	for _, value in pairs(container:GetAttributes()) do
-		if typeof(value) == "number" then
-			multiplier *= value
-		end
-	end
-
-	return multiplier
-end
-
-local function multiplyNumericValues(multiplier, container)
-	for _, child in ipairs(container:GetChildren()) do
-		if child:IsA("NumberValue") or child:IsA("IntValue") then
-			multiplier *= child.Value
-		end
-	end
-
-	return multiplier
 end
 
 function ProductionFormula.GetUpgradeMultiplier(player, buildingId)
@@ -102,17 +101,84 @@ function ProductionFormula.GetSkinMultiplier(player, buildingId)
 	)
 end
 
-function ProductionFormula.GetEventMultiplier()
-	local worldEventMultipliers = ReplicatedStorage:FindFirstChild("WorldEventMultipliers")
+local function getEventExpiry(source)
+	local endsAt = source:GetAttribute("EndsAt")
+	if type(endsAt) == "number" then
+		return endsAt
+	end
+	if source.Name == SERVER_BOOST_VALUE_NAME then
+		local serverBoostEndsAt = ReplicatedStorage:GetAttribute(SERVER_BOOST_ENDS_AT_ATTRIBUTE)
+		return type(serverBoostEndsAt) == "number" and serverBoostEndsAt or nil
+	end
+	return nil
+end
+
+-- Returns every replicated world-event multiplier as its own source. The same ordered
+-- list is multiplied by GetEventMultiplier, so HUD callers cannot drift from production
+-- or accidentally count the Server Boost twice.
+function ProductionFormula.GetEventMultiplierBreakdown()
+	local sources = {}
+	local worldEventMultipliers = ReplicatedStorage:FindFirstChild(WORLD_EVENT_FOLDER_NAME)
 	if not worldEventMultipliers then
-		return 1
+		return { Sources = sources, Total = 1 }
 	end
 
-	local multiplier = 1
-	multiplier = multiplyNumericAttributes(multiplier, worldEventMultipliers)
-	multiplier = multiplyNumericValues(multiplier, worldEventMultipliers)
+	local total = 1
+	local attributes = worldEventMultipliers:GetAttributes()
+	local attributeNames = {}
+	for name, value in pairs(attributes) do
+		if typeof(value) == "number" then
+			table.insert(attributeNames, name)
+		end
+	end
+	table.sort(attributeNames)
+	for _, name in ipairs(attributeNames) do
+		local value = attributes[name]
+		total *= value
+		addSource(sources, {
+			Id = "WorldEventAttribute:" .. name,
+			Kind = "Event",
+			DisplayName = displayNameFromId(name),
+			Multiplier = value,
+			Contextual = false,
+			ServerWide = true,
+			Scope = "Entire server. Building production, manual clicks, autoclick income, and offline claim calculations.",
+		})
+	end
 
-	return math.max(0, multiplier)
+	local values = {}
+	for _, child in ipairs(worldEventMultipliers:GetChildren()) do
+		if child:IsA("NumberValue") or child:IsA("IntValue") then
+			table.insert(values, child)
+		end
+	end
+	table.sort(values, function(left, right)
+		return left.Name < right.Name
+	end)
+	for _, valueObject in ipairs(values) do
+		local value = valueObject.Value
+		total *= value
+		local isServerBoost = valueObject.Name == SERVER_BOOST_VALUE_NAME
+		addSource(sources, {
+			Id = "WorldEventValue:" .. valueObject.Name,
+			Kind = isServerBoost and "ServerBoost" or "Event",
+			DisplayName = isServerBoost and "Server Boost" or displayNameFromId(valueObject.Name),
+			Multiplier = value,
+			Contextual = false,
+			ServerWide = true,
+			ExpiresAt = getEventExpiry(valueObject),
+			Scope = "Entire server. Building production, manual clicks, autoclick income, and offline claim calculations.",
+		})
+	end
+
+	return {
+		Sources = sources,
+		Total = math.max(0, total),
+	}
+end
+
+function ProductionFormula.GetEventMultiplier()
+	return ProductionFormula.GetEventMultiplierBreakdown().Total
 end
 
 function ProductionFormula.GetFloorMultiplier(buildingId, floorContext)
@@ -123,15 +189,108 @@ function ProductionFormula.GetFloorMultiplier(buildingId, floorContext)
 	return FloorConfig.GetProductionMultiplier(FloorConfig.NormalizeId(floorId), buildingId)
 end
 
+local function getSkinSource(player, buildingId)
+	local gooMultiplier = ProductionFormula.GetGooSkinMultiplier(player)
+	local buildingSkinMultiplier = type(buildingId) == "string"
+			and ProductionFormula.GetBuildingSkinMultiplier(player, buildingId)
+		or 1
+	if buildingSkinMultiplier > gooMultiplier then
+		return {
+			Id = "BuildingSkin:" .. tostring(buildingId),
+			Kind = "Permanent",
+			DisplayName = tostring(buildingId) .. " Skin",
+			Multiplier = buildingSkinMultiplier,
+			Contextual = true,
+			ServerWide = false,
+			Scope = "Only " .. tostring(buildingId) .. " production.",
+		}
+	end
+	return {
+		Id = "GooSkin",
+		Kind = "Permanent",
+		DisplayName = "Goo Bonus",
+		Multiplier = gooMultiplier,
+		Contextual = false,
+		ServerWide = false,
+		Scope = "All your building production. Uses your strongest owned goo.",
+	}
+end
+
+-- Focused player-facing breakdown of the exact factors used for one building context.
+-- Sources with x1 remain in the result for diagnostics, but Active=false lets HUD callers
+-- hide them without having to reinterpret production math.
+function ProductionFormula.GetMultiplierBreakdown(player, buildingId, config, floorContext)
+	if not config or config.TemplateKind ~= "Building" then
+		return { Sources = {}, Total = 1 }
+	end
+
+	local sources = {}
+	local skinSource = getSkinSource(player, buildingId)
+	addSource(sources, skinSource)
+
+	local upgradeMultiplier = ProductionFormula.GetUpgradeMultiplier(player, buildingId)
+	addSource(sources, {
+		Id = "BuildingUpgrade:" .. tostring(buildingId),
+		Kind = "BuildingUpgrade",
+		DisplayName = tostring(config.DisplayName or buildingId) .. " Upgrades",
+		Multiplier = upgradeMultiplier,
+		Contextual = true,
+		ServerWide = false,
+		Scope = "Only " .. tostring(config.DisplayName or buildingId) .. " production on every floor.",
+	})
+
+	local floorId = floorContext
+	if typeof(floorContext) == "Instance" then
+		floorId = floorContext:GetAttribute(Attrs.FloorId)
+	end
+	floorId = FloorConfig.NormalizeId(floorId)
+	local floorMultiplier = ProductionFormula.GetFloorMultiplier(buildingId, floorId)
+	local floorDefinition = FloorConfig.Get(floorId)
+	addSource(sources, {
+		Id = "Floor:" .. floorId .. ":" .. tostring(buildingId),
+		Kind = "Floor",
+		DisplayName = floorDefinition and floorDefinition.DisplayName or "Floor Bonus",
+		Multiplier = floorMultiplier,
+		Contextual = true,
+		ServerWide = false,
+		Scope = "Only this " .. tostring(config.DisplayName or buildingId) .. " placed on this floor.",
+		FloorId = floorId,
+	})
+
+	local eventBreakdown = ProductionFormula.GetEventMultiplierBreakdown()
+	for _, source in ipairs(eventBreakdown.Sources) do
+		table.insert(sources, source)
+	end
+
+	return {
+		Sources = sources,
+		Total = upgradeMultiplier * skinSource.Multiplier * eventBreakdown.Total * floorMultiplier,
+	}
+end
+
+-- Sources that apply identically to every one of the player's buildings. Contextual
+-- building-upgrade and floor factors are intentionally absent until a building is selected
+-- or placed, preventing the always-on HUD from implying that they affect all production.
+function ProductionFormula.GetGlobalMultiplierBreakdown(player)
+	local sources = {}
+	local skinSource = getSkinSource(player, nil)
+	addSource(sources, skinSource)
+	local eventBreakdown = ProductionFormula.GetEventMultiplierBreakdown()
+	for _, source in ipairs(eventBreakdown.Sources) do
+		table.insert(sources, source)
+	end
+	return {
+		Sources = sources,
+		Total = skinSource.Multiplier * eventBreakdown.Total,
+	}
+end
+
 function ProductionFormula.GetMultiplier(player, buildingId, config, floorContext)
 	if not config or config.TemplateKind ~= "Building" then
 		return 1
 	end
 
-	return ProductionFormula.GetUpgradeMultiplier(player, buildingId)
-		* ProductionFormula.GetSkinMultiplier(player, buildingId)
-		* ProductionFormula.GetEventMultiplier()
-		* ProductionFormula.GetFloorMultiplier(buildingId, floorContext)
+	return ProductionFormula.GetMultiplierBreakdown(player, buildingId, config, floorContext).Total
 end
 
 function ProductionFormula.GetCps(player, buildingId, config, floorContext)

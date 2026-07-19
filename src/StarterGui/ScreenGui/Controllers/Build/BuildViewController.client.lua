@@ -39,6 +39,8 @@ local playerGui = player:WaitForChild("PlayerGui")
 
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local BuildViewCamera = require(shared:WaitForChild("BuildViewCamera"))
+local FloorConfig = require(shared:WaitForChild("FloorConfig"))
+local FloorGeometry = require(shared:WaitForChild("FloorGeometry"))
 local Attrs = require(shared:WaitForChild("Attrs"))
 local GuiNames = require(shared:WaitForChild("GuiNames"))
 local StoreShell = require(shared:WaitForChild("StoreShell"))
@@ -265,10 +267,110 @@ local function getBasePart()
 	return nil
 end
 
+-- Unlocked build surfaces (Ground + authored unlocked floors) that define the fly
+-- bounds. The PART list is cached because resolving it walks the sheet tree; it is
+-- invalidated on floor unlock/relock (UnlockedFloorCount covers purchases AND stat
+-- resets, which collapse the bounds back to the single plot) and whenever a cached part
+-- leaves the Workspace (sheet rebuild). Geometry is re-read from the live parts every
+-- frame so the bounds track a floor mid-reveal.
+local flySurfaceParts = nil
+-- Include-list RaycastParams for the terrain probe below; rebuilt with the surface cache.
+local terrainProbeParams = nil
+
+local function refreshFlySurfaces()
+	flySurfaceParts = nil
+	terrainProbeParams = nil
+end
+
+local function getFlySurfaces(base)
+	if flySurfaceParts then
+		for _, part in ipairs(flySurfaceParts) do
+			if not part:IsDescendantOf(Workspace) then
+				refreshFlySurfaces()
+				break
+			end
+		end
+	end
+	if not flySurfaceParts then
+		local unlockedCount = math.clamp(
+			math.floor(tonumber(player:GetAttribute(Attrs.UnlockedFloorCount)) or 0),
+			0,
+			FloorConfig.UnlockableFloorCount
+		)
+		local parts = {}
+		for _, surface in ipairs(FloorGeometry.GetUnlockedSurfaces(getPlayerSheet(), unlockedCount)) do
+			if surface.boundsPart then
+				table.insert(parts, surface.boundsPart)
+			end
+		end
+		flySurfaceParts = parts
+	end
+	local surfaces = {}
+	for _, part in ipairs(flySurfaceParts) do
+		table.insert(surfaces, { cframe = part.CFrame, size = part.Size })
+	end
+	if #surfaces == 0 then
+		-- No resolvable sheet surfaces (e.g. mid-join): fall back to the caller's Base so
+		-- the camera always has at least the one-plot bounds.
+		table.insert(surfaces, { cframe = base.CFrame, size = base.Size })
+	end
+	return surfaces
+end
+
+player:GetAttributeChangedSignal(Attrs.UnlockedFloorCount):Connect(refreshFlySurfaces)
+
+-- Terrain probe for the camera's bottom lock: the topmost MAP surface directly beneath
+-- the camera. Only static map geometry counts -- the plot surfaces, the terraces/crater
+-- (including locked gates), and the world ground; placed buildings, the Cookie, and
+-- props are deliberately excluded so the camera can still glide between them. Probing
+-- real geometry makes the camera "collide" with the world: flying into a terrace wall
+-- trails it up the wall face onto the new floor level (the bounds spring does the
+-- easing) instead of popping at an invisible footprint edge.
+local TERRAIN_PROBE_RISE = 600 -- cast origin this far above the plot top (above any terrace)
+local TERRAIN_PROBE_DEPTH = 800 -- ray length; reaches well below the plot surface
+
+local function getTerrainProbeParams()
+	if terrainProbeParams then
+		return terrainProbeParams
+	end
+	local include = {}
+	local sheet = getPlayerSheet()
+	if sheet then
+		for _, name in ipairs({ "Base", "Edge", "Center", "Floors" }) do
+			local instance = sheet:FindFirstChild(name)
+			if instance then
+				table.insert(include, instance)
+			end
+		end
+	end
+	for _, name in ipairs({ "CraterTerraces", "Baseplate" }) do
+		local instance = Workspace:FindFirstChild(name)
+		if instance then
+			table.insert(include, instance)
+		end
+	end
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Include
+	params.FilterDescendantsInstances = include
+	terrainProbeParams = params
+	return params
+end
+
+-- World Y of the map surface under `position`, or nil when nothing is there (softBounds
+-- then falls back to the Ground top).
+local function getSupportTopY(position, base)
+	local baseTopY = base.Position.Y + base.Size.Y / 2
+	local origin = Vector3.new(position.X, baseTopY + TERRAIN_PROBE_RISE, position.Z)
+	local result = Workspace:Raycast(origin, Vector3.new(0, -TERRAIN_PROBE_DEPTH, 0), getTerrainProbeParams())
+	return result and result.Position.Y or nil
+end
+
+-- Fly-bounds and movement values are final config in BuildViewCamera (baked from the
+-- 2026-07-18 live-tuning pass); softBounds falls back to them when options omit overrides.
+
 -- Movement tuning (studs, seconds). Horizontal speed scales with height so flying feels
--- consistent whether you're zoomed onto one cell or surveying the whole plot.
-local KEY_MOVE_SPEED = 60
-local VERT_SPEED = 48
+-- consistent whether you're zoomed onto one cell or surveying the whole plot. Base
+-- speeds live in BuildViewCamera (MOVE_SPEED/VERT_SPEED).
 local WHEEL_DOLLY_STEP = 26
 local WHEEL_ZOOM_TAU = 0.22
 local EDGE_PAN_ZONE_PX = 72
@@ -290,8 +392,11 @@ local TOUCH_VELOCITY_WINDOW = 0.15
 -- rejecting the slow drift of a finger lifting off.
 local MIN_FLING_PX_PER_SEC = 0
 
--- View rotation (right-drag on PC, two-finger twist on touch). yaw spins around the plot;
--- viewPitch tilts the angle, clamped to the camera's pitch range.
+-- View rotation. PC right-drag is Studio-style mouselook: it spins the VIEW in place
+-- (yaw/pitch about the camera position; WASD/QE then fly relative to the new heading).
+-- Touch two-finger twist still orbits the focus point -- rotating around what you're
+-- looking at is the natural map-app feel for that gesture. viewPitch is clamped to the
+-- camera's pitch range either way.
 local MIN_PITCH = math.rad(BuildViewCamera.MIN_PITCH_DEGREES)
 local MAX_PITCH = math.rad(BuildViewCamera.MAX_PITCH_DEGREES)
 local YAW_DRAG_SENSITIVITY = 0.005 -- radians per pixel of horizontal right-drag
@@ -345,6 +450,26 @@ local function speedFactor(base)
 	return math.clamp((cameraPos.Y - base.CFrame.Position.Y) / 60, 0.65, 8)
 end
 
+-- Studio-style acceleration: continuously held movement ramps linearly from 1x up to
+-- AccelMax over AccelRamp seconds and resets the moment input stops, so a tap nudges
+-- precisely while a long hold crosses the plot fast. The ramp clock is owned here and
+-- cleared by enter/exit and by grab-style panning (which bypasses key movement).
+local moveRampStart = nil
+
+local function moveAccelFactor(hasInput)
+	if not hasInput then
+		moveRampStart = nil
+		return 1
+	end
+	if not moveRampStart then
+		moveRampStart = os.clock()
+	end
+	local ramp = math.max(BuildViewCamera.ACCEL_RAMP_SECONDS, 0.01)
+	local maxMultiplier = BuildViewCamera.ACCEL_MAX_MULTIPLIER
+	local alpha = math.clamp((os.clock() - moveRampStart) / ramp, 0, 1)
+	return 1 + (maxMultiplier - 1) * alpha
+end
+
 local function isPlacementActive()
 	return screenGui:GetAttribute(Attrs.PlacementActive) == true
 end
@@ -373,9 +498,12 @@ local function computeMoveTarget(base)
 		vert -= 1
 	end
 	vert = math.clamp(vert, -1, 1)
-	local factor = speedFactor(base)
-	local horiz = (dir.Magnitude > 1e-3) and (dir.Unit * KEY_MOVE_SPEED * factor) or Vector3.zero
-	return horiz + Vector3.new(0, vert * VERT_SPEED * factor, 0)
+	local hasInput = dir.Magnitude > 1e-3 or vert ~= 0
+	local factor = speedFactor(base) * moveAccelFactor(hasInput)
+	local moveSpeed = BuildViewCamera.MOVE_SPEED
+	local vertSpeed = BuildViewCamera.VERT_SPEED
+	local horiz = (dir.Magnitude > 1e-3) and (dir.Unit * moveSpeed * factor) or Vector3.zero
+	return horiz + Vector3.new(0, vert * vertSpeed * factor, 0)
 end
 
 local function computePlacementEdgePanTarget(base)
@@ -445,8 +573,10 @@ local function stepCamera(dt)
 	end
 	if touchPanActive or middleMouseDragging then
 		-- Grab-style panning (touch grab / middle-mouse) moves cameraPos directly in the
-		-- input handler with no momentum, so hold velocity at zero here.
+		-- input handler with no momentum, so hold velocity at zero here (and restart the
+		-- acceleration ramp -- a grab interrupts held-key movement).
 		velocity = Vector3.zero
+		moveRampStart = nil
 	else
 		local target = computeMoveTarget(base) + computePlacementEdgePanTarget(base)
 		local tau = (target.Magnitude > 1e-3) and ACCEL_TAU or DECEL_TAU
@@ -467,7 +597,10 @@ local function stepCamera(dt)
 		cameraPos += touchThrowVelocity * dt
 		touchThrowVelocity *= math.exp(-dt / TOUCH_THROW_TAU)
 	end
-	local bounded = BuildViewCamera.softBounds(cameraPos, base.CFrame, base.Size, isMobileDevice(), yaw, viewPitch)
+	local bounded = BuildViewCamera.softBounds(cameraPos, getFlySurfaces(base), {
+		isMobile = isMobileDevice(),
+		supportTopY = getSupportTopY(cameraPos, base),
+	})
 	cameraPos = cameraPos:Lerp(bounded, 1 - math.exp(-dt / BOUNDS_TAU))
 	cam.CFrame = BuildViewCamera.toCFrame(cameraPos, base.CFrame, yaw, viewPitch)
 end
@@ -545,6 +678,9 @@ local function enterBuildView()
 	buildViewActive = true
 	transitionToken += 1
 	local token = transitionToken
+	-- The sheet may have been reassigned/rebuilt while out of Build View; re-resolve the
+	-- fly surfaces so the bounds never pull toward another player's plot.
+	refreshFlySurfaces()
 	-- Entering counts as "answered": hide the nudge and suppress it this session.
 	buildNudge.onEnterBuildView()
 	-- Pin the avatar so movement input drives the camera, not the character.
@@ -558,6 +694,7 @@ local function enterBuildView()
 	multiTouchLatched = false
 	velocity = Vector3.zero
 	wheelDollyVelocity = Vector3.zero
+	moveRampStart = nil
 	setMiddleMouseDragging(false)
 	middleMouseGrabPoint = nil
 	table.clear(touchesStartedOnUi)
@@ -583,14 +720,10 @@ local function enterBuildView()
 		yaw = lastBuildViewPose.yaw or 0
 		viewPitch = math.clamp(lastBuildViewPose.pitch or math.rad(BuildViewCamera.PITCH_DEGREES),
 			MIN_PITCH, MAX_PITCH)
-		cameraPos = BuildViewCamera.softBounds(
-			lastBuildViewPose.position,
-			base.CFrame,
-			base.Size,
-			isMobileDevice(),
-			yaw,
-			viewPitch
-		)
+		cameraPos = BuildViewCamera.softBounds(lastBuildViewPose.position, getFlySurfaces(base), {
+			isMobile = isMobileDevice(),
+			supportTopY = getSupportTopY(lastBuildViewPose.position, base),
+		})
 	else
 		yaw = 0
 		viewPitch = math.rad(BuildViewCamera.PITCH_DEGREES)
@@ -603,6 +736,12 @@ local function enterBuildView()
 			yaw,
 			viewPitch
 		)
+		-- The framing pose must land inside the fly bounds: with a low tuned ceiling the
+		-- unclamped pose would sit above it and visibly sink right after the fly-in tween.
+		cameraPos = BuildViewCamera.softBounds(cameraPos, getFlySurfaces(base), {
+			isMobile = isMobileDevice(),
+			supportTopY = getSupportTopY(cameraPos, base),
+		})
 	end
 	cameraReady = false
 	camera.CameraType = Enum.CameraType.Scriptable
@@ -1213,11 +1352,17 @@ UserInputService.InputChanged:Connect(function(input, gameProcessed)
 			middleMouseGrabPoint = cursorPoint
 		end
 	elseif rightDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-		local base = getBasePart()
-		if base then
-			-- Drag left looks left, drag right looks right; drag up tilts toward top-down.
-			applyOrbit(base, -input.Delta.X * YAW_DRAG_SENSITIVITY, input.Delta.Y * PITCH_DRAG_SENSITIVITY)
-		end
+		-- Studio-style mouselook: rotate the view IN PLACE (no orbit -- orbiting
+		-- repositioned the camera body, which read as the whole camera swinging through
+		-- space). Drag left looks left, drag down looks down; the per-frame loop rebuilds
+		-- the CFrame from yaw/viewPitch, and the focus-based bounds gently slide the
+		-- camera only if the new heading looks away from every unlocked surface.
+		yaw -= input.Delta.X * YAW_DRAG_SENSITIVITY
+		viewPitch = math.clamp(
+			viewPitch + input.Delta.Y * PITCH_DRAG_SENSITIVITY,
+			MIN_PITCH,
+			MAX_PITCH
+		)
 	end
 end)
 
