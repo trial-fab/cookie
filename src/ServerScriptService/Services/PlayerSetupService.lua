@@ -17,6 +17,7 @@ local SettingsService = require(ServerScriptService.Services.SettingsService)
 local StoryService = require(ServerScriptService.Services.StoryService)
 local Net = require(ReplicatedStorage.Shared.Net)
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
+local StoryConfig = require(ReplicatedStorage.Shared.StoryConfig)
 
 local PlayerSetupService = {}
 local STEAL_PROTECTION_SECONDS = 300
@@ -132,6 +133,9 @@ local function setupPlayer(player)
 	print("Setting up player:", player.Name)
 
 	local data = PlayerDataService.Load(player)
+	if not data or player.Parent ~= Players then
+		return
+	end
 	local run = data.Run or data
 
 	createPlayerValues(player, data)
@@ -183,11 +187,13 @@ local function setupRemotes()
 		player:SetAttribute(Attrs.BuildViewNudgeDisabled, true)
 	end)
 
-	-- Client fires this once the first-time meteor cutscene finishes. One-way and idempotent
-	-- (only ever sets true), mirroring DisableBuildViewNudge: a stray client can never un-see
-	-- the intro, and re-sends are harmless. UpdateFromPlayerValues persists the attribute.
+	-- Legacy fallback for a non-story intro completion. The active Chapter 1 path advances
+	-- through StoryAction("RubbleCleared") instead. Never allow this fallback to construct
+	-- IntroSeen=true while the persisted story step is still Meteor.
 	Net.on(Net.Names.MarkIntroSeen, function(player)
-		player:SetAttribute(Attrs.IntroSeen, true)
+		if player:GetAttribute(Attrs.StoryStep) ~= StoryConfig.STEPS.Meteor then
+			player:SetAttribute(Attrs.IntroSeen, true)
+		end
 	end)
 end
 

@@ -5,31 +5,26 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
-local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
+local ProfileStore = require(script.Parent.Parent.Vendor.ProfileStore)
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
 local FloorConfig = require(ReplicatedStorage.Shared.FloorConfig)
 local FloorGeometry = require(ReplicatedStorage.Shared.FloorGeometry)
 local PlayerMetricConfig = require(ReplicatedStorage.Shared.PlayerMetricConfig)
 local PlayerMetricsService = require(script.Parent.PlayerMetricsService)
 local SettingsConfig = require(ReplicatedStorage.Shared.SettingsConfig)
+local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
 
 local PlayerDataService = {}
 
-local DATASTORE_NAME = RunService:IsStudio() and "ClickGamePlayerData_v1_Studio" or "ClickGamePlayerData_v1"
+local PRODUCTION_STORE_NAME = "ClickGamePlayerData_v2"
+local STUDIO_STORE_NAME = "ClickGamePlayerData_v2_Studio"
+local KEY_PREFIX = "player_"
 local AUTOSAVE_SECONDS = 60
-local MIN_SAVE_INTERVAL_SECONDS = 20
-local MAX_RETRIES = 3
-local DEFAULT_DIMENSION = FloorConfig.DimensionId
-local SERVER_SESSION_ID = HttpService:GenerateGUID(false)
+local LOAD_TIMEOUT_SECONDS = 120
 local FORCE_SAVE_WAIT_SECONDS = 10
-
-local store = DataStoreService:GetDataStore(DATASTORE_NAME)
-local cacheByPlayer = {}
-local loadedByPlayer = {}
-local savingByPlayer = {}
-local lastSaveAtByPlayer = {}
-local lastSaveResultByPlayer = {}
-local sessionClaimTimeByPlayer = {}
+local DEFAULT_DIMENSION = FloorConfig.DimensionId
+local CURRENT_SCHEMA_VERSION = 1
+local SAVE_GENERATION_METADATA_KEY = "ClickGameSaveGeneration"
 
 local DEFAULT_RUN_DATA = {
 	Cookies = 0,
@@ -63,15 +58,10 @@ local DEFAULT_PERSISTENT_DATA = {
 	-- Once a player ticks "don't show again" on the Build View nudge we never prompt
 	-- them again, across sessions. Defaults false so genuinely new players get nudged.
 	BuildViewNudgeDisabled = false,
-	-- First-time meteor cutscene gate. Defaults false so a brand-new account plays it once;
-	-- Load() force-sets it true for any pre-existing save that predates this field, so only
-	-- genuinely new accounts ever see the intro. IntroController flips it via MarkIntroSeen.
 	IntroSeen = false,
 	StoryChapter = "GooArrival",
 	StoryStep = "Meteor",
 	StoryHealingClicks = 0,
-	-- Whether the alien's dough tool (the "Mixer", formerly "Crumbforge") is unlocked. Old saves
-	-- store this under the legacy "CrumbforgeUnlocked" key; Load() migrates it (see rawMixerUnlocked).
 	MixerUnlocked = false,
 	CompletedStoryChapters = {},
 }
@@ -80,12 +70,21 @@ for _, attribute in ipairs(PlayerMetricConfig.PersistentAttributes) do
 	DEFAULT_PERSISTENT_DATA[attribute] = 0
 end
 
-local DEFAULT_DATA = {
+local PROFILE_TEMPLATE = {
+	SchemaVersion = CURRENT_SCHEMA_VERSION,
 	Run = DEFAULT_RUN_DATA,
 	Persistent = DEFAULT_PERSISTENT_DATA,
 }
 
-local migrateUpgradeCounts
+-- MIGRATIONS[n] upgrades a schema-n profile to schema n+1. Additive fields need no
+-- migration because Reconcile fills them after versioned migrations have succeeded.
+local MIGRATIONS = {}
+
+local playerStore
+local profilesByPlayer = {}
+local cacheByPlayer = {}
+local expectedSessionEndByPlayer = {}
+local confirmedSaveGenerationByProfile = {}
 
 local function copyDictionary(source)
 	local result = {}
@@ -99,27 +98,6 @@ local function copyDictionary(source)
 	return result
 end
 
-local function mergeKnownFields(defaults, source)
-	local merged = copyDictionary(defaults)
-
-	if type(source) ~= "table" then
-		return merged
-	end
-
-	for key, value in pairs(source) do
-		if type(defaults[key]) == "table" and type(value) == "table" then
-			merged[key] = copyDictionary(value)
-		elseif defaults[key] ~= nil then
-			merged[key] = value
-		end
-	end
-
-	return merged
-end
-
--- Placement schema v2 is { dimension -> floor -> building -> placement list }.
--- Pre-release saves are hard reset by scope lock, so v1 is deliberately discarded
--- instead of carrying a one-off compatibility branch into launch code.
 local function normalizePlacements(placements, schemaVersion)
 	local normalized = copyDictionary(DEFAULT_RUN_DATA.Placements)
 	if tonumber(schemaVersion) ~= FloorConfig.PlacementSchemaVersion or type(placements) ~= "table" then
@@ -143,167 +121,80 @@ local function normalizePlacements(placements, schemaVersion)
 	return normalized
 end
 
-local function migrateFlatData(data)
-	local migrated = copyDictionary(DEFAULT_DATA)
-	if type(data) ~= "table" then
-		return migrated
-	end
-
-	migrated.Run = mergeKnownFields(DEFAULT_RUN_DATA, {
-		Cookies = data.Cookies,
-		CanBeStolenFrom = data.CanBeStolenFrom,
-		ShieldTime = data.ShieldTime,
-		UpgradeCounts = data.UpgradeCounts,
-	})
-	migrated.Run.PlacementSchemaVersion = FloorConfig.PlacementSchemaVersion
-	migrated.Run.Placements = copyDictionary(DEFAULT_RUN_DATA.Placements)
-
-	migrated.Persistent = mergeKnownFields(DEFAULT_PERSISTENT_DATA, {
-		RealPlayTime = data.RealPlayTime,
-		Xp = data.Xp,
-		GoldenCookies = data.GoldenCookies,
-		OwnedSkins = data.OwnedSkins,
-		EquippedSkins = data.EquippedSkins,
-		OwnedGooSkins = data.OwnedGooSkins,
-		SelectedGooSkin = data.SelectedGooSkin,
-		LoginStreak = data.LoginStreak,
-		LastLoginDay = data.LastLoginDay,
-		Achievements = data.Achievements,
-		LastSeenTimestamp = data.LastSeenTimestamp or data.lastSeenTimestamp,
-		UnlockedBuildings = data.UnlockedBuildings,
-		Settings = data.Settings,
-	})
-
-	return migrated
-end
-
-local function mergeDefaults(data)
-	if type(data) ~= "table" then
-		return copyDictionary(DEFAULT_DATA)
-	end
-
-	if type(data.Run) ~= "table" and type(data.Persistent) ~= "table" then
-		return migrateFlatData(data)
-	end
-
-	local merged = copyDictionary(DEFAULT_DATA)
-	merged.Run = mergeKnownFields(DEFAULT_RUN_DATA, data.Run)
-	merged.Run.PlacementSchemaVersion = FloorConfig.PlacementSchemaVersion
-	merged.Run.Placements = normalizePlacements(
-		data.Run and data.Run.Placements,
-		data.Run and data.Run.PlacementSchemaVersion
-	)
-	merged.Persistent = mergeKnownFields(DEFAULT_PERSISTENT_DATA, data.Persistent)
-
-	return merged
-end
-
-local function getKey(player)
-	return "player_" .. player.UserId
-end
-
-local function getSaveTimestamp()
-	return DateTime.now().UnixTimestampMillis
-end
-
-local function createSaveBlob(data, saveTime)
-	local blob = mergeDefaults(data)
-	migrateUpgradeCounts(blob)
-	blob.sessionId = SERVER_SESSION_ID
-	blob.lastSaveTime = saveTime
-	return blob
-end
-
-local function hasNewerLiveSession(currentValue, sessionClaimTime)
-	if type(currentValue) ~= "table" then
-		return false
-	end
-
-	local currentSessionId = currentValue.sessionId
-	local currentLastSaveTime = tonumber(currentValue.lastSaveTime)
-	if type(currentSessionId) ~= "string" or not currentLastSaveTime then
-		return false
-	end
-
-	return currentSessionId ~= SERVER_SESSION_ID and currentLastSaveTime >= sessionClaimTime
-end
-
--- §4a consolidation (2026-06-11): the per-level building upgrades ("Granny
--- Upgrade 1/2") became one leveled entry ("Granny Upgrades") whose count = levels
--- owned. Old saves carry the legacy ids; fold each owned legacy level into the new
--- entry's count so equipped multipliers survive, then drop the legacy keys.
-local function buildLegacyUpgradeMap()
-	local map = {}
-	for upgradeId, config in pairs(UpgradeConfig) do
-		if config.TemplateKind == "BuildingUpgrade" and type(config.TargetBuilding) == "string" and config.Levels then
-			for level = 1, #config.Levels do
-				map[config.TargetBuilding .. " Upgrade " .. level] = upgradeId
-			end
-		end
-	end
-	return map
-end
-
-local function migrateLegacyLeveledUtilityCounts(counts)
-	local legacyLevels = {
-		["Offline Earnings I"] = { UpgradeId = "Offline Earnings", Level = 1 },
-		["Offline Earnings II"] = { UpgradeId = "Offline Earnings", Level = 2 },
-	}
-
-	for legacyId, target in pairs(legacyLevels) do
-		local owned = counts[legacyId]
-		if owned ~= nil then
-			if (tonumber(owned) or 0) > 0 then
-				counts[target.UpgradeId] = math.max(tonumber(counts[target.UpgradeId]) or 0, target.Level)
-			end
-			counts[legacyId] = nil
-		end
-	end
-end
-
-function migrateUpgradeCounts(data)
+local function validateUpgradeCounts(data)
 	local run = type(data) == "table" and data.Run
-	if type(run) ~= "table" or type(run.UpgradeCounts) ~= "table" then
+	if type(run) ~= "table" then
+		return
+	end
+	if type(run.UpgradeCounts) ~= "table" then
+		run.UpgradeCounts = {}
 		return
 	end
 
-	local counts = run.UpgradeCounts
-	migrateLegacyLeveledUtilityCounts(counts)
-
-	for legacyId, newId in pairs(buildLegacyUpgradeMap()) do
-		local owned = counts[legacyId]
-		if owned ~= nil then
-			if (tonumber(owned) or 0) > 0 then
-				counts[newId] = (tonumber(counts[newId]) or 0) + 1
-			end
-			counts[legacyId] = nil
-		end
-	end
-
-	-- Never let folded counts exceed available level counts.
 	for upgradeId, config in pairs(UpgradeConfig) do
-		if config.Levels and counts[upgradeId] ~= nil then
-			local maxLevels = config.Levels and #config.Levels or 0
-			counts[upgradeId] = math.clamp(tonumber(counts[upgradeId]) or 0, 0, maxLevels)
+		if config.Levels and run.UpgradeCounts[upgradeId] ~= nil then
+			run.UpgradeCounts[upgradeId] = math.clamp(
+				tonumber(run.UpgradeCounts[upgradeId]) or 0,
+				0,
+				#config.Levels
+			)
 		end
 	end
 end
 
-local function withRetries(actionName, callback)
-	local lastError
-
-	for attempt = 1, MAX_RETRIES do
-		local ok, result = pcall(callback)
-		if ok then
-			return true, result
-		end
-
-		lastError = result
-		warn(actionName .. " failed, attempt " .. attempt .. ": " .. tostring(result))
-		task.wait(attempt)
+local function migrate(data)
+	local version = tonumber(data.SchemaVersion) or 1
+	if version % 1 ~= 0 or version < 1 then
+		return false, "profile has an invalid schema version"
+	end
+	if version > CURRENT_SCHEMA_VERSION then
+		return false,
+			("profile is schema v%d but this server only knows v%d"):format(version, CURRENT_SCHEMA_VERSION)
 	end
 
-	return false, lastError
+	while version < CURRENT_SCHEMA_VERSION do
+		local step = MIGRATIONS[version]
+		if not step then
+			return false, ("no migration from schema v%d"):format(version)
+		end
+		local ok, problem = pcall(step, data)
+		if not ok then
+			return false, ("migration from schema v%d failed: %s"):format(version, tostring(problem))
+		end
+		version += 1
+		data.SchemaVersion = version
+	end
+	data.SchemaVersion = version
+
+	return true
+end
+
+local function getKey(player)
+	return KEY_PREFIX .. player.UserId
+end
+
+local function canAccessDataStores()
+	if not RunService:IsStudio() then
+		return true
+	end
+
+	return pcall(function()
+		DataStoreService:GetDataStore("__ClickGameProfileStoreProbe"):GetAsync("__probe")
+	end)
+end
+
+local function configureStore()
+	if playerStore then
+		return
+	end
+
+	local storeName = RunService:IsStudio() and STUDIO_STORE_NAME or PRODUCTION_STORE_NAME
+	local store = ProfileStore.New(storeName, PROFILE_TEMPLATE)
+	if RunService:IsStudio() and not canAccessDataStores() then
+		warn("PlayerDataService: Studio without DataStore access; using ProfileStore.Mock (nothing persists).")
+		store = store.Mock
+	end
+	playerStore = store
 end
 
 local function getPlayerSheet(player)
@@ -364,150 +255,30 @@ local function decodeJsonTable(value)
 	local ok, decoded = pcall(function()
 		return HttpService:JSONDecode(value)
 	end)
-
-	if ok and type(decoded) == "table" then
-		return decoded
-	end
-
-	return nil
+	return ok and type(decoded) == "table" and decoded or nil
 end
 
--- True when the raw save already carried an IntroSeen flag (any session since the field
--- shipped). Reads the un-merged currentValue, where a missing field is genuinely absent --
--- after mergeDefaults it would always read back as the `false` default.
-local function rawHasIntroSeen(currentValue)
-	return type(currentValue) == "table"
-		and type(currentValue.Persistent) == "table"
-		and type(currentValue.Persistent.IntroSeen) == "boolean"
+local function projectionsAreReady(player)
+	local leaderstats = player:FindFirstChild("leaderstats")
+	return leaderstats ~= nil
+		and leaderstats:FindFirstChild("Cookies") ~= nil
+		and player:FindFirstChild("RealPlayTime") ~= nil
+		and player:FindFirstChild("CanBeStolenFrom") ~= nil
+		and player:FindFirstChild("ShieldTime") ~= nil
+		and player:FindFirstChild("UpgradeCountData") ~= nil
 end
 
-local function rawHasStoryProgress(currentValue)
-	local persistent = type(currentValue) == "table" and currentValue.Persistent
-	return type(persistent) == "table"
-		and type(persistent.StoryStep) == "string"
-		-- Accept either the new MixerUnlocked field or the legacy CrumbforgeUnlocked one, so
-		-- existing saves keep their story progress through the rename.
-		and (type(persistent.MixerUnlocked) == "boolean" or type(persistent.CrumbforgeUnlocked) == "boolean")
-end
-
--- The Mixer unlock as written by an existing save, preferring the current key but falling back to
--- the legacy "Crumbforge" name so already-unlocked players keep the tool through the rename.
--- Reads the raw pre-merge value (mergeKnownFields would drop the unknown legacy key).
-local function rawMixerUnlocked(currentValue)
-	local persistent = type(currentValue) == "table" and currentValue.Persistent
-	if type(persistent) ~= "table" then
-		return nil
-	end
-	if type(persistent.MixerUnlocked) == "boolean" then
-		return persistent.MixerUnlocked
-	end
-	if type(persistent.CrumbforgeUnlocked) == "boolean" then
-		return persistent.CrumbforgeUnlocked
-	end
-	return nil
-end
-
-local function rawIntroWasSeen(currentValue)
-	local persistent = type(currentValue) == "table" and currentValue.Persistent
-	return type(persistent) == "table" and persistent.IntroSeen == true
-end
-
-function PlayerDataService.Load(player)
-	local claimTime = getSaveTimestamp()
-	-- Captured inside the UpdateAsync transform (the only place we see the pre-merge value):
-	-- a brand-new account has currentValue == nil; a pre-IntroSeen save has no IntroSeen field.
-	local isBrandNewAccount = false
-	local hadIntroSeen = false
-	local hadStoryProgress = false
-	local introWasSeen = false
-	local legacyMixerUnlocked = nil
-	local ok, result = withRetries("Load data for " .. player.Name, function()
-		return store:UpdateAsync(getKey(player), function(currentValue)
-			isBrandNewAccount = currentValue == nil
-			hadIntroSeen = rawHasIntroSeen(currentValue)
-			hadStoryProgress = rawHasStoryProgress(currentValue)
-			introWasSeen = rawIntroWasSeen(currentValue)
-			legacyMixerUnlocked = rawMixerUnlocked(currentValue)
-			return createSaveBlob(currentValue, claimTime)
-		end)
-	end)
-
-	local data
-	if ok then
-		data = mergeDefaults(result)
-		sessionClaimTimeByPlayer[player] = claimTime
-	else
-		-- Load failed after retries: the session runs on defaults, but saving stays
-		-- DISABLED (loadedByPlayer is never set) so an autosave can't overwrite the
-		-- player's real data with an empty blob during a DataStore outage. Outside
-		-- Studio the player is kicked so they don't sink time into unsaveable progress.
-		data = mergeDefaults(nil)
-		sessionClaimTimeByPlayer[player] = claimTime
-		warn("Load failed for " .. player.Name .. "; saving disabled for this session")
-		if not RunService:IsStudio() then
-			task.defer(function()
-				player:Kick("Your data failed to load. Please rejoin in a minute — no progress has been lost.")
-			end)
-		end
-	end
-
-	-- Carry the Mixer unlock forward from the legacy "CrumbforgeUnlocked" save key (mergeDefaults
-	-- drops unknown keys, so the raw value captured above is the only place it survives). The
-	-- legacy-complete block below may still force it true for pre-story saves.
-	if legacyMixerUnlocked ~= nil then
-		data.Persistent.MixerUnlocked = legacyMixerUnlocked
-	end
-
-	-- Only genuinely new accounts should see the meteor intro. An existing save that predates
-	-- the IntroSeen field (legacy pre-release players) is treated as already-seen so it never
-	-- replays for them. A failed load (ok == false) is also treated as already-seen -- never
-	-- play the cutscene over data we couldn't read.
-	if not isBrandNewAccount and not hadIntroSeen then
-		data.Persistent.IntroSeen = true
-	end
-
-	-- Compatibility for saves created before Chapter 1 had granular story fields. Those
-	-- players may already have IntroSeen=true, but mergeDefaults would otherwise inject the
-	-- new "Meteor" default and unexpectedly force them into the cinematic with a Scriptable
-	-- camera. Existing saves without story progress are treated as complete; testers can use
-	-- the Studio "Replay Chapter 1" button when they intentionally want the full sequence.
-	-- Also repair the short-lived bad state produced by the first story build:
-	-- IntroSeen=true + StoryStep="Meteor" is impossible in the intended flow.
-	local hasAccidentalMeteorState = data.Persistent.IntroSeen == true and data.Persistent.StoryStep == "Meteor"
-	if (not isBrandNewAccount and not hadStoryProgress) or introWasSeen and hasAccidentalMeteorState or not ok then
-		data.Persistent.IntroSeen = true
-		data.Persistent.StoryChapter = "GooArrival"
-		data.Persistent.StoryStep = "Complete"
-		data.Persistent.StoryHealingClicks = 5
-		data.Persistent.MixerUnlocked = true
-	end
-
-	migrateUpgradeCounts(data)
-
-	cacheByPlayer[player] = data
-	-- Only a successful load arms saving; a defaulted session must never write.
-	loadedByPlayer[player] = ok or nil
-	-- If the player left while the load was yielding, PlayerRemoving already ran
-	-- Forget(); don't resurrect their cache entry (player-keyed tables would leak).
-	if player.Parent == nil then
-		PlayerDataService.Forget(player)
+-- This function is deliberately yield-free. ProfileStore dispatches OnSave listeners with
+-- task.spawn and immediately continues its save path, so yielding here would make the final
+-- snapshot race the DataStore transform. Explicit saves also call this before Profile:Save().
+local function snapshotPlayer(player, data)
+	if not data or not projectionsAreReady(player) then
 		return data
 	end
-	return data
-end
 
-function PlayerDataService.Get(player)
-	return cacheByPlayer[player]
-end
-
-function PlayerDataService.UpdateFromPlayerValues(player)
-	local data = cacheByPlayer[player]
-	if not data then
-		return nil
-	end
-
-	data.Run = data.Run or copyDictionary(DEFAULT_RUN_DATA)
-	data.Persistent = data.Persistent or copyDictionary(DEFAULT_PERSISTENT_DATA)
+	data.Run = type(data.Run) == "table" and data.Run or copyDictionary(DEFAULT_RUN_DATA)
+	data.Persistent = type(data.Persistent) == "table" and data.Persistent
+		or copyDictionary(DEFAULT_PERSISTENT_DATA)
 
 	local run = data.Run
 	local persistent = data.Persistent
@@ -521,7 +292,6 @@ function PlayerDataService.UpdateFromPlayerValues(player)
 	if cookies then
 		run.Cookies = cookies.Value
 	end
-
 	if realPlayTime then
 		persistent.RealPlayTime = realPlayTime.Value
 	end
@@ -530,26 +300,26 @@ function PlayerDataService.UpdateFromPlayerValues(player)
 	if typeof(xp) == "number" then
 		persistent.Xp = math.max(0, math.floor(xp))
 	end
-
 	if canBeStolenFrom then
 		run.CanBeStolenFrom = canBeStolenFrom.Value
 	end
-
 	if shieldTime then
 		run.ShieldTime = shieldTime.Value
 	end
 
-	run.UpgradeCounts = {}
 	if upgradeCountData then
+		run.UpgradeCounts = {}
 		for _, value in ipairs(upgradeCountData:GetChildren()) do
 			if value:IsA("IntValue") then
 				run.UpgradeCounts[value.Name] = value.Value
 			end
 		end
 	end
+
 	local buildingPlacements = serializeBuildingPlacements(player)
 	if buildingPlacements then
-		run.Placements = run.Placements or copyDictionary(DEFAULT_RUN_DATA.Placements)
+		run.Placements = type(run.Placements) == "table" and run.Placements
+			or copyDictionary(DEFAULT_RUN_DATA.Placements)
 		run.PlacementSchemaVersion = FloorConfig.PlacementSchemaVersion
 		run.Placements[DEFAULT_DIMENSION] = buildingPlacements
 	end
@@ -558,47 +328,38 @@ function PlayerDataService.UpdateFromPlayerValues(player)
 	if typeof(goldenCookies) == "number" then
 		persistent.GoldenCookies = goldenCookies
 	end
-
 	local loginStreak = player:GetAttribute(Attrs.LoginStreak)
 	if typeof(loginStreak) == "number" then
 		persistent.LoginStreak = loginStreak
 	end
-
 	local lastLoginDay = player:GetAttribute(Attrs.LastLoginDay)
 	if typeof(lastLoginDay) == "number" then
 		persistent.LastLoginDay = lastLoginDay
 	end
-
 	local lastSeenTimestamp = player:GetAttribute(Attrs.LastSeenTimestamp)
 	if typeof(lastSeenTimestamp) == "number" then
 		persistent.LastSeenTimestamp = lastSeenTimestamp
 	end
-
 	local buildViewNudgeDisabled = player:GetAttribute(Attrs.BuildViewNudgeDisabled)
 	if typeof(buildViewNudgeDisabled) == "boolean" then
 		persistent.BuildViewNudgeDisabled = buildViewNudgeDisabled
 	end
-
 	local introSeen = player:GetAttribute(Attrs.IntroSeen)
 	if typeof(introSeen) == "boolean" then
 		persistent.IntroSeen = introSeen
 	end
-
 	local storyChapter = player:GetAttribute(Attrs.StoryChapter)
 	if typeof(storyChapter) == "string" then
 		persistent.StoryChapter = storyChapter
 	end
-
 	local storyStep = player:GetAttribute(Attrs.StoryStep)
 	if typeof(storyStep) == "string" then
 		persistent.StoryStep = storyStep
 	end
-
 	local storyHealingClicks = player:GetAttribute(Attrs.StoryHealingClicks)
 	if typeof(storyHealingClicks) == "number" then
 		persistent.StoryHealingClicks = math.max(0, math.floor(storyHealingClicks))
 	end
-
 	local mixerUnlocked = player:GetAttribute(Attrs.MixerUnlocked)
 	if typeof(mixerUnlocked) == "boolean" then
 		persistent.MixerUnlocked = mixerUnlocked
@@ -606,7 +367,8 @@ function PlayerDataService.UpdateFromPlayerValues(player)
 
 	persistent.OwnedSkins = decodeJsonTable(player:GetAttribute(Attrs.OwnedSkinsJson)) or persistent.OwnedSkins
 	persistent.EquippedSkins = decodeJsonTable(player:GetAttribute(Attrs.EquippedSkinsJson)) or persistent.EquippedSkins
-	persistent.OwnedGooSkins = decodeJsonTable(player:GetAttribute(Attrs.OwnedGooSkinsJson)) or persistent.OwnedGooSkins
+	persistent.OwnedGooSkins = decodeJsonTable(player:GetAttribute(Attrs.OwnedGooSkinsJson))
+		or persistent.OwnedGooSkins
 	local selectedGooSkin = player:GetAttribute(Attrs.SelectedGooSkinId)
 	if typeof(selectedGooSkin) == "string" then
 		persistent.SelectedGooSkin = selectedGooSkin
@@ -624,8 +386,124 @@ function PlayerDataService.UpdateFromPlayerValues(player)
 		end
 	end
 	PlayerMetricsService.WritePersistentData(player, persistent)
+	validateUpgradeCounts(data)
 
 	return data
+end
+
+local function readSavedGeneration(profile)
+	local keyInfo = profile.KeyInfo
+	if not keyInfo then
+		return 0
+	end
+	local ok, metadata = pcall(function()
+		return keyInfo:GetMetadata()
+	end)
+	if not ok or type(metadata) ~= "table" then
+		return 0
+	end
+	return tonumber(metadata[SAVE_GENERATION_METADATA_KEY]) or 0
+end
+
+local function cleanupPlayer(player, profile)
+	if profilesByPlayer[player] == profile then
+		profilesByPlayer[player] = nil
+		cacheByPlayer[player] = nil
+	end
+	confirmedSaveGenerationByProfile[profile] = nil
+	local expected = expectedSessionEndByPlayer[player]
+	expectedSessionEndByPlayer[player] = nil
+	if not expected and player.Parent == Players then
+		player:Kick("Your data session ended. Please rejoin.")
+	end
+end
+
+local function prepareProfile(profile)
+	local migrationOk, migrationProblem = migrate(profile.Data)
+	if not migrationOk then
+		return false, migrationProblem
+	end
+
+	profile:Reconcile()
+	if type(profile.RobloxMetaData) ~= "table" then
+		profile.RobloxMetaData = {}
+	end
+	local data = profile.Data
+	if profile.SessionLoadCount == 1 then
+		data.Persistent.IntroSeen = false
+		data.Persistent.StoryChapter = DEFAULT_PERSISTENT_DATA.StoryChapter
+		data.Persistent.StoryStep = DEFAULT_PERSISTENT_DATA.StoryStep
+		data.Persistent.StoryHealingClicks = DEFAULT_PERSISTENT_DATA.StoryHealingClicks
+		data.Persistent.MixerUnlocked = false
+	end
+	local loadedPlacementSchemaVersion = data.Run.PlacementSchemaVersion
+	data.Run.Placements = normalizePlacements(data.Run.Placements, loadedPlacementSchemaVersion)
+	data.Run.PlacementSchemaVersion = FloorConfig.PlacementSchemaVersion
+	validateUpgradeCounts(data)
+	return true
+end
+
+function PlayerDataService.Load(player)
+	configureStore()
+	local loadStartedAt = os.clock()
+	local profile = playerStore:StartSessionAsync(getKey(player), {
+		Cancel = function()
+			return player.Parent ~= Players or os.clock() - loadStartedAt >= LOAD_TIMEOUT_SECONDS
+		end,
+	})
+
+	if not profile then
+		if player.Parent == Players then
+			player:Kick("Your data failed to load. Please rejoin in a minute — no progress has been lost.")
+		end
+		return nil
+	end
+
+	profile:AddUserId(player.UserId)
+	profile.OnSessionEnd:Connect(function()
+		cleanupPlayer(player, profile)
+	end)
+	local prepareCallOk, profileOk, profileProblem = pcall(prepareProfile, profile)
+	if not prepareCallOk or not profileOk then
+		local problem = prepareCallOk and profileProblem or profileOk
+		warn(("PlayerDataService: %s profile rejected: %s"):format(player.Name, tostring(problem or "unknown")))
+		expectedSessionEndByPlayer[player] = true
+		profile:EndSession()
+		if player.Parent == Players then
+			player:Kick("Your save data is from a newer version of the game. Please rejoin later.")
+		end
+		return nil
+	end
+
+	local data = profile.Data
+	profile.OnSave:Connect(function()
+		-- Yield-free by contract; see snapshotPlayer.
+		snapshotPlayer(player, profile.Data)
+	end)
+	profile.OnAfterSave:Connect(function()
+		if profile:IsActive() then
+			confirmedSaveGenerationByProfile[profile] = readSavedGeneration(profile)
+		end
+	end)
+
+	if player.Parent ~= Players then
+		expectedSessionEndByPlayer[player] = true
+		profile:EndSession()
+		return nil
+	end
+
+	profilesByPlayer[player] = profile
+	cacheByPlayer[player] = data
+	confirmedSaveGenerationByProfile[profile] = readSavedGeneration(profile)
+	return data
+end
+
+function PlayerDataService.Get(player)
+	return cacheByPlayer[player]
+end
+
+function PlayerDataService.UpdateFromPlayerValues(player)
+	return snapshotPlayer(player, cacheByPlayer[player])
 end
 
 function PlayerDataService.ResetRun(player)
@@ -635,101 +513,70 @@ function PlayerDataService.ResetRun(player)
 	end
 
 	data.Run = copyDictionary(DEFAULT_RUN_DATA)
-	data.Persistent = mergeKnownFields(DEFAULT_PERSISTENT_DATA, data.Persistent)
 	return data.Run
 end
 
 function PlayerDataService.Save(player, force)
-	if not loadedByPlayer[player] then
+	local profile = profilesByPlayer[player]
+	if not profile or not profile:IsActive() then
 		return false
 	end
 
-	if savingByPlayer[player] then
-		if force then
-			local waitStartedAt = os.clock()
-			while savingByPlayer[player] and os.clock() - waitStartedAt < FORCE_SAVE_WAIT_SECONDS do
-				task.wait()
-			end
+	snapshotPlayer(player, profile.Data)
+	local generation = (tonumber(profile.RobloxMetaData[SAVE_GENERATION_METADATA_KEY]) or 0) + 1
+	profile.RobloxMetaData[SAVE_GENERATION_METADATA_KEY] = generation
+	profile:Save()
 
-			return lastSaveResultByPlayer[player] == true
+	if force ~= true then
+		return true
+	end
+
+	local deadline = os.clock() + FORCE_SAVE_WAIT_SECONDS
+	while os.clock() < deadline do
+		if (confirmedSaveGenerationByProfile[profile] or 0) >= generation then
+			return true
 		end
-
-		return false
+		if not profile:IsActive() then
+			return false
+		end
+		task.wait()
 	end
-
-	local now = os.clock()
-	local lastSaveAt = lastSaveAtByPlayer[player]
-	if not force and lastSaveAt and now - lastSaveAt < MIN_SAVE_INTERVAL_SECONDS then
-		return false
-	end
-
-	local data = PlayerDataService.UpdateFromPlayerValues(player)
-	if not data then
-		return false
-	end
-
-	savingByPlayer[player] = true
-	lastSaveResultByPlayer[player] = nil
-
-	local saveTime = getSaveTimestamp()
-	local sessionClaimTime = sessionClaimTimeByPlayer[player] or 0
-	local saveBlob = createSaveBlob(data, saveTime)
-	local staleConflict
-	local ok, savedBlob = withRetries("Save data for " .. player.Name, function()
-		return store:UpdateAsync(getKey(player), function(currentValue)
-			if hasNewerLiveSession(currentValue, sessionClaimTime) then
-				staleConflict = {
-					sessionId = currentValue.sessionId,
-					lastSaveTime = currentValue.lastSaveTime,
-				}
-				return nil
-			end
-
-			return saveBlob
-		end)
-	end)
-	local didWrite = ok
-		and type(savedBlob) == "table"
-		and savedBlob.sessionId == SERVER_SESSION_ID
-		and savedBlob.lastSaveTime == saveTime
-
-	if didWrite then
-		lastSaveAtByPlayer[player] = os.clock()
-		sessionClaimTimeByPlayer[player] = saveTime
-	elseif staleConflict then
-		warn(
-			"Refused stale save for "
-				.. player.Name
-				.. ": data is owned by newer live session "
-				.. tostring(staleConflict.sessionId)
-				.. " at "
-				.. tostring(staleConflict.lastSaveTime)
-				.. ". Persistent data remains protected; stale Run data was not written."
-		)
-	end
-
-	lastSaveResultByPlayer[player] = didWrite
-	savingByPlayer[player] = nil
-	return didWrite
+	return false
 end
 
 function PlayerDataService.Forget(player)
-	cacheByPlayer[player] = nil
-	loadedByPlayer[player] = nil
-	savingByPlayer[player] = nil
-	lastSaveAtByPlayer[player] = nil
-	lastSaveResultByPlayer[player] = nil
-	sessionClaimTimeByPlayer[player] = nil
+	local profile = profilesByPlayer[player]
+	if not profile then
+		cacheByPlayer[player] = nil
+		expectedSessionEndByPlayer[player] = nil
+		return
+	end
+
+	snapshotPlayer(player, profile.Data)
+	expectedSessionEndByPlayer[player] = true
+	profile:EndSession()
+end
+
+local function endPlayerSession(player)
+	local profile = profilesByPlayer[player]
+	if not profile or not profile:IsActive() then
+		return
+	end
+
+	if typeof(player:GetAttribute(Attrs.LastSeenTimestamp)) == "number" then
+		player:SetAttribute(Attrs.LastSeenTimestamp, os.time())
+	end
+	snapshotPlayer(player, profile.Data)
+	expectedSessionEndByPlayer[player] = true
+	profile:EndSession()
 end
 
 local function startAutosaveLoop()
 	task.spawn(function()
 		while true do
 			task.wait(AUTOSAVE_SECONDS)
-
 			for _, player in ipairs(Players:GetPlayers()) do
-				-- Spawned so one player's slow/retrying save can't starve the others
-				-- past the autosave cadence (Save() is already re-entrancy guarded).
+				-- Save requests are independent, so one slow DataStore call cannot stall another player.
 				task.spawn(PlayerDataService.Save, player, false)
 			end
 		end
@@ -737,29 +584,23 @@ local function startAutosaveLoop()
 end
 
 function PlayerDataService.Init()
-	Players.PlayerRemoving:Connect(function(player)
-		PlayerDataService.Save(player, true)
-		PlayerDataService.Forget(player)
-	end)
+	configureStore()
+	Players.PlayerRemoving:Connect(endPlayerSession)
 
+	-- ProfileStore owns the shutdown wait. This sweep synchronously snapshots every live
+	-- projection before asking each profile to perform its final, session-releasing save.
 	game:BindToClose(function()
-		-- Save everyone in parallel and wait for all to finish: sequential saves
-		-- (each up to MAX_RETRIES with backoff) would overrun the ~30s shutdown budget.
-		local pending = 0
-		for _, player in ipairs(Players:GetPlayers()) do
-			pending += 1
-			task.spawn(function()
-				PlayerDataService.Save(player, true)
-				pending -= 1
-			end)
+		local loadedPlayers = {}
+		for player in pairs(profilesByPlayer) do
+			table.insert(loadedPlayers, player)
 		end
-		while pending > 0 do
-			task.wait(0.1)
+		for _, player in ipairs(loadedPlayers) do
+			endPlayerSession(player)
 		end
 	end)
 
 	startAutosaveLoop()
-	print("PlayerDataService initialized")
+	print("PlayerDataService initialized (ProfileStore)")
 end
 
 return PlayerDataService

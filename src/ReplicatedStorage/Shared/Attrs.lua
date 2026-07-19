@@ -94,13 +94,13 @@ return {
 	SellMode = "SellMode",
 
 	-- onboarding: server writes from persisted data, IntroController (client) reads to decide
-	-- whether to play the first-time meteor cutscene; client flips it once via MarkIntroSeen.
+	-- Whether to play the first-time meteor cutscene. StoryService sets this after advancing
+	-- beyond Meteor; MarkIntroSeen remains a guarded client fallback for non-story intros.
 	IntroSeen = "IntroSeen",
 	StoryChapter = "StoryChapter",
 	StoryStep = "StoryStep",
 	StoryHealingClicks = "StoryHealingClicks",
 	-- Whether the alien's dough tool (the "Mixer") is unlocked — gates building/the build shop.
-	-- Formerly "Crumbforge"; PlayerDataService migrates the old CrumbforgeUnlocked save key.
 	MixerUnlocked = "MixerUnlocked",
 
 	-- player stats / persisted data (server writes, client + server read)

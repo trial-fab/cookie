@@ -268,7 +268,6 @@ local function handleAction(player, action)
 			return
 		end
 		local transitionVersion = beginTransition(player)
-		player:SetAttribute(Attrs.IntroSeen, true)
 		player:SetAttribute(Attrs.StoryHealingClicks, 0)
 		local mascot = mascotByPlayer[player]
 		local sheet = SheetService.GetPlayerSheet(player)
@@ -280,6 +279,9 @@ local function handleAction(player, action)
 		end
 		if transitionIsCurrent(player, transitionVersion) and getStep(player) == StoryConfig.STEPS.Meteor then
 			setStep(player, StoryConfig.STEPS.Healing)
+			-- StoryStep advances before IntroSeen, with no yield between the writes. A save at any
+			-- boundary is therefore either replay-safe (Meteor + unseen) or a valid Healing state.
+			player:SetAttribute(Attrs.IntroSeen, true)
 			-- If a cosmetic swap occurred during RevealFromSquash's yield, apply the new
 			-- step to the replacement model instead of leaving it in the hidden Meteor pose.
 			setMascotPresentation(player)
