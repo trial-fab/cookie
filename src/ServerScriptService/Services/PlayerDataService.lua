@@ -21,6 +21,7 @@ local KEY_PREFIX = "player_"
 local AUTOSAVE_SECONDS = 60
 local LOAD_TIMEOUT_SECONDS = 120
 local FORCE_SAVE_WAIT_SECONDS = 10
+local MAX_RECEIPTS = 50
 local DEFAULT_DIMENSION = FloorConfig.DimensionId
 local CURRENT_SCHEMA_VERSION = 1
 local SAVE_GENERATION_METADATA_KEY = "ClickGameSaveGeneration"
@@ -63,6 +64,7 @@ local DEFAULT_PERSISTENT_DATA = {
 	StoryHealingClicks = 0,
 	MixerUnlocked = false,
 	CompletedStoryChapters = {},
+	Receipts = {},
 }
 
 for _, attribute in ipairs(PlayerMetricConfig.PersistentAttributes) do
@@ -85,6 +87,16 @@ local expectedSessionEndByPlayer = {}
 local confirmedSaveGenerationByProfile = {}
 local domain7ReadyByPlayer = setmetatable({}, { __mode = "k" })
 local placementSerializationReadyByPlayer = setmetatable({}, { __mode = "k" })
+local receiptProcessingReadyByPlayer = setmetatable({}, { __mode = "k" })
+
+PlayerDataService.ReceiptState = {
+	InvalidPurchaseId = "InvalidPurchaseId",
+	NoActiveProfile = "NoActiveProfile",
+	NotReady = "NotReady",
+	Absent = "Absent",
+	PresentUnconfirmed = "PresentUnconfirmed",
+	Persisted = "Persisted",
+}
 
 local function copyDictionary(source)
 	local result = {}
@@ -127,6 +139,64 @@ local function normalizeIntValue(value)
 		return 0
 	end
 	return math.round(number)
+end
+
+local function normalizePurchaseId(value)
+	if type(value) == "string" then
+		return value ~= "" and value or nil
+	end
+	if type(value) == "number" and value == value and value ~= math.huge and value ~= -math.huge then
+		if value > 0 and value % 1 == 0 then
+			return string.format("%.0f", value)
+		end
+	end
+	return nil
+end
+
+-- ProfileStore only fills a missing Receipts field; it deliberately does not normalize an
+-- existing array. Preserve the newest valid unique string IDs by numeric position, then reverse
+-- them back into oldest-to-newest FIFO order. Named, sparse-gap, non-string, duplicate, and
+-- over-cap entries never survive this load boundary.
+local function normalizeReceipts(receipts)
+	local indexed = {}
+	if type(receipts) == "table" then
+		for index, value in pairs(receipts) do
+			if type(index) == "number" and index >= 1 and index % 1 == 0 then
+				table.insert(indexed, { Index = index, Value = value })
+			end
+		end
+	end
+	table.sort(indexed, function(left, right)
+		return left.Index > right.Index
+	end)
+
+	local newestFirst = {}
+	local seen = {}
+	for _, entry in ipairs(indexed) do
+		local purchaseId = type(entry.Value) == "string" and normalizePurchaseId(entry.Value) or nil
+		if purchaseId and not seen[purchaseId] then
+			seen[purchaseId] = true
+			table.insert(newestFirst, purchaseId)
+			if #newestFirst >= MAX_RECEIPTS then
+				break
+			end
+		end
+	end
+
+	local normalized = {}
+	for index = #newestFirst, 1, -1 do
+		table.insert(normalized, newestFirst[index])
+	end
+	return normalized
+end
+
+local function receiptArrayContains(receipts, purchaseId)
+	for _, storedId in ipairs(normalizeReceipts(receipts)) do
+		if storedId == purchaseId then
+			return true
+		end
+	end
+	return false
 end
 
 local function normalizeUpgradeCounts(data, preserveUnknown)
@@ -399,6 +469,7 @@ local function cleanupPlayer(player, profile)
 		profilesByPlayer[player] = nil
 		domain7ReadyByPlayer[player] = nil
 		placementSerializationReadyByPlayer[player] = nil
+		receiptProcessingReadyByPlayer[player] = nil
 		PlayerMetricsService.ForgetPlayer(player)
 		PlayerDataProjectionAudit.ForgetPlayer(player)
 	end
@@ -421,6 +492,7 @@ local function prepareProfile(profile)
 		profile.RobloxMetaData = {}
 	end
 	local data = profile.Data
+	data.Persistent.Receipts = normalizeReceipts(data.Persistent.Receipts)
 	if profile.SessionLoadCount == 1 then
 		data.Persistent.IntroSeen = false
 		data.Persistent.StoryChapter = DEFAULT_PERSISTENT_DATA.StoryChapter
@@ -474,7 +546,10 @@ function PlayerDataService.Load(player)
 	end)
 	profile.OnAfterSave:Connect(function()
 		if profile:IsActive() then
-			confirmedSaveGenerationByProfile[profile] = readSavedGeneration(profile)
+			confirmedSaveGenerationByProfile[profile] = math.max(
+				confirmedSaveGenerationByProfile[profile] or 0,
+				readSavedGeneration(profile)
+			)
 		end
 	end)
 
@@ -535,6 +610,126 @@ function PlayerDataService.MarkPlacementSerializationReady(player)
 	return true
 end
 
+function PlayerDataService.MarkReceiptProcessingReady(player)
+	local profile = profilesByPlayer[player]
+	local data = profile and profile:IsActive() and profile.Data or nil
+	local persistent = type(data) == "table" and data.Persistent or nil
+	if type(persistent) ~= "table" or type(persistent.Receipts) ~= "table" then
+		return false
+	end
+	receiptProcessingReadyByPlayer[player] = true
+	return true
+end
+
+-- Receipt reads are deliberately richer than a boolean: no profile, setup not ready, absent,
+-- merely present in current memory, and proven in ProfileStore.LastSavedData are different
+-- purchase decisions. This function never yields or mutates Data.
+function PlayerDataService.GetReceiptState(player, rawPurchaseId)
+	local purchaseId = normalizePurchaseId(rawPurchaseId)
+	if not purchaseId then
+		return PlayerDataService.ReceiptState.InvalidPurchaseId
+	end
+
+	local profile = profilesByPlayer[player]
+	if not profile or not profile:IsActive() then
+		return PlayerDataService.ReceiptState.NoActiveProfile, purchaseId
+	end
+	if receiptProcessingReadyByPlayer[player] ~= true then
+		return PlayerDataService.ReceiptState.NotReady, purchaseId
+	end
+
+	local data = profile.Data
+	local persistent = type(data) == "table" and data.Persistent or nil
+	local receipts = type(persistent) == "table" and persistent.Receipts or nil
+	if type(receipts) ~= "table" then
+		return PlayerDataService.ReceiptState.NotReady, purchaseId
+	end
+	if not table.find(receipts, purchaseId) then
+		return PlayerDataService.ReceiptState.Absent, purchaseId, data
+	end
+
+	local lastSavedData = profile.LastSavedData
+	local lastSavedPersistent = type(lastSavedData) == "table" and lastSavedData.Persistent or nil
+	if type(lastSavedPersistent) == "table" and receiptArrayContains(lastSavedPersistent.Receipts, purchaseId) then
+		return PlayerDataService.ReceiptState.Persisted, purchaseId, data
+	end
+	return PlayerDataService.ReceiptState.PresentUnconfirmed, purchaseId, data
+end
+
+-- Insert only into the exact active Data root inspected immediately before the grant. The caller
+-- must perform its owning-service grant and this call in the same yield-free turn. Insertion is
+-- not acknowledgement and intentionally does not queue or wait for a save.
+function PlayerDataService.RecordReceipt(player, rawPurchaseId, expectedData)
+	local purchaseId = normalizePurchaseId(rawPurchaseId)
+	local profile = profilesByPlayer[player]
+	if
+		not purchaseId
+		or not profile
+		or not profile:IsActive()
+		or receiptProcessingReadyByPlayer[player] ~= true
+		or profile.Data ~= expectedData
+	then
+		return false
+	end
+
+	local persistent = type(expectedData) == "table" and expectedData.Persistent or nil
+	local receipts = type(persistent) == "table" and persistent.Receipts or nil
+	if type(receipts) ~= "table" then
+		return false
+	end
+	if table.find(receipts, purchaseId) then
+		return true, "AlreadyPresent"
+	end
+
+	table.insert(receipts, purchaseId)
+	while #receipts > MAX_RECEIPTS do
+		table.remove(receipts, 1)
+	end
+	return true, "Inserted"
+end
+
+local function requestSave(player, profile)
+	snapshotPlayer(player, profile.Data)
+	local generation = (tonumber(profile.RobloxMetaData[SAVE_GENERATION_METADATA_KEY]) or 0) + 1
+	profile.RobloxMetaData[SAVE_GENERATION_METADATA_KEY] = generation
+	profile:Save()
+	return generation
+end
+
+function PlayerDataService.ConfirmReceiptSaved(player, rawPurchaseId)
+	local state, purchaseId, expectedData = PlayerDataService.GetReceiptState(player, rawPurchaseId)
+	if state == PlayerDataService.ReceiptState.Persisted then
+		return true, readSavedGeneration(profilesByPlayer[player])
+	end
+	if state ~= PlayerDataService.ReceiptState.PresentUnconfirmed then
+		return false
+	end
+	local profile = profilesByPlayer[player]
+	if not profile or not profile:IsActive() or profile.Data ~= expectedData then
+		return false
+	end
+	local generation = requestSave(player, profile)
+	local deadline = os.clock() + FORCE_SAVE_WAIT_SECONDS
+	while os.clock() < deadline do
+		if profilesByPlayer[player] ~= profile or not profile:IsActive() or profile.Data ~= expectedData then
+			return false, generation
+		end
+		local persistent = expectedData.Persistent
+		if type(persistent) ~= "table" or not table.find(persistent.Receipts, purchaseId) then
+			return false, generation
+		end
+		if (confirmedSaveGenerationByProfile[profile] or 0) >= generation then
+			local savedData = profile.LastSavedData
+			local savedPersistent = type(savedData) == "table" and savedData.Persistent or nil
+			if type(savedPersistent) == "table" and receiptArrayContains(savedPersistent.Receipts, purchaseId) then
+				return true, generation
+			end
+		end
+		task.wait()
+	end
+	return false, generation
+end
+
 -- LastSeenTimestamp is canonical Data. Callers may reach this after a yielded setup path or
 -- stamp-loop wait, so re-check the live profile immediately before mutating it. Project only
 -- after Data holds the exact value that will be saved.
@@ -585,10 +780,7 @@ function PlayerDataService.Save(player, force)
 		return false
 	end
 
-	snapshotPlayer(player, profile.Data)
-	local generation = (tonumber(profile.RobloxMetaData[SAVE_GENERATION_METADATA_KEY]) or 0) + 1
-	profile.RobloxMetaData[SAVE_GENERATION_METADATA_KEY] = generation
-	profile:Save()
+	local generation = requestSave(player, profile)
 
 	if force ~= true then
 		return true
@@ -613,6 +805,7 @@ function PlayerDataService.Forget(player)
 		expectedSessionEndByPlayer[player] = nil
 		domain7ReadyByPlayer[player] = nil
 		placementSerializationReadyByPlayer[player] = nil
+		receiptProcessingReadyByPlayer[player] = nil
 		PlayerMetricsService.ForgetPlayer(player)
 		PlayerDataProjectionAudit.ForgetPlayer(player)
 		return

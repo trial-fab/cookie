@@ -189,6 +189,10 @@ local function setupPlayer(player)
 		UpgradeService.ApplyPlayerCharacterStats(player, player.Character)
 		SheetService.TeleportToSheet(player, player.Character)
 	end
+
+	-- Developer-product receipts fail closed until every owning gameplay domain has completed
+	-- setup. ProcessReceipt may be installed while a join is still yielding through this function.
+	PlayerDataService.MarkReceiptProcessingReady(player)
 end
 
 -- Client-driven "don't show the Build View nudge again" toggle. Profile.Data is canonical;

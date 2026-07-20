@@ -2,37 +2,45 @@
 -- (developer products) and game-pass grants, dispatching each purchase to a grant handler keyed
 -- by the MonetizationConfig item Id.
 --
--- ProcessReceipt is idempotent: every (PlayerId, PurchaseId) is recorded in a DataStore so a
--- grant is applied at most once even though Roblox re-delivers receipts until acknowledged.
+-- Developer-product receipts live inside the buyer's session-locked Profile Data. A receipt is
+-- acknowledged only after its exact ID appears in a correlated successful LastSavedData snapshot.
 local MarketplaceService = game:GetService("MarketplaceService")
-local DataStoreService = game:GetService("DataStoreService")
 local Players = game:GetService("Players")
 local ServerScriptService = game:GetService("ServerScriptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local BoostService = require(ServerScriptService.Services.BoostService)
+local PlayerDataService = require(ServerScriptService.Services.PlayerDataService)
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
 local MonetizationConfig = require(ReplicatedStorage.Shared.MonetizationConfig)
 
 local MonetizationService = {}
 
-local receiptStore = DataStoreService:GetDataStore("ReceiptHistory_v1")
+-- Developer-product delivery descriptors are intentionally separate from game passes. A future
+-- profile-owned grant must be a yield-free owning-service operation that validates before its
+-- first mutation and cannot fail after partially committing canonical state. It does not inherit
+-- Server Boost's explicit external at-least-once exception.
+local devProductDeliveryByItemId = {
+	ServerBoost = {
+		ExternalAtLeastOnce = true,
+		Grant = function()
+			-- Favor-the-buyer policy: activation precedes recording/saving. A retry of an
+			-- unconfirmed ID activates again and may extend the server another five minutes.
+			BoostService.Activate(2, 300)
+			return true
+		end,
+	},
+}
 
--- Grant handlers keyed by MonetizationConfig item Id. Add an entry here when a product/pass
--- goes live; a product with no handler is left un-granted (NotProcessedYet) so it can be added
--- and retried without losing the purchase.
-local grantByItemId = {
-	ServerBoost = function()
-		BoostService.Activate(2, 300)
-	end,
+local gamePassGrantByItemId = {
 	InstantWheelSpinPass = function(player)
 		player:SetAttribute(Attrs.InstantWheelSpinEnabled, true)
 	end,
-	-- StarterCookiePack / CookieVault grants land when those products are enabled.
 }
 
 local devProductItemsByProductId = {}
 local gamePassItemsByProductId = {}
+local processingByUserId = {}
 
 local function buildLookups()
 	table.clear(devProductItemsByProductId)
@@ -48,54 +56,85 @@ local function buildLookups()
 	end
 end
 
-local function processReceipt(receipt)
-	local key = string.format("%d_%d", receipt.PlayerId, receipt.PurchaseId)
-
-	-- Idempotency: if we've already recorded this receipt as granted, just acknowledge it.
-	local readOk, alreadyGranted = pcall(function()
-		return receiptStore:GetAsync(key) == true
-	end)
-	if not readOk then
-		-- Can't confirm history; tell Roblox to retry later rather than risk a double grant.
-		return Enum.ProductPurchaseDecision.NotProcessedYet
+local function acquireProcessing(userId)
+	while processingByUserId[userId] do
+		processingByUserId[userId].Event:Wait()
 	end
-	if alreadyGranted then
-		return Enum.ProductPurchaseDecision.PurchaseGranted
+	local released = Instance.new("BindableEvent")
+	processingByUserId[userId] = released
+	return function()
+		if processingByUserId[userId] == released then
+			processingByUserId[userId] = nil
+			released:Fire()
+		end
+		released:Destroy()
 	end
+end
 
+local function processReceiptLocked(receipt, item, delivery)
+	-- Acquiring the per-user coordinator yielded, so every live object and state decision is
+	-- deliberately re-resolved here.
 	local player = Players:GetPlayerByUserId(receipt.PlayerId)
 	if not player then
-		-- Buyer left before we could grant; retry when they're back.
 		return Enum.ProductPurchaseDecision.NotProcessedYet
 	end
 
+	local state, purchaseId, data = PlayerDataService.GetReceiptState(player, receipt.PurchaseId)
+	if state == PlayerDataService.ReceiptState.Persisted then
+		return Enum.ProductPurchaseDecision.PurchaseGranted
+	end
+	if
+		state ~= PlayerDataService.ReceiptState.Absent
+		and state ~= PlayerDataService.ReceiptState.PresentUnconfirmed
+	then
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+
+	-- A present-but-unconfirmed profile grant is never applied twice. Server Boost is the sole
+	-- approved exception: reactivation before another save attempt guarantees no purchase is
+	-- acknowledged without an activation, at the accepted cost of possible over-delivery.
+	if state == PlayerDataService.ReceiptState.Absent or delivery.ExternalAtLeastOnce == true then
+		local grantCallOk, granted = pcall(delivery.Grant, player, receipt, data)
+		if not grantCallOk or granted ~= true then
+			warn(("MonetizationService: grant failed for %s"):format(tostring(item.Id)))
+			return Enum.ProductPurchaseDecision.NotProcessedYet
+		end
+	end
+
+	if state == PlayerDataService.ReceiptState.Absent then
+		local recorded = PlayerDataService.RecordReceipt(player, purchaseId, data)
+		if not recorded then
+			return Enum.ProductPurchaseDecision.NotProcessedYet
+		end
+	end
+
+	local confirmed = PlayerDataService.ConfirmReceiptSaved(player, purchaseId)
+	return confirmed and Enum.ProductPurchaseDecision.PurchaseGranted or Enum.ProductPurchaseDecision.NotProcessedYet
+end
+
+local function processReceipt(receipt)
 	local item = devProductItemsByProductId[receipt.ProductId]
-	local grant = item and grantByItemId[item.Id]
-	if not grant then
+	local delivery = item and item.Enabled == true and devProductDeliveryByItemId[item.Id] or nil
+	if not delivery then
 		warn(("MonetizationService: no grant handler for ProductId %s"):format(tostring(receipt.ProductId)))
 		return Enum.ProductPurchaseDecision.NotProcessedYet
 	end
-
-	local grantOk = pcall(grant, player, receipt)
-	if not grantOk then
+	if not Players:GetPlayerByUserId(receipt.PlayerId) then
 		return Enum.ProductPurchaseDecision.NotProcessedYet
 	end
 
-	-- Persist the grant before acknowledging so retries can't double-apply it.
-	local saveOk = pcall(function()
-		receiptStore:SetAsync(key, true)
-	end)
-	if not saveOk then
-		-- Granted but couldn't persist. Acknowledge anyway to avoid repeat grants on retry;
-		-- the trade-off is a lost history record, acceptable for these consumables.
-		warn(("MonetizationService: granted but failed to persist receipt %s"):format(key))
+	local release = acquireProcessing(receipt.PlayerId)
+	local ok, decision = pcall(processReceiptLocked, receipt, item, delivery)
+	release()
+	if not ok then
+		warn(("MonetizationService: receipt processing failed: %s"):format(tostring(decision)))
+		return Enum.ProductPurchaseDecision.NotProcessedYet
 	end
-
-	return Enum.ProductPurchaseDecision.PurchaseGranted
+	return decision
 end
 
 local function grantOwnedGamePass(player, gamePassItem)
-	local grant = grantByItemId[gamePassItem.Id]
+	local grant = gamePassGrantByItemId[gamePassItem.Id]
 	if grant then
 		pcall(grant, player)
 	end
