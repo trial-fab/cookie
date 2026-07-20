@@ -6,20 +6,19 @@
 -- via CookieService; the popup is purely informational (a Phase 7 "double your
 -- away earnings" booster can later attach to it).
 --
--- LastSeenTimestamp bookkeeping (the load-bearing detail): PlayerDataService
--- persists `LastSeenTimestamp`, restored onto the player as an attribute by
--- PlayerSetupService BEFORE this service runs — so on join the attribute still
--- holds the PRIOR session's leave time. We read that prior value once in
--- OnPlayerSetup, then begin stamping os.time() into it on a short loop (and on
--- leave) so the next save records when this session ended. Stamping is gated
--- behind `processedByPlayer` so a slow DataStore load can never let the loop
--- overwrite the prior value before OnPlayerSetup has read it.
+-- LastSeenTimestamp bookkeeping (the load-bearing detail): Profile.Data.Persistent owns the
+-- timestamp, and PlayerSetupService projects its prior-session value before this service runs.
+-- OnPlayerSetup reads the PRIOR canonical value once, calculates/grants offline earnings, then
+-- stamps the current time into Data and projects it. The short loop and leave path keep Data
+-- fresh for saves. Stamping is gated behind `processedByPlayer` so the loop can never overwrite
+-- the prior value before OnPlayerSetup has read it.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 
 local CookieService = require(ServerScriptService.Services.CookieService)
+local PlayerDataService = require(ServerScriptService.Services.PlayerDataService)
 local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
 local ProductionService = require(ServerScriptService.Services.ProductionService)
 local UpgradeService = require(ServerScriptService.Services.UpgradeService)
@@ -27,7 +26,6 @@ local Net = require(ReplicatedStorage.Shared.Net)
 
 local OfflineEarningsService = {}
 
-local LAST_SEEN_ATTRIBUTE = "LastSeenTimestamp"
 local OFFLINE_RATE = 0.5 -- §9: 50% of CpS while away.
 local BASE_CAP_HOURS = 8 -- §9 base cap; §4c "Offline Earnings" upgrades extend it.
 local MIN_AWAY_SECONDS = 60 -- below this nothing meaningful baked; skip the popup.
@@ -42,16 +40,23 @@ local function getOfflineCapSeconds(player)
 end
 
 local function stamp(player)
-	player:SetAttribute(LAST_SEEN_ATTRIBUTE, os.time())
+	return PlayerDataService.SetLastSeenTimestamp(player, os.time())
 end
 
 -- Called from PlayerSetupService.setupPlayer AFTER UpgradeService.SetupPlayer (so
 -- placed buildings already count toward GetCps) and after the persistent
 -- attributes are restored. Returns a summary table for callers/tests.
 function OfflineEarningsService.OnPlayerSetup(player)
-	-- Read the PRIOR timestamp before anything advances it.
-	local lastSeen = player:GetAttribute(LAST_SEEN_ATTRIBUTE)
-	lastSeen = typeof(lastSeen) == "number" and math.floor(lastSeen) or 0
+	-- UpgradeService.SetupPlayer can yield while restoring owned gear. Re-fetch canonical Data
+	-- here so a player who left during that wait cannot receive earnings or mutate an ended
+	-- profile. Read the PRIOR timestamp before anything advances it.
+	local data = PlayerDataService.Get(player)
+	local persistent = type(data) == "table" and data.Persistent
+	if player.Parent ~= Players or type(persistent) ~= "table" then
+		return { Amount = 0, AwaySeconds = 0, Capped = false, Cps = 0, Reason = "NotReady" }
+	end
+	local lastSeen = tonumber(persistent.LastSeenTimestamp)
+	lastSeen = lastSeen and math.floor(lastSeen) or 0
 
 	local now = os.time()
 	local cps = ProductionService.GetCps(player)
@@ -81,7 +86,9 @@ function OfflineEarningsService.OnPlayerSetup(player)
 
 	-- This player is now live: advance the stamp and let the loop keep it fresh.
 	processedByPlayer[player] = true
-	stamp(player)
+	if not stamp(player) then
+		processedByPlayer[player] = nil
+	end
 	return result
 end
 
@@ -91,7 +98,10 @@ local function startStampLoop()
 			task.wait(STAMP_INTERVAL_SECONDS)
 			for _, player in ipairs(Players:GetPlayers()) do
 				if processedByPlayer[player] then
-					stamp(player)
+					-- The interval wait yielded; SetLastSeenTimestamp re-checks the live profile.
+					if not stamp(player) then
+						processedByPlayer[player] = nil
+					end
 				end
 			end
 		end

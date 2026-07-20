@@ -3,8 +3,8 @@ local Attrs = require(script.Parent.Attrs)
 local PlayerMetricConfig = {}
 
 -- Flat fields intentionally live in Persistent rather than a nested Metrics table.
--- PlayerDataService's whitelist merge can then add future counters to old saves
--- without interpreting free-form inventory maps as schemas.
+-- ProfileStore reconciliation can then add future counters without interpreting
+-- free-form inventory maps as schemas.
 PlayerMetricConfig.PersistentAttributes = {
 	Attrs.LifetimeCookiesEarned,
 	Attrs.ManualClicks,

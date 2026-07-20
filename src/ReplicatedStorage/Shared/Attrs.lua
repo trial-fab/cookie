@@ -93,9 +93,9 @@ return {
 	-- watches it to swap the active toggle's Build/Sell label.
 	SellMode = "SellMode",
 
-	-- onboarding: server writes from persisted data, IntroController (client) reads to decide
-	-- Whether to play the first-time meteor cutscene. StoryService sets this after advancing
-	-- beyond Meteor; MarkIntroSeen remains a guarded client fallback for non-story intros.
+	-- Onboarding persistence projections. StoryStep == Meteor is the current first-time intro
+	-- gate; IntroSeen is set after advancing beyond Meteor and retained for compatibility.
+	-- MarkIntroSeen remains a guarded client fallback for non-story intros.
 	IntroSeen = "IntroSeen",
 	StoryChapter = "StoryChapter",
 	StoryStep = "StoryStep",

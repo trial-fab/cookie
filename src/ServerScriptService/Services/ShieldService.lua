@@ -3,6 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 
 local CookieService = require(ServerScriptService.Services.CookieService)
+local PlayerDataService = require(ServerScriptService.Services.PlayerDataService)
 local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
 local SheetService = require(ServerScriptService.Services.SheetService)
 local Net = require(ReplicatedStorage.Shared.Net)
@@ -18,22 +19,10 @@ local ENABLED_SHIELD_TRANSPARENCY = 0.8
 local activeLoops = {}
 local shieldConnections = {}
 
-local function getCookiesValue(player)
-	local leaderstats = player:FindFirstChild("leaderstats")
-	if not leaderstats then
-		return nil
-	end
-
-	return leaderstats:FindFirstChild("Cookies")
-end
-
-local function getShieldTime(player)
-	local shieldTime = player:FindFirstChild("ShieldTime")
-	if shieldTime and shieldTime:IsA("IntValue") then
-		return shieldTime
-	end
-
-	return nil
+local function getRun(player)
+	local data = player and PlayerDataService.GetDomain7Data(player)
+	local run = type(data) == "table" and data.Run
+	return type(run) == "table" and run or nil
 end
 
 local function getSheetShieldEnabled(player)
@@ -90,6 +79,9 @@ local function connectSheetShield(sheet)
 end
 
 function ShieldService.SetEnabled(player, enabled)
+	if not getRun(player) then
+		return false
+	end
 	local shieldEnabled = getSheetShieldEnabled(player)
 	if not shieldEnabled then
 		return false
@@ -100,28 +92,44 @@ function ShieldService.SetEnabled(player, enabled)
 end
 
 function ShieldService.SetTime(player, seconds)
-	local shieldTime = getShieldTime(player)
-	if not shieldTime then
+	local run = getRun(player)
+	local shieldTime = player:FindFirstChild("ShieldTime")
+	seconds = tonumber(seconds)
+	if
+		not run
+		or not shieldTime
+		or not shieldTime:IsA("IntValue")
+		or not seconds
+		or seconds ~= seconds
+		or seconds == math.huge
+		or seconds == -math.huge
+	then
 		return false
 	end
 
-	shieldTime.Value = math.max(0, math.floor(seconds))
+	run.ShieldTime = math.max(0, math.floor(seconds))
+	shieldTime.Value = run.ShieldTime
 	return true
 end
 
+function ShieldService.GetTime(player)
+	local run = getRun(player)
+	return run and (tonumber(run.ShieldTime) or 0) or nil
+end
+
 function ShieldService.GetPurchaseCost(player)
-	local cookies = getCookiesValue(player)
-	if not cookies then
+	local cookies = CookieService.GetCookies(player)
+	if cookies == nil then
 		return 0
 	end
 
-	return math.max(0, math.floor(cookies.Value * SHIELD_COST_RATIO))
+	return math.max(0, math.floor(cookies * SHIELD_COST_RATIO))
 end
 
 function ShieldService.ToggleShield(player)
 	local shieldEnabled = getSheetShieldEnabled(player)
-	local shieldTime = getShieldTime(player)
-	if not shieldEnabled or not shieldTime then
+	local shieldTime = ShieldService.GetTime(player)
+	if not shieldEnabled or shieldTime == nil then
 		return false, "Shield is not ready."
 	end
 
@@ -138,26 +146,34 @@ function ShieldService.ToggleShield(player)
 		end
 	end
 
-	shieldTime.Value = PURCHASED_SHIELD_SECONDS
+	if not ShieldService.SetTime(player, PURCHASED_SHIELD_SECONDS) then
+		return false, "Shield is not ready."
+	end
 	shieldEnabled.Value = true
 	return true, "Shield enabled."
 end
 
 function ShieldService.StartTimer(player)
+	if not getRun(player) then
+		return false
+	end
 	activeLoops[player] = (activeLoops[player] or 0) + 1
 	local loopId = activeLoops[player]
 
 	task.spawn(function()
 		while player.Parent and activeLoops[player] == loopId do
-			local shieldTime = getShieldTime(player)
-			if not shieldTime then
+			local shieldTime = ShieldService.GetTime(player)
+			if shieldTime == nil then
 				break
 			end
 
-			if shieldTime.Value > 0 then
-				shieldTime.Value -= 1
+			if shieldTime > 0 then
+				local remaining = shieldTime - 1
+				if not ShieldService.SetTime(player, remaining) then
+					break
+				end
 
-				if shieldTime.Value <= 0 then
+				if remaining <= 0 then
 					ShieldService.SetEnabled(player, false)
 				end
 			end
@@ -165,6 +181,7 @@ function ShieldService.StartTimer(player)
 			task.wait(1)
 		end
 	end)
+	return true
 end
 
 function ShieldService.SetupPlayer(player)
@@ -173,9 +190,9 @@ function ShieldService.SetupPlayer(player)
 		return
 	end
 
-	local shieldTime = getShieldTime(player)
-	if shieldTime and shieldTime.Value <= 0 then
-		shieldTime.Value = DEFAULT_SHIELD_SECONDS
+	local shieldTime = ShieldService.GetTime(player)
+	if shieldTime ~= nil and shieldTime <= 0 then
+		ShieldService.SetTime(player, DEFAULT_SHIELD_SECONDS)
 	end
 
 	local sheet = SheetService.GetPlayerSheet(player)

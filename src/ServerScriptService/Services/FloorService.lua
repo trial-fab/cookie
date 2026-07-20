@@ -10,6 +10,7 @@ local FloorGeometry = require(Shared.FloorGeometry)
 local DevTuningService = require(script.Parent.DevTuningService)
 local FloorAnalyticsService = require(script.Parent.FloorAnalyticsService)
 local FloorRevealAnimator = require(script.Parent.FloorRevealAnimator)
+local PlayerDataService = require(script.Parent.PlayerDataService)
 local PlayerMetricsService = require(script.Parent.PlayerMetricsService)
 local SheetService = require(script.Parent.SheetService)
 
@@ -17,15 +18,15 @@ local FloorService = {}
 local previewFloorOrderByPlayer = setmetatable({}, { __mode = "k" })
 local previewRevealByPlayer = setmetatable({}, { __mode = "k" })
 
-local function getExpansionCountValue(player)
-	local upgradeCountData = player and player:FindFirstChild("UpgradeCountData")
-	local countValue = upgradeCountData and upgradeCountData:FindFirstChild(FloorConfig.ExpansionUpgradeId)
-	return countValue and countValue:IsA("IntValue") and countValue or nil
+local function getExpansionCount(player)
+	local data = player and PlayerDataService.GetDomain7Data(player)
+	local run = type(data) == "table" and data.Run
+	local counts = type(run) == "table" and run.UpgradeCounts
+	return type(counts) == "table" and tonumber(counts[FloorConfig.ExpansionUpgradeId]) or nil
 end
 
 function FloorService.GetUnlockedCount(player)
-	local countValue = getExpansionCountValue(player)
-	return math.clamp(countValue and countValue.Value or 0, 0, FloorConfig.UnlockableFloorCount)
+	return math.clamp(getExpansionCount(player) or 0, 0, FloorConfig.UnlockableFloorCount)
 end
 
 function FloorService.IsUnlocked(player, floorId)
@@ -34,12 +35,16 @@ function FloorService.IsUnlocked(player, floorId)
 end
 
 function FloorService.RefreshPlayer(player, animatedFloorId)
-	local unlockedCount = FloorService.GetUnlockedCount(player)
+	local expansionCount = getExpansionCount(player)
+	if expansionCount == nil then
+		return false
+	end
+	local unlockedCount = math.clamp(expansionCount, 0, FloorConfig.UnlockableFloorCount)
 	player:SetAttribute(Attrs.UnlockedFloorCount, unlockedCount)
 
 	local sheet = SheetService.GetPlayerSheet(player)
 	if not sheet then
-		return
+		return true
 	end
 
 	for _, definition in ipairs(FloorConfig.GetDefinitions()) do
@@ -56,6 +61,7 @@ function FloorService.RefreshPlayer(player, animatedFloorId)
 			)
 		end
 	end
+	return true
 end
 
 -- Called after UpgradeService has incremented the Base Expansion count but before
@@ -68,11 +74,11 @@ function FloorService.ApplyUnlock(player, floorId, amount)
 	end
 
 	local definition = FloorConfig.Get(floorId)
-	local countValue = getExpansionCountValue(player)
-	if not definition or definition.Order <= 0 or not countValue then
+	local count = getExpansionCount(player)
+	if not definition or definition.Order <= 0 or count == nil then
 		return false, "Floor data is not ready."
 	end
-	if countValue.Value ~= definition.Order then
+	if count ~= definition.Order then
 		return false, "Floors must be unlocked in order."
 	end
 

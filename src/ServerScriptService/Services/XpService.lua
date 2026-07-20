@@ -1,21 +1,24 @@
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
 local XpConfig = require(ReplicatedStorage.Shared.XpConfig)
+local PlayerDataService = require(script.Parent.PlayerDataService)
 
 local XpService = {}
 
-local function getXp(player)
-	local value = player:GetAttribute(Attrs.Xp)
-	if typeof(value) == "number" then
-		return math.max(0, math.floor(value))
-	end
-	return 0
+local function getPersistent(player)
+	local data = player and PlayerDataService.Get(player)
+	local persistent = type(data) == "table" and data.Persistent
+	return type(persistent) == "table" and persistent or nil
+end
+
+local function readXp(persistent)
+	return math.max(0, math.floor(tonumber(persistent.Xp) or 0))
 end
 
 function XpService.GetXp(player)
-	return getXp(player)
+	local persistent = getPersistent(player)
+	return persistent and readXp(persistent) or 0
 end
 
 function XpService.AddXp(player, amount, _source, _metadata)
@@ -24,12 +27,17 @@ function XpService.AddXp(player, amount, _source, _metadata)
 		return 0
 	end
 	if amount <= 0 or not player.Parent then
-		return getXp(player)
+		return XpService.GetXp(player)
 	end
 
-	local total = getXp(player) + amount
-	player:SetAttribute(Attrs.Xp, total)
-	return total
+	local persistent = getPersistent(player)
+	if not persistent then
+		return 0
+	end
+
+	persistent.Xp = readXp(persistent) + amount
+	player:SetAttribute(Attrs.Xp, persistent.Xp)
+	return persistent.Xp
 end
 
 function XpService.AwardClick(player)
@@ -48,18 +56,7 @@ function XpService.AwardQuest(player, questId, amount)
 	})
 end
 
-local function setupPlayer(player)
-	if player:GetAttribute(Attrs.Xp) == nil then
-		player:SetAttribute(Attrs.Xp, 0)
-	end
-end
-
 function XpService.Init()
-	Players.PlayerAdded:Connect(setupPlayer)
-	for _, player in ipairs(Players:GetPlayers()) do
-		setupPlayer(player)
-	end
-
 	print("XpService initialized")
 end
 

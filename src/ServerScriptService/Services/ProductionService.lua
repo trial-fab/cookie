@@ -3,6 +3,9 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 
 local CookieService = require(ServerScriptService.Services.CookieService)
+local BuildingSkinService = require(ServerScriptService.Services.BuildingSkinService)
+local GooSkinService = require(ServerScriptService.Services.GooSkinService)
+local PlayerDataService = require(ServerScriptService.Services.PlayerDataService)
 local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
 local ProductionRateObserver = require(ServerScriptService.Services.ProductionRateObserver)
 local SheetService = require(ServerScriptService.Services.SheetService)
@@ -19,6 +22,20 @@ local PRODUCTION_TICK_SECONDS = 10
 
 local runningByPlayer = {}
 local carryByPlayer = {}
+
+local function getCanonicalUpgradeCounts(player)
+	local data = PlayerDataService.GetDomain7Data(player)
+	local run = type(data) == "table" and data.Run
+	return type(run) == "table" and type(run.UpgradeCounts) == "table" and run.UpgradeCounts or nil
+end
+
+local function getCanonicalProductionContext(player, buildingId, upgradeCounts)
+	return {
+		GooMultiplier = GooSkinService.GetBestMultiplier(player),
+		BuildingMultiplier = BuildingSkinService.GetProductionMultiplier(player, buildingId),
+		UpgradeCounts = upgradeCounts,
+	}
+end
 
 local function getSheetOwner(sheet)
 	local ownerValue = sheet and sheet:FindFirstChild("SheetOwner")
@@ -104,6 +121,11 @@ local function distributeEarnings(buildings, totalAmount, payload)
 end
 
 local function computeTick(player, elapsedSeconds)
+	local upgradeCounts = getCanonicalUpgradeCounts(player)
+	if not upgradeCounts then
+		carryByPlayer[player] = {}
+		return 0, {}
+	end
 	local groups = getPlacedBuildingGroups(player)
 	if not groups then
 		carryByPlayer[player] = {}
@@ -128,7 +150,13 @@ local function computeTick(player, elapsedSeconds)
 	for key, group in pairs(groups) do
 		local config = UpgradeConfig[group.upgradeId]
 		local placedCount = #group.buildings
-		local cpsPerBuilding = ProductionFormula.GetCps(player, group.upgradeId, config, group.floorId)
+		local cpsPerBuilding = ProductionFormula.GetCps(
+			player,
+			group.upgradeId,
+			config,
+			group.floorId,
+			getCanonicalProductionContext(player, group.upgradeId, upgradeCounts)
+		)
 		local rawCookies = placedCount * cpsPerBuilding * elapsedSeconds + (playerCarry[key] or 0)
 		local cookiesGained = getWholeCookiesFromCarry(rawCookies)
 
@@ -144,6 +172,10 @@ local function computeTick(player, elapsedSeconds)
 end
 
 function ProductionService.GetCps(player)
+	local upgradeCounts = getCanonicalUpgradeCounts(player)
+	if not upgradeCounts then
+		return 0
+	end
 	local groups = getPlacedBuildingGroups(player)
 	if not groups then
 		return 0
@@ -152,7 +184,14 @@ function ProductionService.GetCps(player)
 	local totalCps = 0
 	for _, group in pairs(groups) do
 		local config = UpgradeConfig[group.upgradeId]
-		totalCps += #group.buildings * ProductionFormula.GetCps(player, group.upgradeId, config, group.floorId)
+		totalCps += #group.buildings
+			* ProductionFormula.GetCps(
+				player,
+				group.upgradeId,
+				config,
+				group.floorId,
+				getCanonicalProductionContext(player, group.upgradeId, upgradeCounts)
+			)
 	end
 
 	return totalCps
@@ -162,7 +201,11 @@ end
 -- plus autoclick income. GetCps intentionally remains buildings-only because
 -- OfflineEarningsService excludes autoclicks from away-time rewards.
 function ProductionService.RefreshCps(player)
-	local liveCps = ProductionService.GetCps(player) + AutoclickFormula.GetLiveCps(player)
+	local upgradeCounts = getCanonicalUpgradeCounts(player)
+	local autoclickCps = upgradeCounts
+		and AutoclickFormula.GetLiveCps(player, { UpgradeCounts = upgradeCounts })
+		or 0
+	local liveCps = ProductionService.GetCps(player) + autoclickCps
 	player:SetAttribute(Attrs.Cps, liveCps)
 	PlayerMetricsService.RecordCps(player, liveCps)
 end

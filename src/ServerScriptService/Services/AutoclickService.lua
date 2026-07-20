@@ -3,6 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 
 local CookieService = require(ServerScriptService.Services.CookieService)
+local PlayerDataService = require(ServerScriptService.Services.PlayerDataService)
 local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
 local SheetService = require(ServerScriptService.Services.SheetService)
 local AutoclickFormula = require(ReplicatedStorage.Shared.AutoclickFormula)
@@ -20,24 +21,38 @@ local TICK_SECONDS = 0.5
 local POPUP_COLOR = Color3.fromRGB(0, 170, 255)
 local initialized = false
 
+local function getCanonicalContext(player)
+	local data = PlayerDataService.GetDomain7Data(player)
+	local run = type(data) == "table" and data.Run
+	local counts = type(run) == "table" and run.UpgradeCounts
+	return type(counts) == "table" and { UpgradeCounts = counts } or nil
+end
+
 -- Cookies per single auto-click (the Power line).
 function AutoclickService.GetPower(player)
-	return AutoclickFormula.GetPower(player)
+	local context = getCanonicalContext(player)
+	return context and AutoclickFormula.GetPower(player, context) or 0
 end
 
 -- Auto-clicks per second (the Speed line); BASE_SPEED until a level is owned.
 function AutoclickService.GetSpeed(player)
-	return AutoclickFormula.GetSpeed(player)
+	local context = getCanonicalContext(player)
+	return context and AutoclickFormula.GetSpeed(player, context) or 0
 end
 
 -- Total idle cookies/second, before the per-tick split (excludes the event
 -- multiplier so callers/tests can reason about the base rate).
 function AutoclickService.GetCookiesPerSecond(player)
-	return AutoclickFormula.GetBaseCps(player)
+	local context = getCanonicalContext(player)
+	return context and AutoclickFormula.GetBaseCps(player, context) or 0
 end
 
 function AutoclickService.StepPlayer(player)
-	local perSecond = AutoclickFormula.GetLiveCps(player)
+	local context = getCanonicalContext(player)
+	if not context then
+		return false, 0
+	end
+	local perSecond = AutoclickFormula.GetLiveCps(player, context)
 	if perSecond <= 0 then
 		return false, 0
 	end

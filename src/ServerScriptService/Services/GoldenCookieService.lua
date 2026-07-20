@@ -19,6 +19,8 @@ local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 
 local Net = require(ReplicatedStorage.Shared.Net)
+local Attrs = require(ReplicatedStorage.Shared.Attrs)
+local PlayerDataService = require(script.Parent.PlayerDataService)
 local PlayerMetricsService = require(script.Parent.PlayerMetricsService)
 
 local GoldenCookieService = {}
@@ -45,8 +47,6 @@ local SPAWN_PROBE_HEIGHT = 200
 -- ServerStorage so it isn't replicated until a clone is parented into Workspace.
 local SPAWN_TEMPLATE_NAME = "GoldenCookieTemplate"
 
-local GC_ATTRIBUTE = "GoldenCookies"
-
 local random = Random.new()
 local clickEarnTimestamps = {}
 local cookieSheetsFolder
@@ -64,16 +64,30 @@ local function getOrCreateFolder(parent, name)
 	return folder
 end
 
+local function getPersistent(player)
+	local data = player and PlayerDataService.Get(player)
+	local persistent = type(data) == "table" and data.Persistent
+	return type(persistent) == "table" and persistent or nil
+end
+
+local function readBalance(persistent)
+	return math.max(0, math.floor(tonumber(persistent.GoldenCookies) or 0))
+end
+
 function GoldenCookieService.GetGoldenCookies(player)
-	local value = player:GetAttribute(GC_ATTRIBUTE)
-	if typeof(value) == "number" then
-		return math.max(0, math.floor(value))
-	end
-	return 0
+	local persistent = getPersistent(player)
+	return persistent and readBalance(persistent) or 0
 end
 
 function GoldenCookieService.SetGoldenCookies(player, amount)
-	player:SetAttribute(GC_ATTRIBUTE, math.max(0, math.floor(amount)))
+	local persistent = getPersistent(player)
+	if not persistent then
+		return nil
+	end
+
+	persistent.GoldenCookies = math.max(0, math.floor(tonumber(amount) or 0))
+	player:SetAttribute(Attrs.GoldenCookies, persistent.GoldenCookies)
+	return persistent.GoldenCookies
 end
 
 -- Adds GC to a player's balance, records non-refund lifetime earnings, and
@@ -81,12 +95,19 @@ end
 function GoldenCookieService.AddGoldenCookies(player, amount, source)
 	amount = math.floor(tonumber(amount) or 0)
 	if amount == 0 then
-		return GoldenCookieService.GetGoldenCookies(player)
+		local persistent = getPersistent(player)
+		return persistent and readBalance(persistent) or nil
 	end
 
-	local previousTotal = GoldenCookieService.GetGoldenCookies(player)
+	local persistent = getPersistent(player)
+	if not persistent then
+		return nil
+	end
+
+	local previousTotal = readBalance(persistent)
 	local newTotal = math.max(0, previousTotal + amount)
-	player:SetAttribute(GC_ATTRIBUTE, newTotal)
+	persistent.GoldenCookies = newTotal
+	player:SetAttribute(Attrs.GoldenCookies, persistent.GoldenCookies)
 	PlayerMetricsService.RecordGoldenCookiesEarned(player, newTotal - previousTotal, source)
 
 	if amount > 0 then
@@ -104,12 +125,18 @@ function GoldenCookieService.TrySpend(player, amount)
 		return false
 	end
 
-	local balance = GoldenCookieService.GetGoldenCookies(player)
+	local persistent = getPersistent(player)
+	if not persistent then
+		return false
+	end
+
+	local balance = readBalance(persistent)
 	if balance < amount then
 		return false
 	end
 
-	player:SetAttribute(GC_ATTRIBUTE, balance - amount)
+	persistent.GoldenCookies = balance - amount
+	player:SetAttribute(Attrs.GoldenCookies, persistent.GoldenCookies)
 	PlayerMetricsService.RecordGoldenCookiesSpent(player, amount)
 	return true
 end
@@ -143,8 +170,10 @@ function GoldenCookieService.RollClickDrop(player)
 		return 0
 	end
 
+	if GoldenCookieService.AddGoldenCookies(player, 1, "click") == nil then
+		return 0
+	end
 	table.insert(timestamps, now)
-	GoldenCookieService.AddGoldenCookies(player, 1, "click")
 	return 1
 end
 
@@ -299,8 +328,12 @@ local function spawnGoldenCookie()
 		if claimed or not player or not player.Parent then
 			return
 		end
+		if GoldenCookieService.AddGoldenCookies(player, reward, "spawn") == nil then
+			return
+		end
+		-- Preserve first-valid-claimant contention. An unavailable profile does not
+		-- consume the spawn, but the first successful canonical award still wins it.
 		claimed = true
-		GoldenCookieService.AddGoldenCookies(player, reward, "spawn")
 		instance:Destroy()
 	end
 

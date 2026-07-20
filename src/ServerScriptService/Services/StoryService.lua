@@ -6,7 +6,10 @@ local ServerStorage = game:GetService("ServerStorage")
 
 local Services = ServerScriptService:WaitForChild("Services")
 local SheetService = require(Services:WaitForChild("SheetService"))
+local GooSkinService = require(Services:WaitForChild("GooSkinService"))
 local MascotService = require(Services:WaitForChild("MascotService"))
+local PlayerDataProjectionAudit = require(Services:WaitForChild("PlayerDataProjectionAudit"))
+local PlayerDataService = require(Services:WaitForChild("PlayerDataService"))
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(Shared:WaitForChild("Attrs"))
@@ -19,6 +22,40 @@ local mascotByPlayer = {}
 local transitioningByPlayer = {}
 local transitionVersionByPlayer = {}
 local skinConnectionByPlayer = {}
+
+local function getPersistent(player)
+	local data = PlayerDataService.Get(player)
+	local persistent = type(data) == "table" and data.Persistent
+	return type(persistent) == "table" and persistent or nil
+end
+
+local function getStoryValue(player, field, fallback)
+	local persistent = getPersistent(player)
+	local value = persistent and persistent[field]
+	if value == nil then
+		return fallback
+	end
+	return value
+end
+
+local function setStoryValue(player, field, attribute, value)
+	local persistent = getPersistent(player)
+	if not persistent then
+		return false
+	end
+
+	persistent[field] = value
+	player:SetAttribute(attribute, persistent[field])
+	return true
+end
+
+local function getHealingClicks(player)
+	return tonumber(getStoryValue(player, "StoryHealingClicks", 0)) or 0
+end
+
+local function getMixerUnlocked(player)
+	return getStoryValue(player, "MixerUnlocked", false) == true
+end
 
 local function beginTransition(player)
 	local version = (transitionVersionByPlayer[player] or 0) + 1
@@ -38,11 +75,11 @@ local function finishTransition(player, version)
 end
 
 local function getStep(player)
-	return player:GetAttribute(Attrs.StoryStep) or StoryConfig.STEPS.Meteor
+	return getStoryValue(player, "StoryStep", StoryConfig.STEPS.Meteor)
 end
 
 local function getStoryTemplate(player)
-	local selectedId = player and player:GetAttribute(Attrs.SelectedGooSkinId)
+	local selectedId = GooSkinService.GetSelectedSkinId(player)
 	local selected = GooSkinAssets.Resolve(selectedId)
 	if selected then
 		return selected
@@ -68,16 +105,17 @@ end
 
 local function broadcastState(player)
 	Net.fireClient(Net.Names.StoryStateChanged, player, {
-		chapter = player:GetAttribute(Attrs.StoryChapter),
+		chapter = getStoryValue(player, "StoryChapter", StoryConfig.CHAPTER_ID),
 		step = getStep(player),
-		healingClicks = player:GetAttribute(Attrs.StoryHealingClicks) or 0,
-		mixerUnlocked = player:GetAttribute(Attrs.MixerUnlocked) == true,
+		healingClicks = getHealingClicks(player),
+		mixerUnlocked = getMixerUnlocked(player),
 	})
 end
 
 local function setStep(player, step)
-	player:SetAttribute(Attrs.StoryStep, step)
-	broadcastState(player)
+	if setStoryValue(player, "StoryStep", Attrs.StoryStep, step) then
+		broadcastState(player)
+	end
 end
 
 local function setMascotPresentation(player)
@@ -88,7 +126,7 @@ local function setMascotPresentation(player)
 
 	local sheet = SheetService.GetPlayerSheet(player)
 	local step = getStep(player)
-	local healingClicks = player:GetAttribute(Attrs.StoryHealingClicks) or 0
+	local healingClicks = getHealingClicks(player)
 	local idleAnchor = getAnchor(sheet, "AlienIdleAnchor")
 	local revealAnchor = getAnchor(sheet, "AlienRevealAnchor")
 
@@ -174,16 +212,26 @@ local function finishHealing(player)
 end
 
 function StoryService.SetupPlayer(player)
-	player:SetAttribute(Attrs.StoryChapter, StoryConfig.CHAPTER_ID)
-	if player:GetAttribute(Attrs.StoryStep) == nil then
-		player:SetAttribute(Attrs.StoryStep, StoryConfig.STEPS.Meteor)
+	local persistent = getPersistent(player)
+	if not persistent then
+		return
 	end
-	if player:GetAttribute(Attrs.StoryHealingClicks) == nil then
-		player:SetAttribute(Attrs.StoryHealingClicks, 0)
-	end
-	if player:GetAttribute(Attrs.MixerUnlocked) == nil then
-		player:SetAttribute(Attrs.MixerUnlocked, false)
-	end
+
+	-- Preserve the existing loaded projection semantics, but normalize Data first so the
+	-- attributes remain projections rather than inputs to the story state machine.
+	persistent.IntroSeen = persistent.IntroSeen == true
+	persistent.StoryChapter = StoryConfig.CHAPTER_ID
+	persistent.StoryStep = persistent.StoryStep or StoryConfig.STEPS.Meteor
+	persistent.StoryHealingClicks = tonumber(persistent.StoryHealingClicks) or 0
+	persistent.MixerUnlocked = persistent.MixerUnlocked == true
+
+	player:SetAttribute(Attrs.IntroSeen, persistent.IntroSeen)
+	player:SetAttribute(Attrs.StoryChapter, persistent.StoryChapter)
+	player:SetAttribute(Attrs.StoryStep, persistent.StoryStep)
+	player:SetAttribute(Attrs.StoryHealingClicks, persistent.StoryHealingClicks)
+	player:SetAttribute(Attrs.MixerUnlocked, persistent.MixerUnlocked)
+	PlayerDataProjectionAudit.MarkStoryProjectionReady(player)
+
 	spawnMascot(player)
 	if skinConnectionByPlayer[player] then
 		skinConnectionByPlayer[player]:Disconnect()
@@ -194,7 +242,7 @@ function StoryService.SetupPlayer(player)
 		spawnMascot(player)
 		if
 			getStep(player) == StoryConfig.STEPS.Healing
-			and (player:GetAttribute(Attrs.StoryHealingClicks) or 0) >= StoryConfig.HEALING_CLICKS
+			and getHealingClicks(player) >= StoryConfig.HEALING_CLICKS
 			and not transitioningByPlayer[player]
 		then
 			finishHealing(player)
@@ -208,8 +256,10 @@ function StoryService.OnCookieClicked(player)
 		return
 	end
 
-	local clicks = math.min(StoryConfig.HEALING_CLICKS, (player:GetAttribute(Attrs.StoryHealingClicks) or 0) + 1)
-	player:SetAttribute(Attrs.StoryHealingClicks, clicks)
+	local clicks = math.min(StoryConfig.HEALING_CLICKS, getHealingClicks(player) + 1)
+	if not setStoryValue(player, "StoryHealingClicks", Attrs.StoryHealingClicks, clicks) then
+		return
+	end
 
 	local mascot = mascotByPlayer[player]
 	if mascot then
@@ -262,13 +312,23 @@ local function playDebugJoy(player)
 	end)
 end
 
+function StoryService.MarkIntroSeen(player)
+	if getStep(player) == StoryConfig.STEPS.Meteor then
+		return false
+	end
+	return setStoryValue(player, "IntroSeen", Attrs.IntroSeen, true)
+end
+
 local function handleAction(player, action)
 	if action == "RubbleCleared" and getStep(player) == StoryConfig.STEPS.Meteor then
 		if transitioningByPlayer[player] then
 			return
 		end
 		local transitionVersion = beginTransition(player)
-		player:SetAttribute(Attrs.StoryHealingClicks, 0)
+		if not setStoryValue(player, "StoryHealingClicks", Attrs.StoryHealingClicks, 0) then
+			finishTransition(player, transitionVersion)
+			return
+		end
 		local mascot = mascotByPlayer[player]
 		local sheet = SheetService.GetPlayerSheet(player)
 		local revealAnchor = getAnchor(sheet, "AlienRevealAnchor")
@@ -281,26 +341,38 @@ local function handleAction(player, action)
 			setStep(player, StoryConfig.STEPS.Healing)
 			-- StoryStep advances before IntroSeen, with no yield between the writes. A save at any
 			-- boundary is therefore either replay-safe (Meteor + unseen) or a valid Healing state.
-			player:SetAttribute(Attrs.IntroSeen, true)
+			setStoryValue(player, "IntroSeen", Attrs.IntroSeen, true)
 			-- If a cosmetic swap occurred during RevealFromSquash's yield, apply the new
 			-- step to the replacement model instead of leaving it in the hidden Meteor pose.
 			setMascotPresentation(player)
 		end
 		finishTransition(player, transitionVersion)
 	elseif action == "CompleteLore" and getStep(player) == StoryConfig.STEPS.Lore then
-		player:SetAttribute(Attrs.MixerUnlocked, true)
+		setStoryValue(player, "MixerUnlocked", Attrs.MixerUnlocked, true)
 		setStep(player, StoryConfig.STEPS.BuildTask)
 		setMascotPresentation(player)
 	elseif action == "RequestState" then
 		broadcastState(player)
 	elseif action == "ResetChapter" then
+		local persistent = getPersistent(player)
+		if not persistent then
+			return
+		end
 		transitionVersionByPlayer[player] = (transitionVersionByPlayer[player] or 0) + 1
 		transitioningByPlayer[player] = nil
-		player:SetAttribute(Attrs.IntroSeen, false)
-		player:SetAttribute(Attrs.StoryChapter, StoryConfig.CHAPTER_ID)
-		player:SetAttribute(Attrs.StoryStep, StoryConfig.STEPS.Meteor)
-		player:SetAttribute(Attrs.StoryHealingClicks, 0)
-		player:SetAttribute(Attrs.MixerUnlocked, false)
+
+		-- Reset the canonical chapter as one group before publishing any projected changes.
+		persistent.IntroSeen = false
+		persistent.StoryChapter = StoryConfig.CHAPTER_ID
+		persistent.StoryStep = StoryConfig.STEPS.Meteor
+		persistent.StoryHealingClicks = 0
+		persistent.MixerUnlocked = false
+
+		player:SetAttribute(Attrs.IntroSeen, persistent.IntroSeen)
+		player:SetAttribute(Attrs.StoryChapter, persistent.StoryChapter)
+		player:SetAttribute(Attrs.StoryStep, persistent.StoryStep)
+		player:SetAttribute(Attrs.StoryHealingClicks, persistent.StoryHealingClicks)
+		player:SetAttribute(Attrs.MixerUnlocked, persistent.MixerUnlocked)
 		setMascotPresentation(player)
 		broadcastState(player)
 	elseif action == "DebugPlayJoy" then

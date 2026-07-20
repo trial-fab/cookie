@@ -18,9 +18,10 @@ local WheelService = {}
 local random = Random.new()
 local configurationReady = false
 
-function WheelService.SetupPlayer(player, persistent)
-	BuildingSkinService.SetupPlayer(player, persistent)
-	GooSkinService.SetupPlayer(player, persistent)
+function WheelService.SetupPlayer(player)
+	local buildingReady = BuildingSkinService.SetupPlayer(player)
+	local gooReady = GooSkinService.SetupPlayer(player)
+	return buildingReady and gooReady
 end
 
 function WheelService.EquipSkin(player, buildingId, skinId)
@@ -78,7 +79,7 @@ function WheelService.Spin(player)
 	if not configurationReady then
 		return { Success = false, Reason = "ConfigurationUnavailable" }
 	end
-	if not GooSkinService.GetOwned(player) then
+	if not GooSkinService.IsReady(player) then
 		return { Success = false, Reason = "NotReady" }
 	end
 
@@ -98,8 +99,7 @@ function WheelService.Spin(player)
 	end
 	PlayerMetricsService.RecordWheelSpin(player)
 
-	local owned = GooSkinService.GetOwned(player)
-	local duplicate = owned[def.Id] == true
+	local duplicate = GooSkinService.IsOwned(player, def.Id)
 	if duplicate then
 		GoldenCookieService.AddGoldenCookies(player, WheelConfig.DuplicateRefundGC, "refund")
 	else

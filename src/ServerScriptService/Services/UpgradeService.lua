@@ -10,6 +10,7 @@ local CookieService = require(ServerScriptService.Services.CookieService)
 local AutoclickerAnalyticsService = require(ServerScriptService.Services.AutoclickerAnalyticsService)
 local FloorAnalyticsService = require(ServerScriptService.Services.FloorAnalyticsService)
 local FloorService = require(ServerScriptService.Services.FloorService)
+local PlayerDataService = require(ServerScriptService.Services.PlayerDataService)
 local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
 local StoryService = require(ServerScriptService.Services.StoryService)
 local SheetService = require(ServerScriptService.Services.SheetService)
@@ -27,6 +28,7 @@ local Attrs = require(ReplicatedStorage.Shared.Attrs)
 local PvpConfig = require(ReplicatedStorage.Shared.PvpConfig)
 
 local UpgradeService = {}
+local unlockedBuildingsReadyByPlayer = setmetatable({}, { __mode = "k" })
 
 local SELL_REFUND_RATIO = 0.5
 local UPGRADE_TEMPLATES_FOLDER = "UpgradeTemplates"
@@ -40,16 +42,7 @@ local PICKAXE_TOOLS = {
 	["PA High Tech"] = true,
 }
 
-local function getCookiesValue(player)
-	local leaderstats = player:FindFirstChild("leaderstats")
-	if not leaderstats then
-		return nil
-	end
-
-	return leaderstats:FindFirstChild("Cookies")
-end
-
-local function getUpgradeCountValue(player, upgradeId)
+local function getUpgradeCountProjection(player, upgradeId)
 	local upgradeCountData = player:FindFirstChild("UpgradeCountData")
 	if not upgradeCountData then
 		return nil
@@ -63,22 +56,70 @@ local function getUpgradeCountValue(player, upgradeId)
 	return nil
 end
 
-local function ensureUpgradeCountValue(player, upgradeId, config)
-	local upgradeCountData = player:FindFirstChild("UpgradeCountData")
-	if not upgradeCountData then
+local function getRun(player)
+	local data = player and PlayerDataService.GetDomain7Data(player)
+	local run = type(data) == "table" and data.Run
+	return type(run) == "table" and run or nil
+end
+
+local function getUpgradeCount(player, upgradeId)
+	local run = getRun(player)
+	local counts = run and run.UpgradeCounts
+	return type(counts) == "table" and tonumber(counts[upgradeId]) or nil
+end
+
+local function setUpgradeCount(player, upgradeId, count, expectedRun)
+	local run = getRun(player)
+	local counts = run and run.UpgradeCounts
+	local projection = getUpgradeCountProjection(player, upgradeId)
+	if not run or (expectedRun and run ~= expectedRun) or type(counts) ~= "table" then
 		return nil
 	end
 
-	local value = getUpgradeCountValue(player, upgradeId)
-	if value then
-		return value
+	count = tonumber(count)
+	if not count or count ~= count or count == math.huge or count == -math.huge then
+		count = 0
+	else
+		count = math.round(count)
 	end
 
-	value = Instance.new("IntValue")
-	value.Name = upgradeId
-	value.Value = config.InitialCount or 0
-	value.Parent = upgradeCountData
-	return value
+	if not projection then
+		local upgradeCountData = player:FindFirstChild("UpgradeCountData")
+		if not upgradeCountData then
+			return nil
+		end
+		projection = Instance.new("IntValue")
+		projection.Name = upgradeId
+	end
+
+	counts[upgradeId] = count
+	projection.Value = count
+	if not projection.Parent then
+		projection.Parent = player.UpgradeCountData
+	end
+	return count
+end
+
+local function addUpgradeCount(player, upgradeId, amount, expectedRun)
+	local current = getUpgradeCount(player, upgradeId)
+	if current == nil then
+		return nil
+	end
+	return setUpgradeCount(player, upgradeId, current + amount, expectedRun)
+end
+
+local function ensureUpgradeCount(player, upgradeId, config)
+	local run = getRun(player)
+	local counts = run and run.UpgradeCounts
+	if type(counts) ~= "table" then
+		return nil
+	end
+
+	local count = tonumber(counts[upgradeId])
+	if count ~= nil then
+		return count
+	end
+	return setUpgradeCount(player, upgradeId, config.InitialCount or 0, run)
 end
 
 local function findUpgradeTemplateContainer()
@@ -133,7 +174,7 @@ local function disableLegacyPickaxeScripts(tool)
 	end
 end
 
-local function grantTool(player, config)
+local function grantTool(player, config, expectedRun)
 	local template = findToolTemplate(config)
 	if not template then
 		return false, "Upgrade tool template was not found."
@@ -143,6 +184,12 @@ local function grantTool(player, config)
 	local starterGear = player:FindFirstChild("StarterGear") or player:WaitForChild("StarterGear", 5)
 	if not backpack or not starterGear then
 		return false, "Player inventory is not ready."
+	end
+	-- Both WaitForChild calls may yield. Re-fetch the live canonical Run and verify its identity
+	-- before granting anything, so profile loss or ResetRun cannot leak a stale gear grant into a
+	-- later/new Run.
+	if expectedRun and getRun(player) ~= expectedRun then
+		return false, "Player data is not ready."
 	end
 
 	removeToolFromContainer(backpack, template.Name)
@@ -424,9 +471,9 @@ local function decrementBuildingCount(player, upgradeId)
 		return false
 	end
 
-	local countValue = getUpgradeCountValue(player, upgradeId)
-	if countValue and countValue.Value > (config.InitialCount or 0) then
-		countValue.Value -= 1
+	local count = getUpgradeCount(player, upgradeId)
+	if count and count > (config.InitialCount or 0) then
+		addUpgradeCount(player, upgradeId, -1)
 		return true
 	end
 
@@ -439,14 +486,14 @@ end
 -- getEffectTotal/hasEffect rather than relying on mutated state.
 local function getEffectTotal(player, effectName)
 	local total = 0
-	local upgradeCountData = player:FindFirstChild("UpgradeCountData")
-	if not upgradeCountData then
+	local run = getRun(player)
+	local counts = run and run.UpgradeCounts
+	if type(counts) ~= "table" then
 		return total
 	end
 
 	for upgradeId, config in pairs(UpgradeConfig) do
-		local countValue = upgradeCountData:FindFirstChild(upgradeId)
-		local count = countValue and countValue:IsA("IntValue") and countValue.Value or config.InitialCount or 0
+		local count = tonumber(counts[upgradeId]) or config.InitialCount or 0
 		local ownedCount = math.max(0, count - (config.InitialCount or 0))
 
 		local value = config.Effects and config.Effects[effectName]
@@ -472,34 +519,36 @@ local function hasEffect(player, effectName)
 end
 
 -- Building "unlocked" state (store silhouette/near-miss): a building stays unlocked
--- once ever purchased, even if later sold to 0. Tracked as a JSON set on the
--- `UnlockedBuildingsJson` attribute, persisted by PlayerDataService and read by
--- StoreController. Mirrors the OwnedSkins attribute pattern.
-local UNLOCKED_BUILDINGS_ATTRIBUTE = "UnlockedBuildingsJson"
+-- once ever purchased, even if later sold to 0. Profile.Data is authoritative; the
+-- JSON attribute is a client-facing Store projection.
+local function getPersistent(player)
+	local data = PlayerDataService.Get(player)
+	local persistent = type(data) == "table" and data.Persistent
+	return type(persistent) == "table" and persistent or nil
+end
 
-local function getUnlockedBuildings(player)
-	local ok, decoded = pcall(function()
-		return HttpService:JSONDecode(player:GetAttribute(UNLOCKED_BUILDINGS_ATTRIBUTE) or "{}")
-	end)
-	return (ok and type(decoded) == "table") and decoded or {}
+local function publishUnlockedBuildings(player, unlocked)
+	local ok, encoded = pcall(HttpService.JSONEncode, HttpService, unlocked)
+	if not ok then
+		return false
+	end
+	player:SetAttribute(Attrs.UnlockedBuildingsJson, encoded)
+	return true
 end
 
 local function markBuildingUnlocked(player, upgradeId)
-	local set = getUnlockedBuildings(player)
+	local persistent = unlockedBuildingsReadyByPlayer[player] and getPersistent(player) or nil
+	local set = persistent and persistent.UnlockedBuildings
+	if type(set) ~= "table" then
+		return nil
+	end
 	if set[upgradeId] then
 		return false
 	end
 
 	set[upgradeId] = true
-	local ok, encoded = pcall(function()
-		return HttpService:JSONEncode(set)
-	end)
-	if ok then
-		player:SetAttribute(UNLOCKED_BUILDINGS_ATTRIBUTE, encoded)
-		return true
-	end
-
-	return false
+	publishUnlockedBuildings(player, set)
+	return true
 end
 
 local function applyPlayerMaxHealth(player, character, healthDelta)
@@ -858,6 +907,9 @@ local function getBuildingFromPart(part)
 end
 
 function UpgradeService.DamageBuilding(player, targetPart, hitPosition)
+	if not getRun(player) then
+		return
+	end
 	local tool, damage = getEquippedBuildingTool(player)
 	if not tool then
 		return
@@ -940,13 +992,19 @@ local EffectHandlers = {
 				return false, "Autoclick Power configuration is invalid."
 			end
 
-			local powerCount = ensureUpgradeCountValue(player, AutoclickerConfig.PowerUpgradeId, powerConfig)
-			if not powerCount then
+			local powerCount = ensureUpgradeCount(player, AutoclickerConfig.PowerUpgradeId, powerConfig)
+			if powerCount == nil then
 				return false, "Autoclick Power data is not ready."
 			end
 
 			local targetLevel = math.clamp(math.floor(tonumber(grantedPowerLevel) or 1), 1, maxLevel)
-			powerCount.Value = math.max(powerCount.Value, targetLevel)
+			if not setUpgradeCount(
+				player,
+				AutoclickerConfig.PowerUpgradeId,
+				math.max(powerCount, targetLevel)
+			) then
+				return false, "Autoclick Power data is not ready."
+			end
 			return true
 		end,
 	},
@@ -959,14 +1017,18 @@ function UpgradeService.GetCost(upgradeId, currentCount)
 	return UpgradePricing.GetCost(config, currentCount)
 end
 
-function UpgradeService.ApplyUpgrade(player, upgradeId, amount, placementCFrame, placementFloorId)
+function UpgradeService.ApplyUpgrade(player, upgradeId, amount, placementCFrame, placementFloorId, expectedRun)
+	local run = getRun(player)
+	if not run or (expectedRun and run ~= expectedRun) then
+		return false, "Player data is not ready."
+	end
 	local config = UpgradeConfig[upgradeId]
 	if not config then
 		return false
 	end
 
 	if config.TemplateKind == "Gear" and amount > 0 then
-		return grantTool(player, config)
+		return grantTool(player, config, expectedRun)
 	elseif config.TemplateKind == "Building" and amount > 0 then
 		return placeBuilding(player, upgradeId, config, placementCFrame, nil, placementFloorId)
 	elseif config.TemplateKind == "Building" then
@@ -995,8 +1057,8 @@ function UpgradeService.ApplyUpgrade(player, upgradeId, amount, placementCFrame,
 	end
 
 	if config.Levels then
-		local countValue = getUpgradeCountValue(player, upgradeId)
-		local levelIndex = countValue and (amount > 0 and countValue.Value or countValue.Value + 1) or nil
+		local count = getUpgradeCount(player, upgradeId)
+		local levelIndex = count and (amount > 0 and count or count + 1) or nil
 		local level = levelIndex and config.Levels[levelIndex]
 		if level and level.Effects then
 			local applied, applyMessage = applyEffects(level.Effects)
@@ -1010,9 +1072,17 @@ function UpgradeService.ApplyUpgrade(player, upgradeId, amount, placementCFrame,
 end
 
 function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFloorId)
+	local run = getRun(player)
+	if not run then
+		return false, "Player data is not ready."
+	end
+
 	local config = UpgradeConfig[upgradeId]
 	if not config then
 		return false, "Unknown upgrade."
+	end
+	if config.TemplateKind == "Building" and not UpgradeService.IsUnlockedBuildingsReady(player) then
+		return false, "Player data is not ready."
 	end
 
 	if config.StoreVisible == false then
@@ -1025,16 +1095,16 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFl
 		return false, "This item is currently unavailable."
 	end
 
-	local countValue = ensureUpgradeCountValue(player, upgradeId, config)
-	if not countValue then
+	local count = ensureUpgradeCount(player, upgradeId, config)
+	if count == nil then
 		return false, "Upgrade data is not ready."
 	end
 
-	if config.Levels and countValue.Value >= #config.Levels then
+	if config.Levels and count >= #config.Levels then
 		return false, "Fully upgraded."
 	end
 
-	if config.MaxCount and countValue.Value >= config.MaxCount then
+	if config.MaxCount and count >= config.MaxCount then
 		return false, "You already own this upgrade."
 	end
 
@@ -1043,7 +1113,7 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFl
 	end
 
 	if config.TemplateKind == "BuildingUpgrade" then
-		local nextLevel = config.Levels and config.Levels[countValue.Value + 1]
+		local nextLevel = config.Levels and config.Levels[count + 1]
 		if not nextLevel then
 			return false, "Fully upgraded."
 		end
@@ -1051,8 +1121,7 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFl
 		local targetId = config.TargetBuilding
 		local requiredCount = nextLevel.UnlockCount or 0
 		if type(targetId) == "string" and requiredCount > 0 then
-			local ownedValue = getUpgradeCountValue(player, targetId)
-			local owned = ownedValue and ownedValue.Value or 0
+			local owned = getUpgradeCount(player, targetId) or 0
 			if owned < requiredCount then
 				local targetConfig = UpgradeConfig[targetId]
 				local targetName = targetConfig and targetConfig.DisplayName or targetId
@@ -1068,8 +1137,7 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFl
 		local requiredId = UpgradeRequirement.GetRequiredId(requirement)
 		local requiredCount = UpgradeRequirement.GetRequiredCount(requirement)
 		if type(requiredId) == "string" and requiredCount > 0 then
-			local ownedValue = getUpgradeCountValue(player, requiredId)
-			local owned = ownedValue and ownedValue.Value or 0
+			local owned = getUpgradeCount(player, requiredId) or 0
 			if owned < requiredCount then
 				local requiredConfig = UpgradeConfig[requiredId]
 				local requiredName = requiredConfig and requiredConfig.DisplayName or requiredId
@@ -1078,9 +1146,9 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFl
 		end
 	end
 
-	local cost = UpgradeService.GetCost(upgradeId, countValue.Value)
-	local cookies = getCookiesValue(player)
-	if not cookies or cookies.Value < cost then
+	local cost = UpgradeService.GetCost(upgradeId, count)
+	local cookies = CookieService.GetCookies(player)
+	if not cost or cookies == nil or cookies < cost then
 		return false, "Not enough cookies."
 	end
 
@@ -1088,18 +1156,25 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFl
 		-- Stat effects can now fail (FloorUnlock validates order/state), so use the
 		-- same atomic transaction as yielding grants: deduct, apply, then refund and
 		-- roll back the count on failure.
-		CookieService.AddCookies(player, -cost, PlayerMetricsService.CookieSources.PendingPurchase)
-		countValue.Value += 1
+		if not CookieService.AddCookies(player, -cost, PlayerMetricsService.CookieSources.PendingPurchase) then
+			return false, "Player data is not ready."
+		end
+		if setUpgradeCount(player, upgradeId, count + 1, run) == nil then
+			return false, "Player data is not ready."
+		end
 		local applied, applyMessage = UpgradeService.ApplyUpgrade(
 			player,
 			upgradeId,
 			1,
 			placementCFrame,
-			placementFloorId
+			placementFloorId,
+			run
 		)
 		if not applied then
-			countValue.Value -= 1
-			CookieService.AddCookies(player, cost, PlayerMetricsService.CookieSources.Refund)
+			if getRun(player) == run then
+				setUpgradeCount(player, upgradeId, count, run)
+				CookieService.AddCookies(player, cost, PlayerMetricsService.CookieSources.Refund)
+			end
 			return false, applyMessage or "Upgrade could not be applied."
 		end
 
@@ -1114,20 +1189,33 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFl
 	-- Deduct BEFORE applying: grantTool can yield (WaitForChild), and paying after a
 	-- yield lets two overlapped purchases both pass the funds check above. Refund if
 	-- the apply then fails.
-	CookieService.AddCookies(player, -cost, PlayerMetricsService.CookieSources.PendingPurchase)
+	if not CookieService.AddCookies(player, -cost, PlayerMetricsService.CookieSources.PendingPurchase) then
+		return false, "Player data is not ready."
+	end
 	local applied, applyMessage, placedBuilding = UpgradeService.ApplyUpgrade(
 		player,
 		upgradeId,
 		1,
 		placementCFrame,
-		placementFloorId
+		placementFloorId,
+		run
 	)
 	if not applied then
-		CookieService.AddCookies(player, cost, PlayerMetricsService.CookieSources.Refund)
+		if getRun(player) == run then
+			CookieService.AddCookies(player, cost, PlayerMetricsService.CookieSources.Refund)
+		end
 		return false, applyMessage or "Upgrade could not be applied."
 	end
+	-- ApplyUpgrade can yield while granting gear. Re-check the live profile after that exact
+	-- transaction step and before count/metric recording; do not add a rollback or move the
+	-- existing deduction -> apply -> failure-refund -> count -> metric order.
+	if getRun(player) ~= run then
+		return false, "Player data is not ready."
+	end
 
-	countValue.Value += 1
+	if addUpgradeCount(player, upgradeId, 1, run) == nil then
+		return false, "Player data is not ready."
+	end
 	PlayerMetricsService.RecordCookiesSpent(player, cost)
 
 	if config.TemplateKind == "Building" then
@@ -1152,6 +1240,11 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFl
 end
 
 function UpgradeService.Sell(player, upgradeId)
+	local run = getRun(player)
+	if not run then
+		return false, "Player data is not ready."
+	end
+
 	local config = UpgradeConfig[upgradeId]
 	if not config then
 		return false, "Unknown upgrade."
@@ -1161,24 +1254,26 @@ function UpgradeService.Sell(player, upgradeId)
 		return false, "This upgrade cannot be sold."
 	end
 
-	local countValue = ensureUpgradeCountValue(player, upgradeId, config)
-	if not countValue then
+	local count = ensureUpgradeCount(player, upgradeId, config)
+	if count == nil then
 		return false, "Upgrade data is not ready."
 	end
 
 	local minimumCount = config.InitialCount or 0
-	if countValue.Value <= minimumCount then
+	if count <= minimumCount then
 		return false, "You cannot sell this upgrade."
 	end
 
-	local previousPurchaseCost = UpgradeService.GetCost(upgradeId, countValue.Value - 1) or 0
+	local previousPurchaseCost = UpgradeService.GetCost(upgradeId, count - 1) or 0
 	local refund = math.floor(previousPurchaseCost * SELL_REFUND_RATIO)
 
-	countValue.Value -= 1
+	if setUpgradeCount(player, upgradeId, count - 1, run) == nil then
+		return false, "Player data is not ready."
+	end
 	UpgradeService.ApplyUpgrade(player, upgradeId, -1)
-	if config.TemplateKind == "Gear" and countValue.Value <= minimumCount then
+	if config.TemplateKind == "Gear" and count - 1 <= minimumCount then
 		revokeTool(player, config)
-	elseif config.TemplateKind == "Building" and countValue.Value <= minimumCount then
+	elseif config.TemplateKind == "Building" and count - 1 <= minimumCount then
 		removeBuilding(player, upgradeId)
 	end
 	CookieService.AddCookies(player, refund, PlayerMetricsService.CookieSources.Refund)
@@ -1187,6 +1282,11 @@ function UpgradeService.Sell(player, upgradeId)
 end
 
 function UpgradeService.SellBuilding(player, building)
+	local run = getRun(player)
+	if not run then
+		return false, "Player data is not ready."
+	end
+
 	if typeof(building) ~= "Instance" or not building:IsA("Model") then
 		return false, "Choose a building to sell."
 	end
@@ -1202,16 +1302,18 @@ function UpgradeService.SellBuilding(player, building)
 		return false, "That building cannot be sold."
 	end
 
-	local countValue = ensureUpgradeCountValue(player, upgradeId, config)
+	local count = ensureUpgradeCount(player, upgradeId, config)
 	local minimumCount = config.InitialCount or 0
-	if not countValue or countValue.Value <= minimumCount then
+	if count == nil or count <= minimumCount then
 		return false, "You cannot sell this building."
 	end
 
-	local previousPurchaseCost = UpgradeService.GetCost(upgradeId, countValue.Value - 1) or 0
+	local previousPurchaseCost = UpgradeService.GetCost(upgradeId, count - 1) or 0
 	local refund = math.floor(previousPurchaseCost * SELL_REFUND_RATIO)
 
-	countValue.Value -= 1
+	if setUpgradeCount(player, upgradeId, count - 1, run) == nil then
+		return false, "Player data is not ready."
+	end
 	markBuildingCountAdjusted(building)
 	building:Destroy()
 	CookieService.AddCookies(player, refund, PlayerMetricsService.CookieSources.Refund)
@@ -1220,6 +1322,11 @@ function UpgradeService.SellBuilding(player, building)
 end
 
 function UpgradeService.SellAllBuildings(player, upgradeId)
+	local run = getRun(player)
+	if not run then
+		return false, "Player data is not ready."
+	end
+
 	if type(upgradeId) ~= "string" then
 		return false, "Invalid building."
 	end
@@ -1229,22 +1336,24 @@ function UpgradeService.SellAllBuildings(player, upgradeId)
 		return false, "That building cannot be sold."
 	end
 
-	local countValue = ensureUpgradeCountValue(player, upgradeId, config)
+	local count = ensureUpgradeCount(player, upgradeId, config)
 	local minimumCount = config.InitialCount or 0
-	if not countValue or countValue.Value <= minimumCount then
+	if count == nil or count <= minimumCount then
 		return false, "You have none to sell."
 	end
 
 	-- Sum the same per-building math the single sell uses, over every sellable
 	-- count, so the bulk refund is exactly N individual sells.
-	local soldCount = countValue.Value - minimumCount
+	local soldCount = count - minimumCount
 	local refund = 0
-	for count = minimumCount + 1, countValue.Value do
-		local previousPurchaseCost = UpgradeService.GetCost(upgradeId, count - 1) or 0
+	for purchaseCount = minimumCount + 1, count do
+		local previousPurchaseCost = UpgradeService.GetCost(upgradeId, purchaseCount - 1) or 0
 		refund += math.floor(previousPurchaseCost * SELL_REFUND_RATIO)
 	end
 
-	countValue.Value = minimumCount
+	if setUpgradeCount(player, upgradeId, minimumCount, run) == nil then
+		return false, "Player data is not ready."
+	end
 	removeAllBuildings(player, upgradeId)
 	CookieService.AddCookies(player, refund, PlayerMetricsService.CookieSources.Refund)
 
@@ -1252,7 +1361,26 @@ function UpgradeService.SellAllBuildings(player, upgradeId)
 end
 
 function UpgradeService.SetupPlayer(player, buildingPlacements)
-	UpgradeService.SyncPlayerUpgrades(player, buildingPlacements)
+	return UpgradeService.SyncPlayerUpgrades(player, buildingPlacements)
+end
+
+function UpgradeService.SetupUnlockedBuildings(player)
+	unlockedBuildingsReadyByPlayer[player] = nil
+	local persistent = getPersistent(player)
+	if not persistent then
+		return false
+	end
+
+	if type(persistent.UnlockedBuildings) ~= "table" then
+		persistent.UnlockedBuildings = {}
+	end
+	unlockedBuildingsReadyByPlayer[player] = true
+	publishUnlockedBuildings(player, persistent.UnlockedBuildings)
+	return true
+end
+
+function UpgradeService.IsUnlockedBuildingsReady(player)
+	return unlockedBuildingsReadyByPlayer[player] == true and getPersistent(player) ~= nil
 end
 
 local function getDimensionPlacements(buildingPlacements)
@@ -1287,28 +1415,37 @@ local function getSavedPlacements(dimensionPlacements, player, upgradeId)
 end
 
 function UpgradeService.SyncPlayerUpgrades(player, buildingPlacements)
+	local run = getRun(player)
+	if not run then
+		return false
+	end
 	local dimensionPlacements = getDimensionPlacements(buildingPlacements)
 
 	for upgradeId, config in pairs(UpgradeConfig) do
-		ensureUpgradeCountValue(player, upgradeId, config)
+		if ensureUpgradeCount(player, upgradeId, config) == nil then
+			return false
+		end
 	end
 
 	-- Publish persisted ownership before restoring floor-keyed placements.
 	FloorService.RefreshPlayer(player)
 
 	for upgradeId, config in pairs(UpgradeConfig) do
-		local countValue = ensureUpgradeCountValue(player, upgradeId, config)
+		local count = ensureUpgradeCount(player, upgradeId, config)
 		local minimumCount = config.InitialCount or 0
 		-- PVP paused (Shared.PvpConfig): keep the saved count but don't materialize
 		-- the tool/building — it falls through to the revoke/remove branch below.
-		if countValue and countValue.Value > minimumCount and not PvpConfig.IsUpgradePaused(upgradeId) then
+		if count and count > minimumCount and not PvpConfig.IsUpgradePaused(upgradeId) then
 			if config.TemplateKind == "Gear" then
-				grantTool(player, config)
+				grantTool(player, config, run)
+				if getRun(player) ~= run then
+					return false
+				end
 			elseif config.TemplateKind == "Building" then
 				-- Backfill: any building currently owned counts as unlocked (covers
 				-- saves predating this feature, and keeps it unlocked through sells).
 				markBuildingUnlocked(player, upgradeId)
-				local desiredCount = countValue.Value - minimumCount
+				local desiredCount = count - minimumCount
 				local existingBuildings = getOwnedBuildings(player, upgradeId)
 				local existingCount = #existingBuildings
 				while existingCount > desiredCount do
@@ -1326,7 +1463,7 @@ function UpgradeService.SyncPlayerUpgrades(player, buildingPlacements)
 					placeBuilding(player, upgradeId, config, savedCFrame, index, floorId)
 				end
 			end
-		elseif countValue then
+		elseif count then
 			if config.TemplateKind == "Gear" then
 				revokeTool(player, config)
 			elseif config.TemplateKind == "Building" then
@@ -1336,17 +1473,28 @@ function UpgradeService.SyncPlayerUpgrades(player, buildingPlacements)
 	end
 
 	UpgradeService.ApplyPlayerCharacterStats(player)
+	return getRun(player) == run
 end
 
 function UpgradeService.ApplyPlayerCharacterStats(player, character)
+	if not getRun(player) then
+		return false
+	end
 	applyPlayerMaxHealth(player, character)
+	return true
 end
 
 -- §4c effect queries: consumers derive entitlements from upgrade counts.
 -- Reset (cookie economy) wipes building unlocks back to locked. GC/skins survive
 -- resets (invariant 7), but buildings are cookie-economy progression.
 function UpgradeService.ClearUnlockedBuildings(player)
-	player:SetAttribute(UNLOCKED_BUILDINGS_ATTRIBUTE, "{}")
+	local persistent = unlockedBuildingsReadyByPlayer[player] and getPersistent(player) or nil
+	if not persistent then
+		return false
+	end
+	persistent.UnlockedBuildings = {}
+	publishUnlockedBuildings(player, persistent.UnlockedBuildings)
+	return true
 end
 
 function UpgradeService.GetEffectTotal(player, effectName)

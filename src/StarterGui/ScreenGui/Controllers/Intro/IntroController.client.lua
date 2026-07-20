@@ -1,9 +1,8 @@
 -- IntroController: the first-time-player "cookie meteor" intro.
 --
--- Plays ONCE, only for a brand-new account (server seeds the IntroSeen attribute from saved
--- data; PlayerDataService forces it true for any pre-existing save, so legacy players never
--- see this). Everything here is CLIENT-LOCAL to the newcomer — the crater clone is parented
--- under Workspace on this client only, so other players never see it.
+-- Plays ONCE while the server-projected story step is Meteor. Everything here is CLIENT-LOCAL
+-- to the newcomer — the crater clone is parented under Workspace on this client only, so other
+-- players never see it.
 --
 -- Flow:
 --   1. TITLE SCREEN — the HUD is hidden; a flaming, trailing meteor orbits the whole map (a
@@ -16,7 +15,8 @@
 --   4. The player clicks the rubble a few times; EACH click chips rubble AND tweens the meteor
 --      one step closer to the real Cookie's size/rotation/position.
 --   5. On the last click the meteor has fully become the Cookie; we reveal the real Cookie and
---      swap. MarkIntroSeen is also sent here as a fallback.
+--      swap. The active Chapter 1 path reports RubbleCleared; optional non-story playback can
+--      use the guarded MarkIntroSeen fallback instead.
 --
 -- VFX are authored on the ReplicatedStorage template (MeteorTrail/MeteorFire/MeteorSmoke, the
 -- ExplosionBurst/ExplosionSmoke ParticleEmitters, and the Impact Sound). This controller only

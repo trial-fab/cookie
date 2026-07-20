@@ -1,5 +1,4 @@
 local DataStoreService = game:GetService("DataStoreService")
-local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -11,7 +10,7 @@ local FloorConfig = require(ReplicatedStorage.Shared.FloorConfig)
 local FloorGeometry = require(ReplicatedStorage.Shared.FloorGeometry)
 local PlayerMetricConfig = require(ReplicatedStorage.Shared.PlayerMetricConfig)
 local PlayerMetricsService = require(script.Parent.PlayerMetricsService)
-local SettingsConfig = require(ReplicatedStorage.Shared.SettingsConfig)
+local PlayerDataProjectionAudit = require(script.Parent.PlayerDataProjectionAudit)
 local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
 
 local PlayerDataService = {}
@@ -82,9 +81,10 @@ local MIGRATIONS = {}
 
 local playerStore
 local profilesByPlayer = {}
-local cacheByPlayer = {}
 local expectedSessionEndByPlayer = {}
 local confirmedSaveGenerationByProfile = {}
+local domain7ReadyByPlayer = setmetatable({}, { __mode = "k" })
+local placementSerializationReadyByPlayer = setmetatable({}, { __mode = "k" })
 
 local function copyDictionary(source)
 	local result = {}
@@ -121,25 +121,125 @@ local function normalizePlacements(placements, schemaVersion)
 	return normalized
 end
 
-local function validateUpgradeCounts(data)
+local function normalizeIntValue(value)
+	local number = tonumber(value) or 0
+	if number ~= number or number == math.huge or number == -math.huge then
+		return 0
+	end
+	return math.round(number)
+end
+
+local function normalizeUpgradeCounts(data, preserveUnknown)
 	local run = type(data) == "table" and data.Run
 	if type(run) ~= "table" then
-		return
+		return false
 	end
-	if type(run.UpgradeCounts) ~= "table" then
-		run.UpgradeCounts = {}
-		return
+
+	local source = type(run.UpgradeCounts) == "table" and run.UpgradeCounts or {}
+	local normalized = {}
+	if preserveUnknown then
+		for upgradeId, value in pairs(source) do
+			normalized[tostring(upgradeId)] = normalizeIntValue(value)
+		end
 	end
 
 	for upgradeId, config in pairs(UpgradeConfig) do
-		if config.Levels and run.UpgradeCounts[upgradeId] ~= nil then
-			run.UpgradeCounts[upgradeId] = math.clamp(
-				tonumber(run.UpgradeCounts[upgradeId]) or 0,
-				0,
-				#config.Levels
-			)
+		local sourceValue = source[upgradeId]
+		local value
+		if sourceValue == nil then
+			value = normalizeIntValue(config.InitialCount or 0)
+		elseif config.Levels then
+			-- Preserve the legacy order: configured levels were numerically clamped first,
+			-- then coerced by their IntValue projection (including +infinity -> max level).
+			value = normalizeIntValue(math.clamp(tonumber(sourceValue) or 0, 0, #config.Levels))
+		else
+			value = normalizeIntValue(sourceValue)
+		end
+		normalized[upgradeId] = value
+	end
+	run.UpgradeCounts = normalized
+	return true
+end
+
+local function getProjectionValue(player, parentName, valueName, className)
+	local parent = parentName and player:FindFirstChild(parentName) or player
+	local value = parent and parent:FindFirstChild(valueName)
+	return value and value:IsA(className) and value or nil
+end
+
+local function reconcileUpgradeCountProjection(player, counts)
+	local container = player:FindFirstChild("UpgradeCountData")
+	if not container then
+		return false
+	end
+
+	local remaining = {}
+	for upgradeId in pairs(counts) do
+		remaining[upgradeId] = true
+	end
+	for _, child in ipairs(container:GetChildren()) do
+		local expected = counts[child.Name]
+		if expected == nil or not child:IsA("IntValue") or remaining[child.Name] ~= true then
+			child:Destroy()
+		else
+			child.Value = expected
+			remaining[child.Name] = nil
 		end
 	end
+	for upgradeId in pairs(remaining) do
+		local value = Instance.new("IntValue")
+		value.Name = upgradeId
+		value.Value = counts[upgradeId]
+		value.Parent = container
+	end
+	return true
+end
+
+local function getDomain7Projections(player)
+	local cookies = getProjectionValue(player, "leaderstats", "Cookies", "NumberValue")
+	local realPlayTime = getProjectionValue(player, nil, "RealPlayTime", "IntValue")
+	local canBeStolenFrom = getProjectionValue(player, nil, "CanBeStolenFrom", "BoolValue")
+	local shieldTime = getProjectionValue(player, nil, "ShieldTime", "IntValue")
+	local upgradeCountData = player:FindFirstChild("UpgradeCountData")
+	if
+		not cookies
+		or not realPlayTime
+		or not canBeStolenFrom
+		or not shieldTime
+		or not upgradeCountData
+		or not upgradeCountData:IsA("Configuration")
+	then
+		return nil
+	end
+	return cookies, realPlayTime, canBeStolenFrom, shieldTime
+end
+
+local function projectDomain7(player, data)
+	local run = type(data) == "table" and data.Run
+	local persistent = type(data) == "table" and data.Persistent
+	if type(run) ~= "table" or type(persistent) ~= "table" then
+		return false
+	end
+
+	local cookies, realPlayTime, canBeStolenFrom, shieldTime = getDomain7Projections(player)
+	if not cookies then
+		return false
+	end
+
+	-- Match the coercion formerly performed by NumberValue/IntValue before the save bridge
+	-- copied projections back into Data. Do not invent a non-negative or MaxCount clamp: only
+	-- leveled upgrades have the legacy [0, #Levels] load clamp.
+	run.Cookies = tonumber(run.Cookies) or 0
+	run.CanBeStolenFrom = run.CanBeStolenFrom == true
+	run.ShieldTime = normalizeIntValue(run.ShieldTime == nil and DEFAULT_RUN_DATA.ShieldTime or run.ShieldTime)
+	persistent.RealPlayTime = normalizeIntValue(persistent.RealPlayTime)
+	normalizeUpgradeCounts(data, true)
+
+	cookies.Value = run.Cookies
+	realPlayTime.Value = persistent.RealPlayTime
+	canBeStolenFrom.Value = run.CanBeStolenFrom
+	shieldTime.Value = run.ShieldTime
+	return reconcileUpgradeCountProjection(player, run.UpgradeCounts)
 end
 
 local function migrate(data)
@@ -247,76 +347,22 @@ local function serializeBuildingPlacements(player)
 	return placements
 end
 
-local function decodeJsonTable(value)
-	if type(value) ~= "string" or value == "" then
-		return nil
-	end
-
-	local ok, decoded = pcall(function()
-		return HttpService:JSONDecode(value)
-	end)
-	return ok and type(decoded) == "table" and decoded or nil
-end
-
-local function projectionsAreReady(player)
-	local leaderstats = player:FindFirstChild("leaderstats")
-	return leaderstats ~= nil
-		and leaderstats:FindFirstChild("Cookies") ~= nil
-		and player:FindFirstChild("RealPlayTime") ~= nil
-		and player:FindFirstChild("CanBeStolenFrom") ~= nil
-		and player:FindFirstChild("ShieldTime") ~= nil
-		and player:FindFirstChild("UpgradeCountData") ~= nil
-end
-
 -- This function is deliberately yield-free. ProfileStore dispatches OnSave listeners with
 -- task.spawn and immediately continues its save path, so yielding here would make the final
 -- snapshot race the DataStore transform. Explicit saves also call this before Profile:Save().
 local function snapshotPlayer(player, data)
-	if not data or not projectionsAreReady(player) then
+	if type(data) ~= "table" or type(data.Run) ~= "table" then
 		return data
 	end
 
-	data.Run = type(data.Run) == "table" and data.Run or copyDictionary(DEFAULT_RUN_DATA)
-	data.Persistent = type(data.Persistent) == "table" and data.Persistent
-		or copyDictionary(DEFAULT_PERSISTENT_DATA)
-
 	local run = data.Run
-	local persistent = data.Persistent
-	local leaderstats = player:FindFirstChild("leaderstats")
-	local cookies = leaderstats and leaderstats:FindFirstChild("Cookies")
-	local realPlayTime = player:FindFirstChild("RealPlayTime")
-	local canBeStolenFrom = player:FindFirstChild("CanBeStolenFrom")
-	local shieldTime = player:FindFirstChild("ShieldTime")
-	local upgradeCountData = player:FindFirstChild("UpgradeCountData")
 
-	if cookies then
-		run.Cookies = cookies.Value
-	end
-	if realPlayTime then
-		persistent.RealPlayTime = realPlayTime.Value
-	end
-
-	local xp = player:GetAttribute(Attrs.Xp)
-	if typeof(xp) == "number" then
-		persistent.Xp = math.max(0, math.floor(xp))
-	end
-	if canBeStolenFrom then
-		run.CanBeStolenFrom = canBeStolenFrom.Value
-	end
-	if shieldTime then
-		run.ShieldTime = shieldTime.Value
-	end
-
-	if upgradeCountData then
-		run.UpgradeCounts = {}
-		for _, value in ipairs(upgradeCountData:GetChildren()) do
-			if value:IsA("IntValue") then
-				run.UpgradeCounts[value.Name] = value.Value
-			end
-		end
-	end
-
-	local buildingPlacements = serializeBuildingPlacements(player)
+	-- Placement is the sole permanent projection-to-Data exception. Its readiness is purposely
+	-- independent of all non-placement Values: loaded placement Data is retained during setup,
+	-- and reset closes this gate before its potentially yielding world resynchronization.
+	local buildingPlacements = placementSerializationReadyByPlayer[player]
+		and serializeBuildingPlacements(player)
+		or nil
 	if buildingPlacements then
 		run.Placements = type(run.Placements) == "table" and run.Placements
 			or copyDictionary(DEFAULT_RUN_DATA.Placements)
@@ -324,69 +370,12 @@ local function snapshotPlayer(player, data)
 		run.Placements[DEFAULT_DIMENSION] = buildingPlacements
 	end
 
-	local goldenCookies = player:GetAttribute(Attrs.GoldenCookies)
-	if typeof(goldenCookies) == "number" then
-		persistent.GoldenCookies = goldenCookies
-	end
-	local loginStreak = player:GetAttribute(Attrs.LoginStreak)
-	if typeof(loginStreak) == "number" then
-		persistent.LoginStreak = loginStreak
-	end
-	local lastLoginDay = player:GetAttribute(Attrs.LastLoginDay)
-	if typeof(lastLoginDay) == "number" then
-		persistent.LastLoginDay = lastLoginDay
-	end
-	local lastSeenTimestamp = player:GetAttribute(Attrs.LastSeenTimestamp)
-	if typeof(lastSeenTimestamp) == "number" then
-		persistent.LastSeenTimestamp = lastSeenTimestamp
-	end
-	local buildViewNudgeDisabled = player:GetAttribute(Attrs.BuildViewNudgeDisabled)
-	if typeof(buildViewNudgeDisabled) == "boolean" then
-		persistent.BuildViewNudgeDisabled = buildViewNudgeDisabled
-	end
-	local introSeen = player:GetAttribute(Attrs.IntroSeen)
-	if typeof(introSeen) == "boolean" then
-		persistent.IntroSeen = introSeen
-	end
-	local storyChapter = player:GetAttribute(Attrs.StoryChapter)
-	if typeof(storyChapter) == "string" then
-		persistent.StoryChapter = storyChapter
-	end
-	local storyStep = player:GetAttribute(Attrs.StoryStep)
-	if typeof(storyStep) == "string" then
-		persistent.StoryStep = storyStep
-	end
-	local storyHealingClicks = player:GetAttribute(Attrs.StoryHealingClicks)
-	if typeof(storyHealingClicks) == "number" then
-		persistent.StoryHealingClicks = math.max(0, math.floor(storyHealingClicks))
-	end
-	local mixerUnlocked = player:GetAttribute(Attrs.MixerUnlocked)
-	if typeof(mixerUnlocked) == "boolean" then
-		persistent.MixerUnlocked = mixerUnlocked
-	end
-
-	persistent.OwnedSkins = decodeJsonTable(player:GetAttribute(Attrs.OwnedSkinsJson)) or persistent.OwnedSkins
-	persistent.EquippedSkins = decodeJsonTable(player:GetAttribute(Attrs.EquippedSkinsJson)) or persistent.EquippedSkins
-	persistent.OwnedGooSkins = decodeJsonTable(player:GetAttribute(Attrs.OwnedGooSkinsJson))
-		or persistent.OwnedGooSkins
-	local selectedGooSkin = player:GetAttribute(Attrs.SelectedGooSkinId)
-	if typeof(selectedGooSkin) == "string" then
-		persistent.SelectedGooSkin = selectedGooSkin
-	end
-	persistent.Achievements = decodeJsonTable(player:GetAttribute(Attrs.AchievementsJson)) or persistent.Achievements
-	persistent.UnlockedBuildings = decodeJsonTable(player:GetAttribute(Attrs.UnlockedBuildingsJson))
-		or persistent.UnlockedBuildings
-	persistent.Settings = type(persistent.Settings) == "table" and persistent.Settings or {}
-	for _, attribute in ipairs(SettingsConfig.StoredAttributes) do
-		local value = player:GetAttribute(attribute)
-		if type(value) == "boolean" then
-			persistent.Settings[attribute] = value
-		else
-			persistent.Settings[attribute] = nil
-		end
-	end
-	PlayerMetricsService.WritePersistentData(player, persistent)
-	validateUpgradeCounts(data)
+	-- Publish only canonical metric fields that are legitimately queued before comparing any
+	-- converted projection. This keeps normal one-second lag quiet without masking unqueued
+	-- attribute/Data mismatches. Every periodic, explicit, leave, and shutdown save reaches this
+	-- shared yield-free snapshot path.
+	PlayerMetricsService.FlushProjections(player)
+	PlayerDataProjectionAudit.Check(player, data)
 
 	return data
 end
@@ -408,7 +397,10 @@ end
 local function cleanupPlayer(player, profile)
 	if profilesByPlayer[player] == profile then
 		profilesByPlayer[player] = nil
-		cacheByPlayer[player] = nil
+		domain7ReadyByPlayer[player] = nil
+		placementSerializationReadyByPlayer[player] = nil
+		PlayerMetricsService.ForgetPlayer(player)
+		PlayerDataProjectionAudit.ForgetPlayer(player)
 	end
 	confirmedSaveGenerationByProfile[profile] = nil
 	local expected = expectedSessionEndByPlayer[player]
@@ -439,7 +431,7 @@ local function prepareProfile(profile)
 	local loadedPlacementSchemaVersion = data.Run.PlacementSchemaVersion
 	data.Run.Placements = normalizePlacements(data.Run.Placements, loadedPlacementSchemaVersion)
 	data.Run.PlacementSchemaVersion = FloorConfig.PlacementSchemaVersion
-	validateUpgradeCounts(data)
+	normalizeUpgradeCounts(data, true)
 	return true
 end
 
@@ -493,26 +485,97 @@ function PlayerDataService.Load(player)
 	end
 
 	profilesByPlayer[player] = profile
-	cacheByPlayer[player] = data
 	confirmedSaveGenerationByProfile[profile] = readSavedGeneration(profile)
 	return data
 end
 
 function PlayerDataService.Get(player)
-	return cacheByPlayer[player]
+	local profile = profilesByPlayer[player]
+	if not profile or not profile:IsActive() then
+		return nil
+	end
+	return profile.Data
+end
+
+-- Domain 7 is deliberately gated separately from the active-profile accessor because earlier
+-- canonical domains finish setup before Run projections and metrics are ready. Public Run reads
+-- and mutations must use this accessor so pre-setup and post-session-loss calls fail closed.
+function PlayerDataService.GetDomain7Data(player)
+	if domain7ReadyByPlayer[player] ~= true then
+		return nil
+	end
+	local data = PlayerDataService.Get(player)
+	if type(data) ~= "table" or type(data.Run) ~= "table" or type(data.Persistent) ~= "table" then
+		return nil
+	end
+	return data
+end
+
+function PlayerDataService.PrepareDomain7Projections(player)
+	domain7ReadyByPlayer[player] = nil
+	local data = PlayerDataService.Get(player)
+	return data ~= nil and projectDomain7(player, data) or false
+end
+
+function PlayerDataService.CompleteDomain7Setup(player)
+	local data = PlayerDataService.Get(player)
+	if not data or not projectDomain7(player, data) then
+		return false
+	end
+	domain7ReadyByPlayer[player] = true
+	PlayerDataProjectionAudit.MarkDomain7ProjectionReady(player)
+	return true
+end
+
+function PlayerDataService.MarkPlacementSerializationReady(player)
+	if not PlayerDataService.GetDomain7Data(player) then
+		return false
+	end
+	placementSerializationReadyByPlayer[player] = true
+	return true
+end
+
+-- LastSeenTimestamp is canonical Data. Callers may reach this after a yielded setup path or
+-- stamp-loop wait, so re-check the live profile immediately before mutating it. Project only
+-- after Data holds the exact value that will be saved.
+function PlayerDataService.SetLastSeenTimestamp(player, timestamp)
+	local profile = profilesByPlayer[player]
+	if not profile or not profile:IsActive() then
+		return false
+	end
+
+	local persistent = type(profile.Data) == "table" and profile.Data.Persistent
+	local numericTimestamp = tonumber(timestamp)
+	if type(persistent) ~= "table" or not numericTimestamp then
+		return false
+	end
+
+	persistent.LastSeenTimestamp = math.floor(numericTimestamp)
+	player:SetAttribute(Attrs.LastSeenTimestamp, persistent.LastSeenTimestamp)
+	return true
 end
 
 function PlayerDataService.UpdateFromPlayerValues(player)
-	return snapshotPlayer(player, cacheByPlayer[player])
+	return snapshotPlayer(player, PlayerDataService.Get(player))
 end
 
 function PlayerDataService.ResetRun(player)
-	local data = cacheByPlayer[player]
-	if not data then
+	local data = PlayerDataService.GetDomain7Data(player)
+	-- Validate every required projection before swapping the canonical table. Replacement,
+	-- normalization, and reprojection then complete in one yield-free turn.
+	if not data or not getDomain7Projections(player) then
 		return nil
 	end
 
+	placementSerializationReadyByPlayer[player] = nil
 	data.Run = copyDictionary(DEFAULT_RUN_DATA)
+	-- A reset intentionally constructs a fresh Run. Known definitions receive their current
+	-- InitialCount defaults; unknown IDs preserved across ordinary loads are not resurrected at
+	-- zero by the former Value read-back bridge.
+	normalizeUpgradeCounts(data, false)
+	if not projectDomain7(player, data) then
+		return nil
+	end
 	return data.Run
 end
 
@@ -547,8 +610,11 @@ end
 function PlayerDataService.Forget(player)
 	local profile = profilesByPlayer[player]
 	if not profile then
-		cacheByPlayer[player] = nil
 		expectedSessionEndByPlayer[player] = nil
+		domain7ReadyByPlayer[player] = nil
+		placementSerializationReadyByPlayer[player] = nil
+		PlayerMetricsService.ForgetPlayer(player)
+		PlayerDataProjectionAudit.ForgetPlayer(player)
 		return
 	end
 
@@ -563,9 +629,10 @@ local function endPlayerSession(player)
 		return
 	end
 
-	if typeof(player:GetAttribute(Attrs.LastSeenTimestamp)) == "number" then
-		player:SetAttribute(Attrs.LastSeenTimestamp, os.time())
-	end
+	-- Stage A leave-ordering protection: stamp canonical Data and its projection before the
+	-- final snapshot and before EndSession releases the profile lock. Do not rely on the later
+	-- OfflineEarningsService PlayerRemoving listener or on listener ordering.
+	PlayerDataService.SetLastSeenTimestamp(player, os.time())
 	snapshotPlayer(player, profile.Data)
 	expectedSessionEndByPlayer[player] = true
 	profile:EndSession()
@@ -602,5 +669,9 @@ function PlayerDataService.Init()
 	startAutosaveLoop()
 	print("PlayerDataService initialized (ProfileStore)")
 end
+
+-- PlayerMetricsService must validate every read/mutation against this active-profile contract,
+-- but must not require this module or retain Profile.Data references of its own.
+PlayerMetricsService.ConfigureDataAccess(PlayerDataService.Get)
 
 return PlayerDataService

@@ -6,16 +6,17 @@
 -- Rewards (GC per day, plus the Mythical Celestial goo skin on the final cycle day) come from the
 -- shared DailyRewardConfig so client and server agree.
 --
--- Persistence is free: the LoginStreak / LastLoginDay attributes this reads and writes are
--- already in PlayerDataService's persistent partition and seeded by PlayerSetupService's
--- createPersistentAttributes, so nothing extra needs saving.
+-- Profile.Data.Persistent owns LoginStreak / LastLoginDay. Player attributes are replication
+-- projections used by the Wheel and Profile controllers, never server decision inputs.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
 
 local Net = require(ReplicatedStorage.Shared.Net)
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
 local DailyRewardConfig = require(ReplicatedStorage.Shared.DailyRewardConfig)
 local GoldenCookieService = require(script.Parent.GoldenCookieService)
+local PlayerDataService = require(ServerScriptService.Services.PlayerDataService)
 local PlayerMetricsService = require(script.Parent.PlayerMetricsService)
 local WheelService = require(script.Parent.WheelService)
 
@@ -25,16 +26,34 @@ local function currentUtcDay()
 	return math.floor(os.time() / 86400)
 end
 
-local function readInt(player, attr)
-	local value = player:GetAttribute(attr)
-	return typeof(value) == "number" and math.floor(value) or 0
+local function getPersistent(player)
+	local data = PlayerDataService.Get(player)
+	local persistent = type(data) == "table" and data.Persistent
+	return type(persistent) == "table" and persistent or nil
+end
+
+local function readInt(persistent, field)
+	local value = tonumber(persistent[field])
+	return value and math.floor(value) or 0
 end
 
 -- Read-only snapshot for the client to render (it can also derive this from the attributes).
 function DailyRewardService.GetState(player)
+	local persistent = getPersistent(player)
+	if not persistent then
+		return {
+			CanClaim = false,
+			Streak = 0,
+			PendingStreak = 1,
+			DayInCycle = DailyRewardConfig.GetDayInCycle(1),
+			LastClaimDay = 0,
+			Reason = "NotReady",
+		}
+	end
+
 	local today = currentUtcDay()
-	local lastDay = readInt(player, Attrs.LastLoginDay)
-	local streak = readInt(player, Attrs.LoginStreak)
+	local lastDay = readInt(persistent, "LastLoginDay")
+	local streak = readInt(persistent, "LoginStreak")
 	-- The day they'd be ON if they claimed right now (drives the highlighted card).
 	local pendingStreak
 	if lastDay == today then
@@ -58,9 +77,17 @@ end
 -- streak/attribute writes commit together — a double-invoke can't double-claim. Returns a
 -- result table (also the RemoteFunction reply to the caller).
 function DailyRewardService.Claim(player)
+	local persistent = getPersistent(player)
+	if not persistent then
+		-- The remote is registered before PlayerSetupService finishes loading profiles. Fail
+		-- closed so an early invoke cannot claim against zero-like missing projections and then
+		-- have setup overwrite the claim, allowing a second reward.
+		return { Success = false, Reason = "NotReady" }
+	end
+
 	local today = currentUtcDay()
-	local lastDay = readInt(player, Attrs.LastLoginDay)
-	local streak = readInt(player, Attrs.LoginStreak)
+	local lastDay = readInt(persistent, "LastLoginDay")
+	local streak = readInt(persistent, "LoginStreak")
 
 	if lastDay == today then
 		return {
@@ -93,8 +120,15 @@ function DailyRewardService.Claim(player)
 		skinGranted = WheelService.GrantSkin(player, reward.SkinId)
 	end
 
-	player:SetAttribute(Attrs.LoginStreak, newStreak)
-	player:SetAttribute(Attrs.LastLoginDay, today)
+	-- SECURITY/DATA-INTEGRITY INVARIANT: everything from the live-profile read above through
+	-- reward grants, these canonical writes, their projections, and metric recording must remain
+	-- yield-free. GC, streak, skins, and BestLoginStreak are all canonical Data.
+	-- If any operation here starts yielding (for example, a future badge award), re-check the
+	-- live profile after the yield and redesign the mixed-domain transaction before mutating Data.
+	persistent.LoginStreak = newStreak
+	persistent.LastLoginDay = today
+	player:SetAttribute(Attrs.LoginStreak, persistent.LoginStreak)
+	player:SetAttribute(Attrs.LastLoginDay, persistent.LastLoginDay)
 	PlayerMetricsService.RecordLoginStreak(player, newStreak)
 
 	return {

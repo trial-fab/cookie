@@ -2,12 +2,26 @@
 -- PlayerDataService owns storage; this service validates client updates and mirrors loaded values
 -- onto Player attributes so the owning client can hydrate its ScreenGui.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
 
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
 local Net = require(ReplicatedStorage.Shared.Net)
 local SettingsConfig = require(ReplicatedStorage.Shared.SettingsConfig)
+local PlayerDataService = require(ServerScriptService.Services.PlayerDataService)
 
 local SettingsService = {}
+
+local function getCanonicalSettings(player)
+	local data = PlayerDataService.Get(player)
+	local persistent = type(data) == "table" and data.Persistent
+	if type(persistent) ~= "table" then
+		return nil
+	end
+	if type(persistent.Settings) ~= "table" then
+		persistent.Settings = {}
+	end
+	return persistent.Settings
+end
 
 function SettingsService.SetupPlayer(player, persistent)
 	persistent = type(persistent) == "table" and persistent or {}
@@ -35,13 +49,31 @@ function SettingsService.Init()
 			if not SettingsConfig.IsValidDeviceType(value) then
 				return
 			end
+			local settings = getCanonicalSettings(player)
+			if not settings then
+				return
+			end
+
+			-- Preserve the existing reset boundary: universal overrides and only this
+			-- device's overrides are cleared; preferences for the other device survive.
 			for _, persistedAttribute in ipairs(SettingsConfig.UniversalAttributes) do
-				player:SetAttribute(persistedAttribute, nil)
+				settings[persistedAttribute] = nil
 			end
 			for _, deviceAttribute in ipairs(SettingsConfig.DeviceAttributes) do
 				local storageAttribute = SettingsConfig.GetStorageAttribute(deviceAttribute, value)
 				if storageAttribute then
-					player:SetAttribute(storageAttribute, nil)
+					settings[storageAttribute] = nil
+				end
+			end
+
+			-- Data is canonical. Project only after every reset mutation is complete.
+			for _, persistedAttribute in ipairs(SettingsConfig.UniversalAttributes) do
+				player:SetAttribute(persistedAttribute, settings[persistedAttribute])
+			end
+			for _, deviceAttribute in ipairs(SettingsConfig.DeviceAttributes) do
+				local storageAttribute = SettingsConfig.GetStorageAttribute(deviceAttribute, value)
+				if storageAttribute then
+					player:SetAttribute(storageAttribute, settings[storageAttribute])
 				end
 			end
 			return
@@ -54,7 +86,13 @@ function SettingsService.Init()
 		if not storageAttribute then
 			return
 		end
-		player:SetAttribute(storageAttribute, value)
+		local settings = getCanonicalSettings(player)
+		if not settings then
+			return
+		end
+
+		settings[storageAttribute] = value
+		player:SetAttribute(storageAttribute, settings[storageAttribute])
 	end)
 
 	print("SettingsService initialized")

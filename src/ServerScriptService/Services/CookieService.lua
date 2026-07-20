@@ -8,11 +8,13 @@ local Net = require(ReplicatedStorage.Shared.Net)
 local NumberFormat = require(ReplicatedStorage.Shared.NumberFormat)
 local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
 local GoldenCookieService = require(ServerScriptService.Services.GoldenCookieService)
+local PlayerDataService = require(ServerScriptService.Services.PlayerDataService)
 local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
 local StoryService = require(ServerScriptService.Services.StoryService)
 local XpService = require(ServerScriptService.Services.XpService)
 
 local STEAL_RESET_SECONDS = 60
+local STEAL_PROTECTION_SECONDS = 300
 local MAX_STEAL_PER_WINDOW_RATIO = 0.30
 local MAX_STEAL_AMOUNT = 112000
 local CLICKING_POWER_UPGRADE_ID = "Clicking Power"
@@ -23,6 +25,7 @@ local MAX_CLICKS_PER_SECOND = 20
 
 local sheetState = {}
 local clickWindowByPlayer = {}
+local stealProtectionGenerationByPlayer = setmetatable({}, { __mode = "k" })
 
 local function isClickRateAllowed(player)
 	local now = os.clock()
@@ -42,21 +45,23 @@ local function getCookiesValue(player)
 		return nil
 	end
 
-	return leaderstats:FindFirstChild("Cookies")
+	local cookies = leaderstats:FindFirstChild("Cookies")
+	return cookies and cookies:IsA("NumberValue") and cookies or nil
+end
+
+local function getRun(player)
+	local data = player and PlayerDataService.GetDomain7Data(player)
+	local run = type(data) == "table" and data.Run
+	return type(run) == "table" and run or nil
 end
 
 local function getUpgradeCount(player, upgradeId)
-	local upgradeCountData = player:FindFirstChild("UpgradeCountData")
-	if not upgradeCountData then
+	local run = getRun(player)
+	local counts = run and run.UpgradeCounts
+	if type(counts) ~= "table" then
 		return 0
 	end
-
-	local countValue = upgradeCountData:FindFirstChild(upgradeId)
-	if countValue and countValue:IsA("IntValue") then
-		return math.max(0, countValue.Value)
-	end
-
-	return 0
+	return math.max(0, tonumber(counts[upgradeId]) or 0)
 end
 
 local function getClickPowerMultiplier()
@@ -109,6 +114,9 @@ function CookieService.GetClickEventMultiplier()
 end
 
 function CookieService.GetCookiesPerClick(player)
+	if not getRun(player) then
+		return nil
+	end
 	local clickingPowerCount = getUpgradeCount(player, CLICKING_POWER_UPGRADE_ID)
 	local cookiesPerClick = getClickPowerMultiplier() ^ clickingPowerCount
 
@@ -117,8 +125,9 @@ end
 
 function CookieService.RefreshCookiesPerClickDisplay(player)
 	local value = player:FindFirstChild("CookiesGainedPerClick")
-	if value and value:IsA("IntValue") then
-		value.Value = CookieService.GetCookiesPerClick(player)
+	local amount = CookieService.GetCookiesPerClick(player)
+	if value and value:IsA("IntValue") and amount then
+		value.Value = amount
 		return true
 	end
 
@@ -126,26 +135,40 @@ function CookieService.RefreshCookiesPerClickDisplay(player)
 end
 
 function CookieService.AddCookies(player, amount, source)
+	local run = getRun(player)
 	local cookies = getCookiesValue(player)
-	if not cookies then
+	amount = tonumber(amount)
+	if not run or not cookies or not amount or amount ~= amount or amount == math.huge or amount == -math.huge then
 		return false
 	end
 
-	local previous = cookies.Value
-	cookies.Value = math.max(0, previous + amount)
-	PlayerMetricsService.RecordCookieDelta(player, cookies.Value - previous, source)
+	local previous = tonumber(run.Cookies) or 0
+	local current = math.max(0, previous + amount)
+	run.Cookies = current
+	cookies.Value = current
+	PlayerMetricsService.RecordCookieDelta(player, current - previous, source)
 	return true
+end
+
+function CookieService.GetCookies(player)
+	local run = getRun(player)
+	return run and (tonumber(run.Cookies) or 0) or nil
 end
 
 function CookieService.HandleClick(player, options)
 	options = type(options) == "table" and options or {}
 	local automated = options.automated == true
 
+	-- Do not consume rate-limit state before the canonical domain is ready.
+	if not getRun(player) then
+		return false, 0
+	end
 	if not automated and not isClickRateAllowed(player) then
 		return false, 0
 	end
 
-	local amount = CookieService.GetCookiesPerClick(player) * getClickEventMultiplier()
+	local perClick = CookieService.GetCookiesPerClick(player)
+	local amount = perClick and perClick * getClickEventMultiplier() or 0
 	if amount <= 0 then
 		return false, 0
 	end
@@ -165,12 +188,57 @@ function CookieService.HandleClick(player, options)
 end
 
 function CookieService.SetCookies(player, amount)
+	local run = getRun(player)
 	local cookies = getCookiesValue(player)
-	if not cookies then
+	amount = tonumber(amount)
+	if not run or not cookies or not amount or amount ~= amount or amount == math.huge or amount == -math.huge then
 		return false
 	end
 
-	cookies.Value = math.max(0, amount)
+	run.Cookies = math.max(0, amount)
+	cookies.Value = run.Cookies
+	return true
+end
+
+function CookieService.GetCanBeStolenFrom(player)
+	local run = getRun(player)
+	if not run then
+		return nil
+	end
+	return run.CanBeStolenFrom == true
+end
+
+function CookieService.SetCanBeStolenFrom(player, enabled)
+	local run = getRun(player)
+	local projection = player:FindFirstChild("CanBeStolenFrom")
+	if not run or not projection or not projection:IsA("BoolValue") then
+		return false
+	end
+
+	run.CanBeStolenFrom = enabled == true
+	projection.Value = run.CanBeStolenFrom
+	return true
+end
+
+function CookieService.StartStealProtectionTimer(player)
+	local protected = CookieService.GetCanBeStolenFrom(player)
+	if protected == nil then
+		return false
+	end
+	stealProtectionGenerationByPlayer[player] = (stealProtectionGenerationByPlayer[player] or 0) + 1
+	local generation = stealProtectionGenerationByPlayer[player]
+	if protected then
+		return false
+	end
+
+	task.delay(STEAL_PROTECTION_SECONDS, function()
+		if stealProtectionGenerationByPlayer[player] ~= generation then
+			return
+		end
+		if player.Parent and CookieService.GetCanBeStolenFrom(player) == false then
+			CookieService.SetCanBeStolenFrom(player, true)
+		end
+	end)
 	return true
 end
 
@@ -239,8 +307,8 @@ local function resetStealWindowIfNeeded(sheet, owner)
 	state.stolenThisWindow = 0
 	state.canSteal = true
 
-	local ownerCookies = getCookiesValue(owner)
-	state.ownerCookiesAtWindowStart = ownerCookies and ownerCookies.Value or math.huge
+	local ownerBalance = CookieService.GetCookies(owner)
+	state.ownerCookiesAtWindowStart = ownerBalance == nil and math.huge or ownerBalance
 
 	return state
 end
@@ -260,35 +328,34 @@ local function markStealAmount(sheet, amount)
 end
 
 local function isOwnerProtected(owner)
-	local canBeStolenFrom = owner:FindFirstChild("CanBeStolenFrom")
-	return canBeStolenFrom and canBeStolenFrom:IsA("BoolValue") and not canBeStolenFrom.Value
+	return CookieService.GetCanBeStolenFrom(owner) == false
 end
 
 local function markAttackerAsStealer(attacker)
-	local canBeStolenFrom = attacker:FindFirstChild("CanBeStolenFrom")
-	if canBeStolenFrom and canBeStolenFrom:IsA("BoolValue") then
-		canBeStolenFrom.Value = true
-	end
+	return CookieService.SetCanBeStolenFrom(attacker, true)
 end
 
 local function calculateStealAmount(attacker, owner)
-	local attackerCookies = getCookiesValue(attacker)
-	local ownerCookies = getCookiesValue(owner)
+	local attackerCookies = CookieService.GetCookies(attacker)
+	local ownerCookies = CookieService.GetCookies(owner)
 
-	if not attackerCookies or not ownerCookies or ownerCookies.Value <= 0 then
+	if attackerCookies == nil or ownerCookies == nil or ownerCookies <= 0 then
 		return 0
 	end
 
 	local cookiesPerClick = CookieService.GetCookiesPerClick(attacker)
-	local baseSteal = math.max(cookiesPerClick * 2, ownerCookies.Value * 0.000625 + 0.5)
+	if not cookiesPerClick then
+		return 0
+	end
+	local baseSteal = math.max(cookiesPerClick * 2, ownerCookies * 0.000625 + 0.5)
 
-	local attackerCookieCount = math.max(attackerCookies.Value, 2)
+	local attackerCookieCount = math.max(attackerCookies, 2)
 	local growthLimit = attackerCookieCount / (10 * math.log(attackerCookieCount))
 
 	local stealAmount = math.min(baseSteal, growthLimit)
 	stealAmount = math.floor(math.min(math.max(stealAmount, 2), MAX_STEAL_AMOUNT))
 
-	return math.min(stealAmount, ownerCookies.Value)
+	return math.min(stealAmount, ownerCookies)
 end
 
 local function handleOwnerClick(cookiePart, owner)
@@ -302,6 +369,16 @@ local function handleStealClick(cookiePart, sheet, attacker, owner)
 	if not isCharacterAlive(attacker) then
 		return
 	end
+	-- Prove both canonical Runs are live before touching the theft-window cache or either
+	-- projection. This keeps crafted/pre-setup and post-profile-loss clicks fully fail-closed.
+	if
+		CookieService.GetCookies(attacker) == nil
+		or CookieService.GetCookies(owner) == nil
+		or CookieService.GetCanBeStolenFrom(attacker) == nil
+		or CookieService.GetCanBeStolenFrom(owner) == nil
+	then
+		return
+	end
 
 	local state = resetStealWindowIfNeeded(sheet, owner)
 
@@ -311,7 +388,9 @@ local function handleStealClick(cookiePart, sheet, attacker, owner)
 		return
 	end
 
-	markAttackerAsStealer(attacker)
+	if not markAttackerAsStealer(attacker) then
+		return
+	end
 
 	if isOwnerProtected(owner) then
 		displayIncrease(cookiePart, "Protected")
@@ -365,6 +444,7 @@ function CookieService.Init()
 
 	Players.PlayerRemoving:Connect(function(player)
 		clickWindowByPlayer[player] = nil
+		stealProtectionGenerationByPlayer[player] = nil
 	end)
 
 	local cookieSheetsFolder = Workspace:WaitForChild("CookieSheets")

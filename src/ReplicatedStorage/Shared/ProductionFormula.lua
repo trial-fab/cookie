@@ -33,7 +33,11 @@ local function addSource(sources, source)
 	table.insert(sources, source)
 end
 
-local function getUpgradeCount(player, upgradeId)
+local function getUpgradeCount(player, upgradeId, context)
+	if type(context) == "table" and type(context.UpgradeCounts) == "table" then
+		return tonumber(context.UpgradeCounts[upgradeId]) or 0
+	end
+
 	local upgradeCountData = player and player:FindFirstChild("UpgradeCountData")
 	if not upgradeCountData then
 		return 0
@@ -47,12 +51,12 @@ local function getUpgradeCount(player, upgradeId)
 	return 0
 end
 
-function ProductionFormula.GetUpgradeMultiplier(player, buildingId)
+function ProductionFormula.GetUpgradeMultiplier(player, buildingId, context)
 	local multiplier = 1
 
 	for upgradeId, config in pairs(UpgradeConfig) do
 		if config.TemplateKind == "BuildingUpgrade" and config.TargetBuilding == buildingId and config.Levels then
-			local levelsOwned = getUpgradeCount(player, upgradeId)
+			local levelsOwned = getUpgradeCount(player, upgradeId, context)
 			for level = 1, math.min(levelsOwned, #config.Levels) do
 				local levelData = config.Levels[level]
 				if levelData and type(levelData.OutputMultiplier) == "number" then
@@ -65,12 +69,14 @@ function ProductionFormula.GetUpgradeMultiplier(player, buildingId)
 	return math.max(0, multiplier)
 end
 
--- The equipped skin's multiplier is published per building as a NumberValue in
--- the player's EquippedSkinData folder by WheelService (replicates to the client,
--- so store previews and the server tick agree). Absent value = no skin = ×1.
-function ProductionFormula.GetBuildingSkinMultiplier(player, buildingId)
+-- Clients read the equipped-skin projection from EquippedSkinData. Server production supplies
+-- an optional canonical skinContext so replicated values never become server authority.
+function ProductionFormula.GetBuildingSkinMultiplier(player, buildingId, skinContext)
 	if not SkinFeatureConfig.BuildingSkinsEnabled then
 		return 1
+	end
+	if type(skinContext) == "table" and type(skinContext.BuildingMultiplier) == "number" then
+		return math.clamp(skinContext.BuildingMultiplier, 0, MAX_SKIN_MULTIPLIER)
 	end
 	local multiplier = 1
 
@@ -83,9 +89,12 @@ function ProductionFormula.GetBuildingSkinMultiplier(player, buildingId)
 	return math.clamp(multiplier, 0, MAX_SKIN_MULTIPLIER)
 end
 
-function ProductionFormula.GetGooSkinMultiplier(player)
+function ProductionFormula.GetGooSkinMultiplier(player, skinContext)
 	if not SkinFeatureConfig.GooSkinsEnabled then
 		return 1
+	end
+	if type(skinContext) == "table" and type(skinContext.GooMultiplier) == "number" then
+		return math.clamp(skinContext.GooMultiplier, 1, MAX_SKIN_MULTIPLIER)
 	end
 	local multiplier = player and player:GetAttribute(Attrs.GooSkinMultiplier)
 	return math.clamp(type(multiplier) == "number" and multiplier or 1, 1, MAX_SKIN_MULTIPLIER)
@@ -94,10 +103,10 @@ end
 -- Goo is universal; a future building-specific skin may override it for its building, but
 -- bonuses never stack. This preserves a stable ceiling and lets both cosmetic families live
 -- together later.
-function ProductionFormula.GetSkinMultiplier(player, buildingId)
+function ProductionFormula.GetSkinMultiplier(player, buildingId, skinContext)
 	return math.max(
-		ProductionFormula.GetGooSkinMultiplier(player),
-		ProductionFormula.GetBuildingSkinMultiplier(player, buildingId)
+		ProductionFormula.GetGooSkinMultiplier(player, skinContext),
+		ProductionFormula.GetBuildingSkinMultiplier(player, buildingId, skinContext)
 	)
 end
 
@@ -189,10 +198,10 @@ function ProductionFormula.GetFloorMultiplier(buildingId, floorContext)
 	return FloorConfig.GetProductionMultiplier(FloorConfig.NormalizeId(floorId), buildingId)
 end
 
-local function getSkinSource(player, buildingId)
-	local gooMultiplier = ProductionFormula.GetGooSkinMultiplier(player)
+local function getSkinSource(player, buildingId, skinContext)
+	local gooMultiplier = ProductionFormula.GetGooSkinMultiplier(player, skinContext)
 	local buildingSkinMultiplier = type(buildingId) == "string"
-			and ProductionFormula.GetBuildingSkinMultiplier(player, buildingId)
+			and ProductionFormula.GetBuildingSkinMultiplier(player, buildingId, skinContext)
 		or 1
 	if buildingSkinMultiplier > gooMultiplier then
 		return {
@@ -219,16 +228,16 @@ end
 -- Focused player-facing breakdown of the exact factors used for one building context.
 -- Sources with x1 remain in the result for diagnostics, but Active=false lets HUD callers
 -- hide them without having to reinterpret production math.
-function ProductionFormula.GetMultiplierBreakdown(player, buildingId, config, floorContext)
+function ProductionFormula.GetMultiplierBreakdown(player, buildingId, config, floorContext, skinContext)
 	if not config or config.TemplateKind ~= "Building" then
 		return { Sources = {}, Total = 1 }
 	end
 
 	local sources = {}
-	local skinSource = getSkinSource(player, buildingId)
+	local skinSource = getSkinSource(player, buildingId, skinContext)
 	addSource(sources, skinSource)
 
-	local upgradeMultiplier = ProductionFormula.GetUpgradeMultiplier(player, buildingId)
+	local upgradeMultiplier = ProductionFormula.GetUpgradeMultiplier(player, buildingId, skinContext)
 	addSource(sources, {
 		Id = "BuildingUpgrade:" .. tostring(buildingId),
 		Kind = "BuildingUpgrade",
@@ -271,9 +280,9 @@ end
 -- Sources that apply identically to every one of the player's buildings. Contextual
 -- building-upgrade and floor factors are intentionally absent until a building is selected
 -- or placed, preventing the always-on HUD from implying that they affect all production.
-function ProductionFormula.GetGlobalMultiplierBreakdown(player)
+function ProductionFormula.GetGlobalMultiplierBreakdown(player, skinContext)
 	local sources = {}
-	local skinSource = getSkinSource(player, nil)
+	local skinSource = getSkinSource(player, nil, skinContext)
 	addSource(sources, skinSource)
 	local eventBreakdown = ProductionFormula.GetEventMultiplierBreakdown()
 	for _, source in ipairs(eventBreakdown.Sources) do
@@ -285,30 +294,32 @@ function ProductionFormula.GetGlobalMultiplierBreakdown(player)
 	}
 end
 
-function ProductionFormula.GetMultiplier(player, buildingId, config, floorContext)
+function ProductionFormula.GetMultiplier(player, buildingId, config, floorContext, skinContext)
 	if not config or config.TemplateKind ~= "Building" then
 		return 1
 	end
 
-	return ProductionFormula.GetMultiplierBreakdown(player, buildingId, config, floorContext).Total
+	return ProductionFormula.GetMultiplierBreakdown(player, buildingId, config, floorContext, skinContext).Total
 end
 
-function ProductionFormula.GetCps(player, buildingId, config, floorContext)
+function ProductionFormula.GetCps(player, buildingId, config, floorContext, skinContext)
 	if not config or config.TemplateKind ~= "Building" then
 		return 0
 	end
 
 	local updateTime = math.max(1, config.UpdateTime or 30)
 	local baseCps = (config.CookiesGained or 0) / updateTime
-	return baseCps * ProductionFormula.GetMultiplier(player, buildingId, config, floorContext)
+	return baseCps * ProductionFormula.GetMultiplier(player, buildingId, config, floorContext, skinContext)
 end
 
-function ProductionFormula.GetTickOutput(player, buildingId, config, floorContext)
+function ProductionFormula.GetTickOutput(player, buildingId, config, floorContext, skinContext)
 	if not config or config.TemplateKind ~= "Building" then
 		return 0
 	end
 
-	return (config.CookiesGained or 0) * ProductionFormula.GetMultiplier(player, buildingId, config, floorContext)
+	return
+		(config.CookiesGained or 0)
+		* ProductionFormula.GetMultiplier(player, buildingId, config, floorContext, skinContext)
 end
 
 return ProductionFormula
