@@ -6,6 +6,8 @@
 -- price loads, and a Giftable flag for the (later) gifting phase.
 --
 -- Server-side receipt grants live in ServerScriptService/Services/MonetizationService.
+local StoreRobuxIconConfig = require(script.Parent:WaitForChild("StoreRobuxIconConfig"))
+
 local MonetizationConfig = {}
 
 -- Ordered section definitions. GetSections() returns these in Order, each populated with
@@ -67,11 +69,11 @@ MonetizationConfig.Items = {
 		Kind = "DeveloperProduct",
 		Category = "Packs",
 		ProductId = nil,
-		DisplayName = "Starter Cookie Pack",
+		DisplayName = StoreRobuxIconConfig.StarterPackDisplayName,
 		Description = "A launch boost for the early bakery climb.",
 		Price = nil,
 		PriceText = "Coming Soon",
-		Icon = "",
+		Icon = StoreRobuxIconConfig.StarterPackImage,
 		Giftable = true,
 		Enabled = false,
 		LayoutOrder = 10,
@@ -115,7 +117,7 @@ MonetizationConfig.Items = {
 		Description = "Permanent +25% cookies and a VIP tag.",
 		Price = nil,
 		PriceText = "Coming Soon",
-		Icon = "",
+		Icon = StoreRobuxIconConfig.VipOutlineImage,
 		Giftable = true,
 		Enabled = false,
 		LayoutOrder = 10,

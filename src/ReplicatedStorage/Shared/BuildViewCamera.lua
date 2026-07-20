@@ -76,7 +76,7 @@ BuildViewCamera.MAX_DISTANCE = 2200
 
 -- Entry framing and controller motion values baked from the user's 2026-07-19 live-
 -- tuning pass. They live beside the camera math instead of as scattered controller literals.
-BuildViewCamera.ENTRY_FRAME_SCALE = 1.1
+BuildViewCamera.ENTRY_FRAME_SCALE = 1.2
 BuildViewCamera.WHEEL_DOLLY_STEP = 11
 BuildViewCamera.WHEEL_ZOOM_TAU = 0.1
 BuildViewCamera.EDGE_PAN_ZONE_PX = 72
@@ -88,9 +88,8 @@ BuildViewCamera.PINCH_SENSITIVITY = 0.6
 BuildViewCamera.TOUCH_THROW_TAU = 0.22
 BuildViewCamera.TOUCH_VELOCITY_WINDOW = 0.15
 BuildViewCamera.MIN_FLING_PX_PER_SEC = 0
-BuildViewCamera.YAW_DRAG_SENSITIVITY = 0.005
-BuildViewCamera.PITCH_DRAG_SENSITIVITY = 0.004
-BuildViewCamera.KEYBOARD_YAW_SPEED_DEGREES = 90
+BuildViewCamera.YAW_DRAG_SENSITIVITY = 0.004
+BuildViewCamera.PITCH_DRAG_SENSITIVITY = 0.0035
 
 local function clamp(value, lo, hi)
 	return math.max(lo, math.min(hi, value))

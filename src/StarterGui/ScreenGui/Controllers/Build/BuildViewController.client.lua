@@ -28,6 +28,7 @@ end
 screenGui:SetAttribute("BuildViewControllerRunning", true)
 
 local Players = game:GetService("Players")
+local ContextActionService = game:GetService("ContextActionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -203,6 +204,28 @@ local savedCameraValid = false
 -- invalidates its Completed handler, so a half-done pose can never be saved or restored.
 local activeCameraTween = nil
 local transitionToken = 0
+local SHIFT_LOCK_BLOCK_ACTION = "ClickGameBuildViewShiftLockBlock"
+local SHIFT_LOCK_BLOCK_PRIORITY = Enum.ContextActionPriority.Medium.Value + 1
+
+local function setShiftLockBlocked(blocked)
+	if blocked then
+		-- Roblox's MouseLockController remains live while CameraType is Scriptable, but it has no
+		-- active default camera controller to update. Sink its keys one priority earlier so its
+		-- icon/internal state cannot diverge until Custom camera ownership returns.
+		ContextActionService:BindActionAtPriority(
+			SHIFT_LOCK_BLOCK_ACTION,
+			function()
+				return Enum.ContextActionResult.Sink
+			end,
+			false,
+			SHIFT_LOCK_BLOCK_PRIORITY,
+			Enum.KeyCode.LeftShift,
+			Enum.KeyCode.RightShift
+		)
+	else
+		ContextActionService:UnbindAction(SHIFT_LOCK_BLOCK_ACTION)
+	end
+end
 
 local function cancelActiveCameraTween()
 	if activeCameraTween then
@@ -416,6 +439,17 @@ local function enterBuildView()
 	if not base or not camera then
 		return
 	end
+	-- Snapshot the genuine gameplay camera before Build View takes ownership. If the camera is
+	-- already Scriptable, this is a rapid re-entry during the exit tween, so retain the original
+	-- default-camera snapshot rather than capturing a transitional pose.
+	if camera.CameraType ~= Enum.CameraType.Scriptable or not savedCameraValid then
+		savedCameraType = camera.CameraType
+		savedCameraCFrame = camera.CFrame
+		savedCameraFieldOfView = camera.FieldOfView
+		savedCameraSubject = camera.CameraSubject
+		savedCameraValid = camera.CameraType ~= Enum.CameraType.Scriptable
+	end
+	setShiftLockBlocked(true)
 	buildViewActive = true
 	transitionToken += 1
 	local token = transitionToken
@@ -430,17 +464,6 @@ local function enterBuildView()
 	setCharacterControlsEnabled(false)
 
 	cancelActiveCameraTween()
-	-- Capture the camera to restore on exit ONLY from a real default camera. If it's
-	-- already Scriptable we're re-entering mid-exit (button spam) — keep the snapshot we
-	-- took the first time so we still restore to the genuine follow camera, never to a
-	-- frozen diagonal mid-transition pose.
-	if camera.CameraType ~= Enum.CameraType.Scriptable or not savedCameraValid then
-		savedCameraType = camera.CameraType
-		savedCameraCFrame = camera.CFrame
-		savedCameraFieldOfView = camera.FieldOfView
-		savedCameraSubject = camera.CameraSubject
-		savedCameraValid = camera.CameraType ~= Enum.CameraType.Scriptable
-	end
 
 	local minPitch, maxPitch = cameraDriver:getPitchLimits()
 	if lastBuildViewPose then
@@ -558,8 +581,11 @@ local function exitBuildView()
 			if restoreSubject then
 				camera.CameraSubject = restoreSubject
 			end
+			setShiftLockBlocked(false)
 		end)
 		tween:Play()
+	else
+		setShiftLockBlocked(false)
 	end
 
 	screenGui:SetAttribute(Attrs.BuildModeActive, false)
@@ -645,7 +671,20 @@ local function requestAutoBuildStoreWhenAvailable()
 		end
 	end)
 end
-screenGui:GetAttributeChangedSignal(Attrs.AutoBuildMode):Connect(requestAutoBuildStoreWhenAvailable)
+local function applyAutoBuildModeChange()
+	-- StoreOpen is a logical state and remains true while Settings temporarily suspends the
+	-- background. Turning the coupling on therefore has to reconcile that already-open state;
+	-- waiting for a StoreOpen change misses this exact mobile transition until the next toggle.
+	if
+		screenGui:GetAttribute(Attrs.AutoBuildMode) == true
+		and screenGui:GetAttribute(Attrs.StoreOpen) == true
+		and not buildViewActive
+	then
+		enterBuildView()
+	end
+	requestAutoBuildStoreWhenAvailable()
+end
+screenGui:GetAttributeChangedSignal(Attrs.AutoBuildMode):Connect(applyAutoBuildModeChange)
 screenGui:GetAttributeChangedSignal(Attrs.BackgroundSurfacesSuspended):Connect(requestAutoBuildStoreWhenAvailable)
 
 local function refreshMixerLock()
@@ -764,6 +803,10 @@ local function makeCameraContext(isSelected)
 		exitBuildView = exitBuildView,
 	}
 end
+
+script.Destroying:Connect(function()
+	setShiftLockBlocked(false)
+end)
 
 desktopCamera = BuildViewDesktopCamera.new(makeCameraContext(function()
 	return desktopCamera ~= nil and cameraDriver == desktopCamera

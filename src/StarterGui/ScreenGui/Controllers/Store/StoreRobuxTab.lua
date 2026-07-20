@@ -22,6 +22,7 @@ function StoreRobuxTab.new(ctx)
 	local pageContainer = ctx.pageContainer
 	local template = ctx.templateRobuxProduct
 	local MonetizationConfig = ctx.MonetizationConfig
+	local iconPresenter = require(script.Parent.StoreRobuxIconPresenter).new()
 
 	local M = {}
 	local rowsByItemId = {}
@@ -217,6 +218,7 @@ function StoreRobuxTab.new(ctx)
 		setText(row, "UpgradeName", item.DisplayName or item.Id or "Robux Item")
 		setText(row, "Description", item.Description or "")
 		setIcon(row, item.Icon)
+		iconPresenter.bind(row, item)
 		hideProgressChrome(row)
 		updateActionLayout(row, item)
 
@@ -287,6 +289,8 @@ function StoreRobuxTab.new(ctx)
 	end
 
 	function M.render(active)
+		iconPresenter.setActive(active)
+
 		if template and template:IsA("GuiObject") then
 			template.Visible = false
 		end
@@ -302,7 +306,9 @@ function StoreRobuxTab.new(ctx)
 
 		if not template then
 			if not warnedMissingTemplate then
-				warn("Robux tab is missing StoreBottom.TemplateRobuxProduct; create it in Studio to show monetization cards.")
+				warn(
+					"Robux tab is missing StoreBottom.TemplateRobuxProduct; create it in Studio to show monetization cards."
+				)
 				warnedMissingTemplate = true
 			end
 			if ctx.showStatus then

@@ -99,14 +99,6 @@ return {
 		),
 		number("EdgePanSpeed", Config.EDGE_PAN_SPEED, 0, 500, 1, "Placement edge-pan base speed."),
 		number(
-			"KeyboardYawSpeedDegreesPerSecond",
-			Config.KEYBOARD_YAW_SPEED_DEGREES,
-			1,
-			360,
-			1,
-			"Held Q/E in-place yaw speed in degrees per second."
-		),
-		number(
 			"YawDragSensitivity",
 			Config.YAW_DRAG_SENSITIVITY,
 			0.0005,

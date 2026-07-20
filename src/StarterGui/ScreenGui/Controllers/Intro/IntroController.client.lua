@@ -85,6 +85,7 @@ local MORPH_STEP_TIME = 0.3      -- per-click tween toward the Cookie
 local SHAKE_TIME = 0.45
 local SHAKE_MAGNITUDE = 3.2
 local INTRO_DECISION_TIMEOUT = 20
+local INTRO_SHEET_SPAWN_TIMEOUT = 30
 local INTRO_CLOCKTIME = 0        -- midnight: dark + space-like during the orbit
 local GAMEPLAY_CLOCKTIME = 14    -- tweened to as the meteor drops, so it lands in daylight
 local INTRO_REPLAY_EVENT_NAME = "ReplayIntroRequested"
@@ -121,6 +122,53 @@ local function waitForSheet()
 		sheet = getPlayerCookieSheet()
 	end
 	return sheet
+end
+
+local function waitForCharacterAtSheet(character, sheet)
+	local humanoidRootPart = character:WaitForChild("HumanoidRootPart", 10)
+	local spawnPoint = sheet and sheet:FindFirstChild("SpawnPoint")
+	if not humanoidRootPart or not spawnPoint or not spawnPoint:IsA("BasePart") then
+		return humanoidRootPart
+	end
+
+	-- Sheet assignment happens before the server finishes restoring the run and teleports the
+	-- character. A genuine first join can therefore see the plot while the avatar and default
+	-- camera are still at the map origin. Do not capture that transient pose for the intro return.
+	local deadline = os.clock() + INTRO_SHEET_SPAWN_TIMEOUT
+	local allowedHorizontalDistance = math.max(spawnPoint.Size.X, spawnPoint.Size.Z) / 2 + 24
+	while player.Character == character and humanoidRootPart.Parent and os.clock() < deadline do
+		local offset = humanoidRootPart.Position - spawnPoint.Position
+		if Vector2.new(offset.X, offset.Z).Magnitude <= allowedHorizontalDistance then
+			-- Give Roblox's default camera two render turns to follow the server teleport before the
+			-- cinematic snapshots it.
+			RunService.RenderStepped:Wait()
+			RunService.RenderStepped:Wait()
+			return humanoidRootPart
+		end
+		RunService.Heartbeat:Wait()
+	end
+
+	return nil
+end
+
+local function gameplayCameraSnapshot(character, humanoidRootPart, camera)
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	local subject = camera.CameraSubject
+	if not subject or not subject:IsDescendantOf(character) then
+		subject = humanoid
+	end
+
+	local cameraCFrame = camera.CFrame
+	local distanceFromCharacter = (cameraCFrame.Position - humanoidRootPart.Position).Magnitude
+	if distanceFromCharacter < 1 or distanceFromCharacter > 200 then
+		-- The default camera has not caught the plot teleport yet. Use a conventional safe
+		-- third-person return pose; CameraType.Custom takes over from here on the next render.
+		local focus = humanoidRootPart.Position + Vector3.new(0, 2.5, 0)
+		local position = focus - humanoidRootPart.CFrame.LookVector * 14 + Vector3.new(0, 6, 0)
+		cameraCFrame = CFrame.lookAt(position, focus)
+	end
+
+	return cameraCFrame, subject
 end
 
 local function collectRubble(model)
@@ -559,9 +607,10 @@ local function playIntro(options)
 	end
 
 	local character = player.Character or player.CharacterAdded:Wait()
-	local humanoidRootPart = character:WaitForChild("HumanoidRootPart", 10)
+	local humanoidRootPart = waitForCharacterAtSheet(character, sheet)
 	local camera = Workspace.CurrentCamera
 	if not humanoidRootPart or not camera then
+		warn("IntroController: character did not reach its CookieSheet before the intro timeout")
 		return
 	end
 
@@ -614,9 +663,8 @@ local function playIntro(options)
 
 	-- Save the live camera so we can restore the genuine follow camera afterward.
 	local savedCameraType = camera.CameraType
-	local savedCameraCFrame = camera.CFrame
+	local savedCameraCFrame, savedCameraSubject = gameplayCameraSnapshot(character, humanoidRootPart, camera)
 	local savedCameraFieldOfView = camera.FieldOfView
-	local savedCameraSubject = camera.CameraSubject
 	local wasRootAnchored = humanoidRootPart.Anchored
 
 	local craterDestroyed = false

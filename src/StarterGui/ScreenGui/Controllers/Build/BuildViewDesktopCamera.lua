@@ -25,8 +25,6 @@ local function isMoveKey(key)
 		or key == Enum.KeyCode.Q
 		or key == Enum.KeyCode.E
 		or key == Enum.KeyCode.Space
-		or key == Enum.KeyCode.LeftShift
-		or key == Enum.KeyCode.RightShift
 end
 
 function BuildViewDesktopCamera.new(ctx)
@@ -130,7 +128,10 @@ function BuildViewDesktopCamera.new(ctx)
 		if heldKeys[Enum.KeyCode.Space] then
 			vert += 1
 		end
-		if heldKeys[Enum.KeyCode.LeftShift] or heldKeys[Enum.KeyCode.RightShift] then
+		if heldKeys[Enum.KeyCode.E] then
+			vert += 1
+		end
+		if heldKeys[Enum.KeyCode.Q] then
 			vert -= 1
 		end
 		vert = math.clamp(vert, -1, 1)
@@ -138,19 +139,6 @@ function BuildViewDesktopCamera.new(ctx)
 		local factor = speedFactor(base) * moveAccelFactor(hasInput)
 		local horizontal = (dir.Magnitude > 1e-3) and (dir.Unit * tuning("MoveSpeed") * factor) or Vector3.zero
 		return horizontal + Vector3.new(0, vert * tuning("VerticalSpeed") * factor, 0)
-	end
-
-	local function applyKeyboardYaw(dt)
-		local direction = 0
-		if heldKeys[Enum.KeyCode.Q] then
-			direction += 1
-		end
-		if heldKeys[Enum.KeyCode.E] then
-			direction -= 1
-		end
-		if direction ~= 0 then
-			ctx.setYaw(ctx.getYaw() + math.rad(tuning("KeyboardYawSpeedDegreesPerSecond")) * direction * dt)
-		end
 	end
 
 	local function computePlacementEdgePanTarget(base)
@@ -264,7 +252,6 @@ function BuildViewDesktopCamera.new(ctx)
 	end
 
 	function self:step(dt, base)
-		applyKeyboardYaw(dt)
 		if middleMouseDragging then
 			velocity = Vector3.zero
 			moveRampStart = nil
