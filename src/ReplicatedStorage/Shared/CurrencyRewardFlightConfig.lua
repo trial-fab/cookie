@@ -13,7 +13,7 @@ return {
 	LandingPulseScale = 1.15,
 	LandingPulseSeconds = 0.4,
 	CountUpSeconds = 1.5,
-	BatchWindowSeconds = 0.5,
+	BatchWindowSeconds = 0.01,
 	EventMatchSeconds = 0.5,
 	LandingLabelHoldSeconds = 1.5,
 	LandingLabelFadeSeconds = 0.4,

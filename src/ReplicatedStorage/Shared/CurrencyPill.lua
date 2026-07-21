@@ -59,6 +59,7 @@ local function measureText(amount, text)
 	params.Size = amount.TextSize
 	params.Width = math.huge
 	local ok, bounds = pcall(TextService.GetTextBoundsAsync, TextService, params)
+	params:Destroy()
 	if ok and typeof(bounds) == "Vector2" then
 		return bounds.X
 	end
@@ -93,6 +94,8 @@ function CurrencyPill.bind(container, options)
 	local targetWidth = container.Size.X.Offset
 	local generation = 0
 	local disconnected = false
+	local measurementRunning = false
+	local pendingMeasurement
 
 	-- Explicit Size owns the animated width. Parent rows may still use AutomaticSize.X around
 	-- this pill, but the pill itself must not let AutomaticSize fight its tween.
@@ -124,18 +127,37 @@ function CurrencyPill.bind(container, options)
 		end
 	end
 
+	local function runMeasurements()
+		if measurementRunning then
+			return
+		end
+		measurementRunning = true
+		task.spawn(function()
+			while pendingMeasurement and not disconnected do
+				local request = pendingMeasurement
+				pendingMeasurement = nil
+				local textWidth = measureText(amount, request.text)
+				if not disconnected and generation == request.generation and amount.Text == request.text then
+					applyWidth(
+						textWidth + getChromeWidth(container, amount, icon, currentRootScale()),
+						request.immediate
+					)
+				end
+			end
+			measurementRunning = false
+		end)
+	end
+
 	local function setValue(value, immediate)
 		local text = NumberFormat.exact(math.max(0, math.floor(tonumber(value) or 0)))
 		amount.Text = text
 		generation += 1
-		local thisGeneration = generation
-		task.spawn(function()
-			local textWidth = measureText(amount, text)
-			if disconnected or generation ~= thisGeneration or amount.Text ~= text then
-				return
-			end
-			applyWidth(textWidth + getChromeWidth(container, amount, icon, currentRootScale()), immediate)
-		end)
+		pendingMeasurement = {
+			generation = generation,
+			text = text,
+			immediate = immediate,
+		}
+		runMeasurements()
 	end
 
 	return {
@@ -152,6 +174,7 @@ function CurrencyPill.bind(container, options)
 		disconnect = function()
 			disconnected = true
 			generation += 1
+			pendingMeasurement = nil
 			if widthTween then
 				widthTween:Cancel()
 			end

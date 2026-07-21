@@ -134,6 +134,7 @@ local currencyState = {
 		attribute = Attrs.GoldenCookies,
 		authoritative = math.max(0, math.floor(tonumber(player:GetAttribute(Attrs.GoldenCookies)) or 0)),
 		displayed = 0,
+		displayInitialized = false,
 		overrideRevision = 0,
 		positiveToken = 0,
 	},
@@ -141,6 +142,7 @@ local currencyState = {
 		attribute = Attrs.Gems,
 		authoritative = math.max(0, math.floor(tonumber(player:GetAttribute(Attrs.Gems)) or 0)),
 		displayed = 0,
+		displayInitialized = false,
 		overrideRevision = 0,
 		positiveToken = 0,
 	},
@@ -149,6 +151,10 @@ local currencyState = {
 local function setDisplayed(currency, value, immediate)
 	local state = currencyState[currency]
 	value = math.max(0, math.floor(tonumber(value) or 0))
+	if state.displayInitialized and state.displayed == value then
+		return
+	end
+	state.displayInitialized = true
 	state.displayed = value
 	for _, binding in pairs(bindings[currency]) do
 		binding.setValue(value, immediate)
