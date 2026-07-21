@@ -4,7 +4,7 @@
 -- mixer (item #1, the gifted mixer that opens the store); the flanks are placeholders until more
 -- items exist. Constructed by StoreToggleController as a ctx module sharing setStoreOpen.
 --
--- State machine (see docs/ReleaseRoadMap.md "Custom toolbar / hotbar carousel"):
+-- State machine:
 --   * Toolbar visible, store closed: tapping a non-centred slot spins it to centre (it becomes
 --     active). Tapping/selecting the mixer (or B) opens the store, but only AFTER any spin settles.
 --   * Open MORPH: the SlotCenter disc shrinks into the cookie's footprint (still opaque, so the

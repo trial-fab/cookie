@@ -27,6 +27,11 @@ function StoreSubTabScroller.new(pageContainer, tweenInfo, setActive)
 		return padding.PaddingRight.Scale * pageContainer.AbsoluteSize.X + padding.PaddingRight.Offset
 	end
 
+	local function getItemLeftInset(item)
+		local stroke = item:FindFirstChildOfClass("UIStroke")
+		return stroke and math.max(0, stroke.Thickness) or 0
+	end
+
 	local function getNaturalScrollLimit(currentX, windowWidth)
 		local contentRight = 0
 		for _, child in ipairs(pageContainer:GetChildren()) do
@@ -82,7 +87,10 @@ function StoreSubTabScroller.new(pageContainer, tweenInfo, setActive)
 
 		local current = pageContainer.CanvasPosition
 		local itemLeft = item.AbsolutePosition.X - pageContainer.AbsolutePosition.X + current.X
-		local targetX = math.max(0, itemLeft)
+		-- Keep the card's authored border fully inside the clipped viewport. Store cards
+		-- currently use a 2px UIStroke, so their visual left edge lands at the leftmost
+		-- usable position instead of being clipped at x = 0.
+		local targetX = math.max(0, itemLeft - getItemLeftInset(item))
 		local windowWidth = getWindowWidth()
 		local naturalScrollLimit = getNaturalScrollLimit(current.X, windowWidth)
 		local rightmostScrollX = math.max(targetX, naturalScrollLimit)
@@ -117,7 +125,12 @@ function StoreSubTabScroller.new(pageContainer, tweenInfo, setActive)
 		local bestSection, bestDistance
 		for _, section in ipairs(sections) do
 			local sectionId = sectionIdKey and section[sectionIdKey] or section
-			local item = type(itemSource) == "function" and itemSource(sectionId) or itemSource[sectionId]
+			local item
+			if type(itemSource) == "function" then
+				item = itemSource(sectionId)
+			else
+				item = itemSource[sectionId]
+			end
 			if item and item:IsA("GuiObject") and item.Visible then
 				local distance = math.abs(item.AbsolutePosition.X - viewLeft)
 				if not bestDistance or distance < bestDistance then

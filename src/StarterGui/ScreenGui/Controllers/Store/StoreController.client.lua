@@ -434,6 +434,7 @@ local getMultiplierText = ctx.format.getMultiplierText
 local getBuildingProductionRates = ctx.format.getBuildingProductionRates
 local getProductionRateText = ctx.format.getProductionRateText
 local getTotalProductionRateText = ctx.format.getTotalProductionRateText
+local placedProduction
 
 local function showStatus(message)
 	if statusLabel and (statusLabel:IsA("TextLabel") or statusLabel:IsA("TextButton")) then
@@ -923,7 +924,13 @@ local function updateRow(upgradeId)
 		countBadge.updateRow(row, count, countText)
 	end
 	setText(row, "CPM", getProductionRateText(config, productionMultiplier))
-	setText(row, "TCPM", getTotalProductionRateText(config, count, productionMultiplier))
+	local placedTotalCpm = placedProduction and placedProduction.getTotalCpm(upgradeId, config, count)
+	setText(
+		row,
+		"TCPM",
+		placedTotalCpm and ctx.format.formatRateValue(placedTotalCpm)
+			or getTotalProductionRateText(config, count, productionMultiplier)
+	)
 	setCpmIconVisibility(row, cpm)
 	setText(row, "Health", getIntegrityText(config))
 	setText(row, "Multiplier", getMultiplierText(upgradeId, config))
@@ -947,6 +954,14 @@ local function updateAllRows()
 		updateRow(upgradeId)
 	end
 end
+
+placedProduction = require(script.Parent.StorePlacedProduction).new(ctx, function(upgradeId)
+	if upgradeId then
+		updateRow(upgradeId)
+	else
+		updateAllRows()
+	end
+end)
 
 screenGui:GetAttributeChangedSignal(Attrs.MultiPlaceEnabled):Connect(function()
 	updateRow(ctx.multiPlace.UPGRADE_ID)
@@ -1068,25 +1083,26 @@ local function refreshCategory()
 end
 
 local function scrollToUpgradeRow(upgradeId)
-	if not upgradeId or not pageContainer:IsA("ScrollingFrame") then
+	if not upgradeId then
 		return
 	end
 
 	local row = rowsByUpgradeId[upgradeId]
-	if not row or not row.Visible or not row:IsA("GuiObject") then
+	local config = UpgradeConfig[upgradeId]
+	if not row or not row.Visible or not row:IsA("GuiObject") or not config then
 		return
 	end
 
-	local current = pageContainer.CanvasPosition
-	local rowLeft = row.AbsolutePosition.X - pageContainer.AbsolutePosition.X + current.X
-	local maxX = math.max(0, pageContainer.AbsoluteCanvasSize.X - pageContainer.AbsoluteSize.X)
-	pageContainer.CanvasPosition = Vector2.new(math.clamp(rowLeft - 8, 0, maxX), current.Y)
+	ctx.upgradeSubTabs.scrollToRow(getUpgradeSection(config), row)
 end
 
 ctx.openUpgradeCategory = function(targetUpgradeId)
 	currentCategory = "Upgrade"
 	refreshCategory()
-	task.defer(function()
+	task.spawn(function()
+		-- Let UIListLayout resolve the newly-visible upgrade rows before reading the
+		-- target card's AbsolutePosition in StoreSubTabScroller.
+		RunService.Heartbeat:Wait()
 		scrollToUpgradeRow(targetUpgradeId)
 	end)
 end

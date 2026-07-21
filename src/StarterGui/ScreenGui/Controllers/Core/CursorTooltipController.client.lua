@@ -41,7 +41,7 @@ local function waitForDescendant(parent, name)
 	return object
 end
 
-local function register(target, tuningTarget, activeProvider)
+local function register(target, tuningTarget, activeProvider, contentTransform)
 	if not (target and target:IsA("GuiObject")) then
 		return
 	end
@@ -51,12 +51,13 @@ local function register(target, tuningTarget, activeProvider)
 			if UserInputService.PreferredInput ~= Enum.PreferredInput.KeyboardAndMouse then
 				return nil
 			end
-			return CursorTooltipTuning.getHint(tuningTarget, activeProvider and activeProvider() or false)
+			local content = CursorTooltipTuning.getHint(tuningTarget, activeProvider and activeProvider() or false)
+			return contentTransform and contentTransform(content) or content
 		end,
 	})
 end
 
-local function registerNamedHitbox(parent, containerName, tuningTarget, stateProvider)
+local function registerNamedHitbox(parent, containerName, tuningTarget, stateProvider, contentTransform)
 	task.spawn(function()
 		local container = waitForDescendant(parent, containerName)
 		local hitbox = container
@@ -67,7 +68,7 @@ local function registerNamedHitbox(parent, containerName, tuningTarget, statePro
 		local activeProvider = stateProvider and function()
 			return stateProvider(container)
 		end or nil
-		register(hitbox, tuningTarget, activeProvider)
+		register(hitbox, tuningTarget, activeProvider, contentTransform)
 	end)
 end
 
@@ -87,8 +88,15 @@ end
 registerNamedHitbox(screenGui, "BoardToggle", "Leaderboard", function()
 	return screenGui:GetAttribute(Attrs.LeaderboardOpen) == true
 end)
-registerNamedHitbox(screenGui, GuiNames.StoreBottomOff, "MixerClosed")
-registerNamedHitbox(screenGui, GuiNames.StoreBottomOn, "MixerOpen")
+local store = screenGui:FindFirstChild(GuiNames.StoreBottom, true)
+local function contextualizeMixer(content)
+	if content and store and store:GetAttribute(Attrs.CurrentCategory) == "Robux" then
+		content.title = "Robux"
+	end
+	return content
+end
+registerNamedHitbox(screenGui, GuiNames.StoreBottomOff, "MixerClosed", nil, contextualizeMixer)
+registerNamedHitbox(screenGui, GuiNames.StoreBottomOn, "MixerOpen", nil, contextualizeMixer)
 
 -- Build View lives in a separate topbar ScreenGui, but can publish through the main
 -- ScreenGui's shared presenter. Its owning animator creates one outer-frame hitbox.

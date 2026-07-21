@@ -2,9 +2,9 @@
 --
 --   • getRowAffordability: affordable(bool), progress(0..1), lockText — the single source of
 --     truth for whether a row's next purchase is reachable and how close it is.
---   • updateRowAffordability: drives the AffordBar (progress silhouette) and fades every blue
---     (0,170,255) accent in a row when the next purchase is out of reach; in sell mode it
---     recolours the accents red instead.
+--   • updateRowAffordability: drives the AffordBar (progress silhouette) and fades the authored
+--     blue building / orange upgrade accents in a row when the next purchase is out of reach;
+--     in sell mode it recolours the accents red instead.
 --   • getLockedRequirement: the gating upgrade/building + owned/required counts for a locked row
 --     (mirrors UpgradeService.Purchase). Shared by the affordance chrome and getPurchaseBlock.
 --   • getPurchaseBlock: which explanatory widget ("Requirement"/"cookieCost") blocks a buy tap.
@@ -18,17 +18,19 @@
 
 local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 
--- The fade is applied as a SOLID pre-blended colour (= what one 0.6-transparent blue over the
+-- The fade is applied as a SOLID pre-blended colour (= what one 0.6-transparent accent over the
 -- dark panel composites to), not stacked transparency, so overlapping filler frames read as one
 -- uniform layer instead of doubling up darker.
 local NEAR_MISS = {
 	BLUE = Color3.fromRGB(0, 170, 255),
+	ORANGE = Color3.fromRGB(209, 70, 0),
 	SELL_RED = Color3.fromRGB(255, 75, 75), -- matches SELL_ICON_ACTIVE_COLOR in StoreController
 	FADE = 0.6,
 	PANEL = Color3.fromRGB(17, 19, 27),
 }
 NEAR_MISS.FADED_BLUE = NEAR_MISS.PANEL:Lerp(NEAR_MISS.BLUE, 1 - NEAR_MISS.FADE)
-local BLUE_ACCENT_TWEEN_INFO = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+NEAR_MISS.FADED_ORANGE = NEAR_MISS.PANEL:Lerp(NEAR_MISS.ORANGE, 1 - NEAR_MISS.FADE)
+local ACCENT_TWEEN_INFO = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 -- ── blocked-tap feedback ─────────────────────────────────────────────────────
 local REQUIREMENT_PREVIEW_PULSE_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, true)
@@ -36,8 +38,20 @@ local REQUIREMENT_PREVIEW_PULSE_SCALE = 1.06
 local NUMBER_FLASH_TWEEN = TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local NUMBER_FLASH_COLOR = Color3.fromRGB(255, 72, 72)
 
-local function isNearMissBlue(color)
-	return math.abs(color.R - 0) < 0.02 and math.abs(color.G - 0.666667) < 0.02 and math.abs(color.B - 1) < 0.02
+local function colorsMatch(left, right)
+	return math.abs(left.R - right.R) < 0.02 and math.abs(left.G - right.G) < 0.02 and math.abs(left.B - right.B) < 0.02
+end
+
+local function isNearMissAccent(color)
+	return colorsMatch(color, NEAR_MISS.BLUE) or colorsMatch(color, NEAR_MISS.ORANGE)
+end
+
+local function getFadedAccentColor(color)
+	if colorsMatch(color, NEAR_MISS.ORANGE) then
+		return NEAR_MISS.FADED_ORANGE
+	end
+
+	return NEAR_MISS.FADED_BLUE
 end
 
 local function isInsideUpgradeNudge(object)
@@ -165,17 +179,18 @@ function StoreAffordance.new(ctx)
 		return bar, fill
 	end
 
-	-- The blue accents to fade are discovered once per row and cached with their
+	-- The blue building / orange upgrade accents to fade are discovered once per row and cached with their
 	-- original transparency (the AffordBar/Fill are excluded so the progress bar never
 	-- fades). max(orig, FADE) keeps template placeholders that were invisible invisible.
 	-- ImageLabel/ImageButton accents use ImageColor3, while borders and UIStrokes have
 	-- their own colour properties, so cache those separately from ordinary backgrounds.
-	local blueAccentsByRow = setmetatable({}, { __mode = "k" })
-	local blueAccentStateByRow = setmetatable({}, { __mode = "k" })
-	local blueAccentTweensByRow = setmetatable({}, { __mode = "k" })
+	-- UpgradeNudge is excluded in full so affordability never changes its pulse colour.
+	local accentsByRow = setmetatable({}, { __mode = "k" })
+	local accentStateByRow = setmetatable({}, { __mode = "k" })
+	local accentTweensByRow = setmetatable({}, { __mode = "k" })
 
-	local function getBlueAccents(row)
-		local cached = blueAccentsByRow[row]
+	local function getAccents(row)
+		local cached = accentsByRow[row]
 		if cached then
 			return cached
 		end
@@ -189,9 +204,13 @@ function StoreAffordance.new(ctx)
 			if rowConfig and rowConfig.IconUsesSelectedGooColor == true and object.Name == "IconFill" then
 				return
 			end
+			local dimUntintedIcon = rowConfig
+				and rowConfig.DimIconWhenUnaffordable == true
+				and object.Name == "Icon"
+				and (object:IsA("ImageLabel") or object:IsA("ImageButton"))
 
 			if object:IsA("GuiObject") then
-				if isNearMissBlue(object.BackgroundColor3) then
+				if isNearMissAccent(object.BackgroundColor3) then
 					table.insert(accents.backgrounds, {
 						object = object,
 						originalTransparency = object.BackgroundTransparency,
@@ -203,27 +222,33 @@ function StoreAffordance.new(ctx)
 						isRowBackground = object == row,
 					})
 				end
-				if isNearMissBlue(object.BorderColor3) then
+				if isNearMissAccent(object.BorderColor3) then
 					table.insert(accents.borders, { object = object, originalColor = object.BorderColor3 })
 				end
-				if (object:IsA("ImageLabel") or object:IsA("ImageButton")) and isNearMissBlue(object.ImageColor3) then
+				if
+					(object:IsA("ImageLabel") or object:IsA("ImageButton"))
+					and (isNearMissAccent(object.ImageColor3) or dimUntintedIcon)
+				then
 					table.insert(accents.images, {
 						object = object,
 						originalTransparency = object.ImageTransparency,
 						originalColor = object.ImageColor3,
+						dimWithTransparency = dimUntintedIcon,
 					})
 				end
-				if (object:IsA("TextLabel") or object:IsA("TextButton")) and isNearMissBlue(object.TextColor3) then
+				if (object:IsA("TextLabel") or object:IsA("TextButton")) and isNearMissAccent(object.TextColor3) then
 					table.insert(accents.texts, {
 						object = object,
 						originalTransparency = object.TextTransparency,
 						originalColor = object.TextColor3,
 					})
 				end
-				if (object:IsA("TextLabel") or object:IsA("TextButton")) and isNearMissBlue(object.TextStrokeColor3) then
+				if
+					(object:IsA("TextLabel") or object:IsA("TextButton")) and isNearMissAccent(object.TextStrokeColor3)
+				then
 					table.insert(accents.textStrokes, { object = object, originalColor = object.TextStrokeColor3 })
 				end
-			elseif object:IsA("UIStroke") and isNearMissBlue(object.Color) then
+			elseif object:IsA("UIStroke") and isNearMissAccent(object.Color) then
 				table.insert(accents.strokes, { object = object, originalColor = object.Color })
 			end
 		end
@@ -233,12 +258,12 @@ function StoreAffordance.new(ctx)
 			captureAccent(descendant)
 		end
 
-		blueAccentsByRow[row] = accents
+		accentsByRow[row] = accents
 		return accents
 	end
 
-	local function cancelBlueAccentTweens(row)
-		local tweens = blueAccentTweensByRow[row]
+	local function cancelAccentTweens(row)
+		local tweens = accentTweensByRow[row]
 		if not tweens then
 			return
 		end
@@ -249,15 +274,15 @@ function StoreAffordance.new(ctx)
 		table.clear(tweens)
 	end
 
-	local function applyBlueAccentGoal(row, object, goal, animate)
+	local function applyAccentGoal(row, object, goal, animate)
 		if animate then
-			local tweens = blueAccentTweensByRow[row]
+			local tweens = accentTweensByRow[row]
 			if not tweens then
 				tweens = {}
-				blueAccentTweensByRow[row] = tweens
+				accentTweensByRow[row] = tweens
 			end
 
-			local tween = UiMotion.create(object, BLUE_ACCENT_TWEEN_INFO, goal)
+			local tween = UiMotion.create(object, ACCENT_TWEEN_INFO, goal)
 			table.insert(tweens, tween)
 			tween:Play()
 			return
@@ -268,16 +293,16 @@ function StoreAffordance.new(ctx)
 		end
 	end
 
-	local function setBlueAccentsState(row, state)
-		local previousState = blueAccentStateByRow[row]
+	local function setAccentsState(row, state)
+		local previousState = accentStateByRow[row]
 		if previousState == state then
 			return
 		end
-		blueAccentStateByRow[row] = state
+		accentStateByRow[row] = state
 
-		cancelBlueAccentTweens(row)
+		cancelAccentTweens(row)
 		local animate = state == "sell" or previousState == "sell"
-		local accents = getBlueAccents(row)
+		local accents = getAccents(row)
 		for _, entry in ipairs(accents.backgrounds) do
 			if entry.object.Parent then
 				local color = entry.originalColor
@@ -288,10 +313,10 @@ function StoreAffordance.new(ctx)
 					-- Solid pre-blended colour at full opacity (so stacked filler frames don't
 					-- double up). Placeholders that were invisible (transparency 1) stay so.
 					-- The row's own background is skipped so it keeps its authored 0.9 tint.
-					color = NEAR_MISS.FADED_BLUE
+					color = getFadedAccentColor(entry.originalColor)
 					transparency = 0
 				end
-				applyBlueAccentGoal(row, entry.object, {
+				applyAccentGoal(row, entry.object, {
 					BackgroundColor3 = color,
 					BackgroundTransparency = transparency,
 				}, animate)
@@ -303,22 +328,27 @@ function StoreAffordance.new(ctx)
 				if state == "sell" then
 					color = NEAR_MISS.SELL_RED
 				elseif state == "faded" then
-					color = NEAR_MISS.FADED_BLUE
+					color = getFadedAccentColor(entry.originalColor)
 				end
-				applyBlueAccentGoal(row, entry.object, { BorderColor3 = color }, animate)
+				applyAccentGoal(row, entry.object, { BorderColor3 = color }, animate)
 			end
 		end
 		for _, entry in ipairs(accents.images) do
 			if entry.object.Parent then
 				local color = entry.originalColor
-				if state == "sell" then
+				local transparency = entry.originalTransparency
+				if state == "sell" and not entry.dimWithTransparency then
 					color = NEAR_MISS.SELL_RED
 				elseif state == "faded" and entry.originalTransparency < 1 then
-					color = NEAR_MISS.FADED_BLUE
+					if entry.dimWithTransparency then
+						transparency = math.max(entry.originalTransparency, NEAR_MISS.FADE)
+					else
+						color = getFadedAccentColor(entry.originalColor)
+					end
 				end
-				applyBlueAccentGoal(row, entry.object, {
+				applyAccentGoal(row, entry.object, {
 					ImageColor3 = color,
-					ImageTransparency = entry.originalTransparency,
+					ImageTransparency = transparency,
 				}, animate)
 			end
 		end
@@ -328,9 +358,9 @@ function StoreAffordance.new(ctx)
 				if state == "sell" then
 					color = NEAR_MISS.SELL_RED
 				elseif state == "faded" then
-					color = NEAR_MISS.FADED_BLUE
+					color = getFadedAccentColor(entry.originalColor)
 				end
-				applyBlueAccentGoal(row, entry.object, { Color = color }, animate)
+				applyAccentGoal(row, entry.object, { Color = color }, animate)
 			end
 		end
 		for _, entry in ipairs(accents.textStrokes) do
@@ -339,9 +369,9 @@ function StoreAffordance.new(ctx)
 				if state == "sell" then
 					color = NEAR_MISS.SELL_RED
 				elseif state == "faded" then
-					color = NEAR_MISS.FADED_BLUE
+					color = getFadedAccentColor(entry.originalColor)
 				end
-				applyBlueAccentGoal(row, entry.object, { TextStrokeColor3 = color }, animate)
+				applyAccentGoal(row, entry.object, { TextStrokeColor3 = color }, animate)
 			end
 		end
 		for _, entry in ipairs(accents.texts) do
@@ -353,7 +383,7 @@ function StoreAffordance.new(ctx)
 				elseif state == "faded" then
 					transparency = math.max(entry.originalTransparency, NEAR_MISS.FADE)
 				end
-				applyBlueAccentGoal(row, entry.object, {
+				applyAccentGoal(row, entry.object, {
 					TextColor3 = color,
 					TextTransparency = transparency,
 				}, animate)
@@ -361,8 +391,8 @@ function StoreAffordance.new(ctx)
 		end
 	end
 
-	local function setBlueAccentsFaded(row, faded)
-		setBlueAccentsState(row, faded and "faded" or "normal")
+	local function setAccentsFaded(row, faded)
+		setAccentsState(row, faded and "faded" or "normal")
 	end
 
 	local function updateRowAffordability(upgradeId)
@@ -379,7 +409,7 @@ function StoreAffordance.new(ctx)
 			if bar then
 				bar.Visible = false
 			end
-			setBlueAccentsState(row, "sell")
+			setAccentsState(row, "sell")
 			return
 		end
 
@@ -412,8 +442,8 @@ function StoreAffordance.new(ctx)
 			fill.Size = UDim2.fromScale(math.clamp(fillProgress or 0, 0, 1), 1)
 		end
 
-		-- Fade the blue accents when the next purchase is out of reach.
-		setBlueAccentsFaded(row, not affordable)
+		-- Fade the row's blue/orange accents when the next purchase is out of reach.
+		setAccentsFaded(row, not affordable)
 
 		if lockText then
 			setText(row, "Cost", lockText)
@@ -463,7 +493,11 @@ function StoreAffordance.new(ctx)
 		end
 
 		local function maybeFlash(object)
-			if (object:IsA("TextLabel") or object:IsA("TextButton")) and object.Visible and string.find(object.Text, "%d") then
+			if
+				(object:IsA("TextLabel") or object:IsA("TextButton"))
+				and object.Visible
+				and string.find(object.Text, "%d")
+			then
 				flashTextObject(object)
 			end
 		end

@@ -1,7 +1,8 @@
 -- HotbarPlacementMode: temporarily turns the authored item hotbar into placement actions.
--- Full screen-control mode uses Cancel / Rotate / Confirm. Classic desktop Multi-Place with
+-- Full screen-control mode uses Cancel / Rotate / Confirm. Classic desktop placement with
 -- screen controls off uses only the center Cancel face while the ghost continues following the
--- mouse. Studio owns every face; this module owns visibility, geometry, and transitions.
+-- mouse, for both single placement and Multi-Place. Studio owns every face; this module owns
+-- visibility, geometry, and transitions.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -12,7 +13,7 @@ local HotbarPlacementMode = {}
 
 local MODE_NONE = "none"
 local MODE_CONTROLS = "controls"
-local MODE_MULTI_PLACE = "multiPlace"
+local MODE_CLASSIC = "classic"
 local SLOT_SIZE_PIXELS = 72
 local SLOT_GAP_PIXELS = 8
 local TRANSITION_SECONDS = 0.25
@@ -106,9 +107,9 @@ function HotbarPlacementMode.new(ctx)
 		for _, record in ipairs(records) do
 			setPlacementFace(record, fullControls)
 		end
-		setMultiPlaceFaceVisible(mode == MODE_MULTI_PLACE)
+		setMultiPlaceFaceVisible(mode == MODE_CLASSIC)
 
-		if mode == MODE_MULTI_PLACE then
+		if mode == MODE_CLASSIC then
 			for _, record in ipairs(records) do
 				if record.slot == slotCenter then
 					record.slot.Visible = true
@@ -276,10 +277,7 @@ function HotbarPlacementMode.new(ctx)
 		if screenGui:GetAttribute(Attrs.PlacementControlsEnabled) == true then
 			return MODE_CONTROLS
 		end
-		if screenGui:GetAttribute(Attrs.MultiPlaceSessionActive) == true then
-			return MODE_MULTI_PLACE
-		end
-		return MODE_NONE
+		return MODE_CLASSIC
 	end
 
 	local function storeWillReturn()

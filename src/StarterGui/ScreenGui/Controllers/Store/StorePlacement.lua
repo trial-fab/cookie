@@ -148,13 +148,6 @@ function StorePlacement.new(ctx)
 		end
 	end
 
-	local function removeFrontMarker(model)
-		local marker = model:FindFirstChild("Front", true)
-		if marker and marker:IsA("BasePart") then
-			marker:Destroy()
-		end
-	end
-
 	local function createPlacementPreview(upgradeId)
 		local config = UpgradeConfig[upgradeId]
 		local templateName = config and (config.TemplateName or config.DisplayName)
@@ -166,7 +159,6 @@ function StorePlacement.new(ctx)
 		local model = template:Clone()
 		model.Name = "BuildingPlacementPreview"
 		setModelPreviewState(model)
-		removeFrontMarker(model)
 		model.Parent = Workspace
 
 		local highlight = Instance.new("Highlight")

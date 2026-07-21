@@ -142,21 +142,26 @@ function StoreUpgradeSubTabs.new(ctx, options)
 		updateRootLayout()
 	end
 
-	function M.scrollToSection(sectionId, firstRowBySection)
+	local function scrollToRow(sectionId, row)
 		if not upgradesPageActive or not ctx.pageContainer:IsA("ScrollingFrame") then
 			return
 		end
 		if sectionId == buildingSectionId and not buildingSectionAvailable then
 			return
 		end
-
-		local row = firstRowBySection[sectionId]
 		if not row or not row:IsA("GuiObject") or not row.Visible then
 			return
 		end
 
 		sectionScroller.scrollTo(sectionId, row)
 	end
+
+	function M.scrollToSection(sectionId, firstRowBySection)
+		scrollToRow(sectionId, firstRowBySection[sectionId])
+	end
+
+	-- Nudge navigation and subtab navigation intentionally share this exact path.
+	M.scrollToRow = scrollToRow
 
 	function M.updateActiveFromCanvas(firstRowBySection)
 		if not upgradesPageActive then

@@ -183,17 +183,6 @@ function StorePreview.new(ctx)
 		end
 	end
 
-	-- Legacy "Front" marker parts may still exist inside preview models (they used to aim
-	-- the static camera). The camera no longer uses them, but they must still be pulled from
-	-- every clone so an invisible marker never inflates the bounding box. Once the Front
-	-- parts are deleted from ReplicatedStorage.BuildingPreviews this helper can go too.
-	local function removeFrontMarker(model)
-		local part = model:FindFirstChild("Front", true)
-		if part and part:IsA("BasePart") then
-			part:Destroy()
-		end
-	end
-
 	-- Universal orbit framing for every STATIC building preview (upgrade rows, reduced-motion
 	-- and mobile store cards). The camera FITS the building's oriented bounding box into the
 	-- viewport frustum, so flat, tall, and wide buildings all fill the frame equally instead
@@ -379,7 +368,6 @@ function StorePreview.new(ctx)
 		local model = sourceModel:Clone()
 		model.Name = "RequirementModel"
 		setPreviewModelState(model)
-		removeFrontMarker(model)
 		model.Parent = world
 
 		local boundingCFrame, size = model:GetBoundingBox()
@@ -507,7 +495,6 @@ function StorePreview.new(ctx)
 		if silhouette then
 			applyPreviewSilhouette(model)
 		end
-		removeFrontMarker(model)
 		model.Parent = world
 
 		local boundingCFrame, size = model:GetBoundingBox()
@@ -616,7 +603,6 @@ function StorePreview.new(ctx)
 		local model = sourceModel:Clone()
 		model.Name = "PreviewModel"
 		setPreviewModelState(model)
-		removeFrontMarker(model)
 		if wantSilhouette then
 			applyPreviewSilhouette(model)
 		end

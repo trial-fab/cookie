@@ -20,7 +20,7 @@ function StoreUpgradeNudge.new(ctx)
 	local rowByNudge = setmetatable({}, { __mode = "k" })
 	local pulseTweensByNudge = setmetatable({}, { __mode = "k" })
 	local pulseBaseSizeByNudge = setmetatable({}, { __mode = "k" })
-	local baseStrokeColorByRow = setmetatable({}, { __mode = "k" })
+	local baseNudgeColorByNudge = setmetatable({}, { __mode = "k" })
 
 	for upgradeId, config in pairs(UpgradeConfig) do
 		if config.TemplateKind == "BuildingUpgrade" and type(config.TargetBuilding) == "string" then
@@ -69,8 +69,7 @@ function StoreUpgradeNudge.new(ctx)
 	end
 
 	local function isSellStrokeColor(color)
-		return
-			math.abs(color.R - SELL_STROKE_COLOR.R) < 0.02
+		return math.abs(color.R - SELL_STROKE_COLOR.R) < 0.02
 			and math.abs(color.G - SELL_STROKE_COLOR.G) < 0.02
 			and math.abs(color.B - SELL_STROKE_COLOR.B) < 0.02
 	end
@@ -81,21 +80,18 @@ function StoreUpgradeNudge.new(ctx)
 	end
 
 	local function getTemplateStrokeColor(row, nudge)
-		local stroke = row:FindFirstChildWhichIsA("UIStroke")
-		if not stroke then
-			stroke = row:FindFirstChildWhichIsA("UIStroke", true)
-		end
-
 		if ctx.isSellMode() then
 			return SELL_STROKE_COLOR
 		end
 
-		if stroke and not isSellStrokeColor(stroke.Color) then
-			baseStrokeColorByRow[row] = stroke.Color
-			return stroke.Color
+		local baseColor = baseNudgeColorByNudge[nudge]
+		if not baseColor then
+			local authoredColor = findNudgeStrokeColor(nudge)
+			baseColor = authoredColor and not isSellStrokeColor(authoredColor) and authoredColor
+				or DEFAULT_TEMPLATE_STROKE_COLOR
+			baseNudgeColorByNudge[nudge] = baseColor
 		end
-
-		return baseStrokeColorByRow[row] or findNudgeStrokeColor(nudge) or DEFAULT_TEMPLATE_STROKE_COLOR
+		return baseColor
 	end
 
 	local function stopPulse(nudge)
@@ -173,7 +169,11 @@ function StoreUpgradeNudge.new(ctx)
 			return nil
 		end
 
-		if ctx.affordance and ctx.affordance.getPurchaseBlock and ctx.affordance.getPurchaseBlock(upgradeId, config) then
+		if
+			ctx.affordance
+			and ctx.affordance.getPurchaseBlock
+			and ctx.affordance.getPurchaseBlock(upgradeId, config)
+		then
 			return nil
 		end
 
@@ -199,8 +199,9 @@ function StoreUpgradeNudge.new(ctx)
 		boundNudges[nudge] = true
 		nudge.Activated:Connect(function()
 			if clickActionByNudge[nudge] == "openUpgradeCategory" and ctx.openUpgradeCategory then
-				stopPulse(nudge)
-				nudge.Visible = false
+				-- Clicking only navigates to the available upgrade; it does not consume it.
+				-- Keep visibility derived from updateRow so returning to Buildings cannot
+				-- leave an active nudge hidden by stale click state.
 				ctx.openUpgradeCategory(targetUpgradeByNudge[nudge])
 			end
 		end)

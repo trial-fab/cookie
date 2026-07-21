@@ -590,6 +590,8 @@ local UpgradeConfig = {
 		Description = "Raises your offline earnings cap.",
 		Icon = "rbxassetid://130190781987426",
 		IconTint = false,
+		-- Temporary while the baked icon colour matches the active upgrade orange.
+		DimIconWhenUnaffordable = true,
 		InitialCount = 0,
 		BaseCost = 10000000,
 		CostMultiplier = 1,
@@ -607,6 +609,8 @@ local UpgradeConfig = {
 		Description = "Unlocks the next production floor above your base.",
 		Icon = "rbxassetid://95705168103787",
 		IconTint = false,
+		-- Temporary while the baked icon colour matches the active upgrade orange.
+		DimIconWhenUnaffordable = true,
 		InitialCount = 0,
 		BaseCost = FloorConfig.GetByOrder(1).Price,
 		CostMultiplier = 1,

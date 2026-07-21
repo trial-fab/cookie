@@ -1,6 +1,6 @@
--- StoreMultiPlaceSessionControls: PC affordances for one Multi-Place run.
--- The cursor counter works in both PC placement modes. With screen controls off, the center
--- hotbar face stays Cancel-only while the ghost follows the mouse for repeated click placement.
+-- StoreMultiPlaceSessionControls: PC classic-placement affordances.
+-- The cursor counter is Multi-Place-only. With screen controls off, the center hotbar face stays
+-- Cancel-only while the ghost follows the mouse in both single placement and Multi-Place.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -36,18 +36,22 @@ function StoreMultiPlaceSessionControls.new(ctx)
 	local isDesktop = deviceType == SettingsConfig.DeviceType.PC
 	local tooltipRegistration = nil
 
-	local function sessionActive()
+	local function placementSessionActive()
 		return isDesktop
 			and screenGui:GetAttribute(Attrs.PlacementActive) == true
+	end
+
+	local function multiPlaceSessionActive()
+		return placementSessionActive()
 			and screenGui:GetAttribute(Attrs.MultiPlaceSessionActive) == true
 	end
 
 	local function classicSessionActive()
-		return sessionActive() and screenGui:GetAttribute(Attrs.PlacementControlsEnabled) ~= true
+		return placementSessionActive() and screenGui:GetAttribute(Attrs.PlacementControlsEnabled) ~= true
 	end
 
 	local function refresh()
-		local active = sessionActive()
+		local active = multiPlaceSessionActive()
 		if counterSource then
 			if active then
 				local count = screenGui:GetAttribute(Attrs.MultiPlaceSessionCount)

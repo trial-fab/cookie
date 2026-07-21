@@ -358,6 +358,9 @@ function StoreToggleAnimator.new(ctx)
 	-- tab, Buy on tabs where sell mode does not apply.
 	local function getModeLabel()
 		local category = store and store:GetAttribute(Attrs.CurrentCategory)
+		if category == "Robux" then
+			return "Robux"
+		end
 		if category and category ~= "Building" then
 			return "Buy"
 		end

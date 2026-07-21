@@ -55,7 +55,9 @@ function StoreBuildingStatsTooltip.new(ctx)
 	local selectedConfig = nil
 	local selectionInput = nil
 	local selectedDestroyConnection = nil
+	local selectedFloorConnection = nil
 	local destroyed = false
+	local refreshSelection
 
 	-- An enabled Highlight with no explicit Adornee falls back to its parent. Keep the
 	-- prewarmed effect under an empty client-only folder so idle state has no geometry to tint;
@@ -116,6 +118,10 @@ function StoreBuildingStatsTooltip.new(ctx)
 		if selectedDestroyConnection then
 			selectedDestroyConnection:Disconnect()
 			selectedDestroyConnection = nil
+		end
+		if selectedFloorConnection then
+			selectedFloorConnection:Disconnect()
+			selectedFloorConnection = nil
 		end
 		selectedBuilding = nil
 		selectedUpgradeId = nil
@@ -251,6 +257,12 @@ function StoreBuildingStatsTooltip.new(ctx)
 		ctx.screenGui:SetAttribute(ctx.Attrs.MultiplierContextBuildingId, upgradeId)
 		ctx.screenGui:SetAttribute(ctx.Attrs.MultiplierContextFloorId, building:GetAttribute(ctx.Attrs.FloorId))
 		selectedDestroyConnection = building.Destroying:Once(clearSelection)
+		selectedFloorConnection = building:GetAttributeChangedSignal(ctx.Attrs.FloorId):Connect(function()
+			if selectedBuilding == building then
+				ctx.screenGui:SetAttribute(ctx.Attrs.MultiplierContextFloorId, building:GetAttribute(ctx.Attrs.FloorId))
+				refreshSelection()
+			end
+		end)
 		local content = buildContent(building, upgradeId, config, inputMode)
 		if content then
 			if inputMode == "Touch" then
@@ -265,7 +277,7 @@ function StoreBuildingStatsTooltip.new(ctx)
 		end
 	end
 
-	local function refreshSelection()
+	refreshSelection = function()
 		if not (selectedBuilding and selectedBuilding.Parent and selectedUpgradeId and selectedConfig) then
 			clearSelection()
 			return
@@ -376,6 +388,7 @@ function StoreBuildingStatsTooltip.new(ctx)
 		end)
 	)
 	table.insert(connections, player:GetAttributeChangedSignal(ctx.Attrs.GooSkinMultiplier):Connect(refreshSelection))
+	table.insert(connections, ReplicatedStorage:GetAttributeChangedSignal("ServerBoostEndsAt"):Connect(refreshSelection))
 
 	local function observeNumberValue(value)
 		if value:IsA("NumberValue") or value:IsA("IntValue") then
