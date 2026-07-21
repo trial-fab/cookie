@@ -92,7 +92,7 @@ end
 
 -- Adds GC to a player's balance, records non-refund lifetime earnings, and
 -- notifies the client (for toasts/UI).
-function GoldenCookieService.AddGoldenCookies(player, amount, source)
+function GoldenCookieService.AddGoldenCookies(player, amount, source, sourceAnchor)
 	amount = math.floor(tonumber(amount) or 0)
 	if amount == 0 then
 		local persistent = getPersistent(player)
@@ -110,8 +110,9 @@ function GoldenCookieService.AddGoldenCookies(player, amount, source)
 	player:SetAttribute(Attrs.GoldenCookies, persistent.GoldenCookies)
 	PlayerMetricsService.RecordGoldenCookiesEarned(player, newTotal - previousTotal, source)
 
-	if amount > 0 then
-		Net.fireClient(Net.Names.GoldenCookieEarned, player, amount, source or "unknown", newTotal)
+	local granted = newTotal - previousTotal
+	if granted > 0 then
+		Net.fireClient(Net.Names.GoldenCookieEarned, player, granted, source or "unknown", newTotal, sourceAnchor)
 	end
 
 	return newTotal
@@ -157,7 +158,7 @@ end
 -- Called for every *manual* validated click (CookieService). Rolls the 0.4% drop
 -- and enforces the rolling 25 GC/hour cap so autoclicker-style spam earns nothing
 -- extra. Returns the GC granted (0 or 1).
-function GoldenCookieService.RollClickDrop(player)
+function GoldenCookieService.RollClickDrop(player, worldSource)
 	local now = os.clock()
 	local timestamps = pruneClickTimestamps(clickEarnTimestamps[player] or {}, now)
 	clickEarnTimestamps[player] = timestamps
@@ -170,7 +171,21 @@ function GoldenCookieService.RollClickDrop(player)
 		return 0
 	end
 
-	if GoldenCookieService.AddGoldenCookies(player, 1, "click") == nil then
+	local sourceAnchor
+	if
+		type(worldSource) == "table"
+		and typeof(worldSource.CFrame) == "CFrame"
+		and typeof(worldSource.Size) == "Vector3"
+	then
+		sourceAnchor = {
+			Kind = "WorldBounds",
+			CFrame = worldSource.CFrame,
+			Size = worldSource.Size,
+		}
+	elseif typeof(worldSource) == "Vector3" then
+		sourceAnchor = { Kind = "World", Position = worldSource }
+	end
+	if GoldenCookieService.AddGoldenCookies(player, 1, "click", sourceAnchor) == nil then
 		return 0
 	end
 	table.insert(timestamps, now)
@@ -279,11 +294,7 @@ local function spawnGoldenCookie()
 
 	local template = getSpawnTemplate()
 	if not template then
-		warn(
-			"GoldenCookie spawn skipped: ServerStorage."
-				.. SPAWN_TEMPLATE_NAME
-				.. " (Model or BasePart) is missing."
-		)
+		warn("GoldenCookie spawn skipped: ServerStorage." .. SPAWN_TEMPLATE_NAME .. " (Model or BasePart) is missing.")
 		return
 	end
 
@@ -328,7 +339,18 @@ local function spawnGoldenCookie()
 		if claimed or not player or not player.Parent then
 			return
 		end
-		if GoldenCookieService.AddGoldenCookies(player, reward, "spawn") == nil then
+		local sourceCFrame, sourceSize
+		if instance:IsA("Model") then
+			sourceCFrame, sourceSize = instance:GetBoundingBox()
+		else
+			sourceCFrame, sourceSize = interactionPart.CFrame, interactionPart.Size
+		end
+		local sourceAnchor = {
+			Kind = "WorldBounds",
+			CFrame = sourceCFrame,
+			Size = sourceSize,
+		}
+		if GoldenCookieService.AddGoldenCookies(player, reward, "spawn", sourceAnchor) == nil then
 			return
 		end
 		-- Preserve first-valid-claimant contention. An unavailable profile does not

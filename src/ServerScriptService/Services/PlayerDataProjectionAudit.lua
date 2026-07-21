@@ -35,6 +35,7 @@ local DOMAIN_3_FIELDS = {
 
 local DOMAIN_4_FIELDS = {
 	{ field = "GoldenCookies", attribute = Attrs.GoldenCookies },
+	{ field = "Gems", attribute = Attrs.Gems },
 	{ field = "Xp", attribute = Attrs.Xp },
 }
 

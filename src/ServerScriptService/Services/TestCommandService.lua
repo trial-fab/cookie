@@ -8,6 +8,7 @@ local CookieService = require(Services:WaitForChild("CookieService"))
 local PlayerDataService = require(Services:WaitForChild("PlayerDataService"))
 local UpgradeService = require(Services:WaitForChild("UpgradeService"))
 local GoldenCookieService = require(Services:WaitForChild("GoldenCookieService"))
+local GemService = require(Services:WaitForChild("GemService"))
 local PlayerMetricsService = require(Services:WaitForChild("PlayerMetricsService"))
 local WheelService = require(Services:WaitForChild("WheelService"))
 local SheetService = require(Services:WaitForChild("SheetService"))
@@ -126,6 +127,44 @@ local function handleCommand(player, message)
 		if amount then
 			GoldenCookieService.AddGoldenCookies(player, amount, "test")
 			print("Granted golden cookies to", player.Name, amount)
+		end
+		return
+	end
+
+	-- !gems mirrors !gc and is the only real-balance grant needed while Phase 1 has no shipped
+	-- Gem earn sources. It remains gated to Studio/the creator and records no earned metric.
+	local gemArgs = string.match(message, "^!gems%s+(.+)$")
+	if gemArgs then
+		local nameText, amountPart = string.match(gemArgs, "^(%S+)%s+(.+)$")
+		if nameText and parseAmount(nameText) == nil then
+			local amount = parseAmount(amountPart)
+			if not amount then
+				return
+			end
+
+			if string.lower(nameText) == "all" or string.lower(nameText) == "everyone" then
+				for _, target in ipairs(Players:GetPlayers()) do
+					GemService.AddGems(target, amount, "test", { Kind = "ScreenCenter" })
+				end
+				print("Granted gems to all players", amount)
+				return
+			end
+
+			local target = findPlayer(nameText)
+			if not target then
+				print("!gems: no player matching", nameText)
+				return
+			end
+
+			GemService.AddGems(target, amount, "test", { Kind = "ScreenCenter" })
+			print("Granted gems to", target.Name, amount)
+			return
+		end
+
+		local amount = parseAmount(gemArgs)
+		if amount then
+			GemService.AddGems(player, amount, "test", { Kind = "ScreenCenter" })
+			print("Granted gems to", player.Name, amount)
 		end
 		return
 	end

@@ -173,13 +173,14 @@ function CookieService.HandleClick(player, options)
 		return false, 0
 	end
 
-	local cookieSource = automated and PlayerMetricsService.CookieSources.Autoclick or PlayerMetricsService.CookieSources.Manual
+	local cookieSource = automated and PlayerMetricsService.CookieSources.Autoclick
+		or PlayerMetricsService.CookieSources.Manual
 	local added = CookieService.AddCookies(player, amount, cookieSource)
 	if added and not automated then
 		PlayerMetricsService.RecordManualClick(player)
 		-- §6: golden-cookie drop rolls fire only for validated manual clicks.
 		-- Autoclicks pass automated = true and never reach this branch.
-		GoldenCookieService.RollClickDrop(player)
+		GoldenCookieService.RollClickDrop(player, options.worldBounds or options.worldPosition)
 		XpService.AwardClick(player)
 		StoryService.OnCookieClicked(player)
 	end
@@ -359,7 +360,12 @@ local function calculateStealAmount(attacker, owner)
 end
 
 local function handleOwnerClick(cookiePart, owner)
-	local added, amount = CookieService.HandleClick(owner, { automated = false })
+	local added, amount = CookieService.HandleClick(owner, {
+		automated = false,
+		-- The client projects these bounds and chooses their screen-space top edge, which remains
+		-- visually above the cookie regardless of camera angle or part rotation.
+		worldBounds = { CFrame = cookiePart.CFrame, Size = cookiePart.Size },
+	})
 	if added then
 		displayIncrease(cookiePart, "+" .. NumberFormat.abbreviate(amount))
 	end

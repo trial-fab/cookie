@@ -43,6 +43,7 @@ local DEFAULT_PERSISTENT_DATA = {
 	RealPlayTime = 0,
 	Xp = 0,
 	GoldenCookies = 0,
+	Gems = 0,
 	OwnedSkins = {},
 	EquippedSkins = {},
 	OwnedGooSkins = {},

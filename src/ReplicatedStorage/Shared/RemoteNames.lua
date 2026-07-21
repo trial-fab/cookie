@@ -31,6 +31,7 @@ return {
 	ProductionEarnings = "ProductionEarnings",
 	CookieIncrease = "CookieIncrease",
 	GoldenCookieEarned = "GoldenCookieEarned",
+	GemEarned = "GemEarned",
 	OfflineEarningsClaim = "OfflineEarningsClaim",
 	SpinResult = "SpinResult",
 	SkinInventoryChanged = "SkinInventoryChanged",

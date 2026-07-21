@@ -1,156 +1,394 @@
--- GoldenCookieToastController — surfaces golden-cookie earns as a brief "+N GC" toast.
---
--- The server (GoldenCookieService.AddGoldenCookies) fires GoldenCookieEarned on every earn
--- — click drops, map spawns, daily claims, spin refunds — but nothing consumed it, so earns
--- only showed up silently when the GC pill/profile next read the attribute. This listens to
--- that event and pops a small toast.
---
--- Logic only: the toast UI is authored in Studio (StarterGui.ScreenGui.GoldenCookieToast
--- with a Visible=false child "Template" holding a "Label" TextLabel, optional "Icon"). Each
--- earn clones the template, animates it upward while fading, then destroys it. Rapid earns get
--- a small horizontal jitter so they don't perfectly overlap (same idea as the in-world
--- CookieIncrease billboards).
+-- Currency reward presentation owner. The historical filename is retained so the existing
+-- Rojo-mapped LocalScript remains in place, but it now coordinates Cookies/GC/Gems across the
+-- BottomRightHud, StoreBottom strip, and the generic reward-flight overlay.
 
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
+local RunService = game:GetService("RunService")
 
 local shared = ReplicatedStorage:WaitForChild("Shared")
-local DevTuning = require(shared:WaitForChild("DevTuning"):WaitForChild("DevTuning"))
-local NumberFormat = require(shared:WaitForChild("NumberFormat"))
+local Attrs = require(shared:WaitForChild("Attrs"))
+local CurrencyPill = require(shared:WaitForChild("CurrencyPill"))
+local CurrencyRewardFlightConfig = require(shared:WaitForChild("CurrencyRewardFlightConfig"))
 local Net = require(shared:WaitForChild("Net"))
 
-local TUNING_PREFIX = "GoldenCookieToast."
+local CurrencyRewardAnimator = require(script.Parent:WaitForChild("CurrencyRewardAnimator"))
+local StoreCurrencyStrip = require(script.Parent:WaitForChild("StoreCurrencyStrip"))
+
+local GOLDEN = "GoldenCookies"
+local GEMS = "Gems"
 
 local function getTuning(key)
-	return DevTuning.get(TUNING_PREFIX .. key)
+	return CurrencyRewardFlightConfig[key]
 end
 
 local screenGui = script:FindFirstAncestorOfClass("ScreenGui")
 if not screenGui then
-	warn("GoldenCookieToastController must be inside a ScreenGui")
+	warn("Currency reward controller must be inside a ScreenGui")
 	return
 end
-if screenGui:GetAttribute("GoldenCookieToastControllerRunning") then
+if screenGui:GetAttribute("CurrencyRewardControllerRunning") then
 	return
 end
-screenGui:SetAttribute("GoldenCookieToastControllerRunning", true)
+screenGui:SetAttribute("CurrencyRewardControllerRunning", true)
 
-local container = screenGui:WaitForChild("GoldenCookieToast", 10)
-if not container then
-	warn("GoldenCookieToastController disabled: ScreenGui.GoldenCookieToast was not found")
+local player = Players.LocalPlayer
+local leaderstats = player:WaitForChild("leaderstats")
+local cookiesValue = leaderstats:WaitForChild("Cookies")
+local hud = screenGui:WaitForChild("BottomRightHud", 10)
+local store = screenGui:WaitForChild("StoreBottom", 10)
+local overlay = screenGui:WaitForChild("GoldenCookieToast", 10)
+if not (hud and store and overlay and hud:IsA("GuiObject") and store:IsA("GuiObject") and overlay:IsA("GuiObject")) then
+	warn("Currency reward controller disabled: HUD, StoreBottom, or reward overlay is missing")
 	return
 end
 
-local template = container:FindFirstChild("Template")
-if not (template and template:IsA("GuiObject")) then
-	warn("GoldenCookieToastController disabled: GoldenCookieToast is missing a Template GuiObject")
+local template = overlay:FindFirstChild("Template")
+local storeCounts = store:FindFirstChild("LiveCounts")
+local storeCookie = storeCounts and storeCounts:FindFirstChild("LiveCookieCount")
+local storeGolden = storeCounts and storeCounts:FindFirstChild("LiveGCCount")
+local storeGems = storeCounts and storeCounts:FindFirstChild("LiveGemsCount")
+local hudRight = hud:FindFirstChild("Right", true)
+local hudCurrencyRow = hudRight and hudRight:FindFirstChild("cookieCount")
+local hudGolden = hudCurrencyRow and hudCurrencyRow:FindFirstChild("goldenCookie")
+local hudGems = hudCurrencyRow and hudCurrencyRow:FindFirstChild("gemCookie")
+if
+	not (
+		template
+		and template:IsA("GuiObject")
+		and storeCounts
+		and storeCounts:IsA("GuiObject")
+		and storeCookie
+		and storeGolden
+		and storeGems
+		and hudGolden
+		and hudGems
+	)
+then
+	warn("Currency reward controller disabled: one or more authored currency slots are missing")
 	return
 end
-template.Visible = false
--- The persistent root is a layout container, not the hidden exemplar. Older Studio state left
--- both hidden, which made every correctly-visible clone disappear through its ancestor.
-container.Visible = true
 
--- Fade out every text/image descendant (and the toast's own background, if any).
-local function fade(toast, fadeTweenInfo)
-	local function fadeOne(obj)
-		if obj:IsA("TextLabel") or obj:IsA("TextButton") then
-			UiMotion.create(obj, fadeTweenInfo, { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
-		elseif obj:IsA("ImageLabel") or obj:IsA("ImageButton") then
-			UiMotion.create(obj, fadeTweenInfo, { ImageTransparency = 1 }):Play()
-		elseif obj:IsA("UIStroke") then
-			UiMotion.create(obj, fadeTweenInfo, { Transparency = 1 }):Play()
+local storeScale = store:FindFirstChildOfClass("UIScale")
+local hudScale = hud:FindFirstChildOfClass("UIScale")
+local function scaleOf(scale)
+	return scale and scale.Scale or 1
+end
+
+local strip = StoreCurrencyStrip.new({
+	player = player,
+	screenGui = screenGui,
+	store = store,
+	root = storeCounts,
+	storeScale = storeScale,
+	cookie = storeCookie,
+	golden = storeGolden,
+	gems = storeGems,
+})
+
+local bindings = { [GOLDEN] = {}, [GEMS] = {} }
+local storeBindings = {}
+local function refreshStripWidth(_, immediate)
+	strip.refreshWidths(immediate)
+end
+
+storeBindings.cookie = CurrencyPill.bind(storeCookie, {
+	getRootScale = function()
+		return scaleOf(storeScale)
+	end,
+	onWidthChanged = refreshStripWidth,
+})
+storeBindings.golden = CurrencyPill.bind(storeGolden, {
+	getRootScale = function()
+		return scaleOf(storeScale)
+	end,
+	onWidthChanged = refreshStripWidth,
+})
+storeBindings.gems = CurrencyPill.bind(storeGems, {
+	getRootScale = function()
+		return scaleOf(storeScale)
+	end,
+	onWidthChanged = refreshStripWidth,
+})
+bindings[GOLDEN].store = storeBindings.golden
+bindings[GEMS].store = storeBindings.gems
+bindings[GOLDEN].hud = CurrencyPill.bind(hudGolden, {
+	getRootScale = function()
+		return scaleOf(hudScale)
+	end,
+})
+bindings[GEMS].hud = CurrencyPill.bind(hudGems, {
+	getRootScale = function()
+		return scaleOf(hudScale)
+	end,
+})
+strip.setBindings(storeBindings)
+
+storeBindings.cookie.setValue(cookiesValue.Value, true)
+cookiesValue:GetPropertyChangedSignal("Value"):Connect(function()
+	storeBindings.cookie.setValue(cookiesValue.Value)
+end)
+
+local currencyState = {
+	[GOLDEN] = {
+		attribute = Attrs.GoldenCookies,
+		authoritative = math.max(0, math.floor(tonumber(player:GetAttribute(Attrs.GoldenCookies)) or 0)),
+		displayed = 0,
+		overrideRevision = 0,
+		positiveToken = 0,
+	},
+	[GEMS] = {
+		attribute = Attrs.Gems,
+		authoritative = math.max(0, math.floor(tonumber(player:GetAttribute(Attrs.Gems)) or 0)),
+		displayed = 0,
+		overrideRevision = 0,
+		positiveToken = 0,
+	},
+}
+
+local function setDisplayed(currency, value, immediate)
+	local state = currencyState[currency]
+	value = math.max(0, math.floor(tonumber(value) or 0))
+	state.displayed = value
+	for _, binding in pairs(bindings[currency]) do
+		binding.setValue(value, immediate)
+	end
+end
+
+for currency, state in pairs(currencyState) do
+	setDisplayed(currency, state.authoritative, true)
+	player:GetAttributeChangedSignal(state.attribute):Connect(function()
+		local nextValue = math.max(0, math.floor(tonumber(player:GetAttribute(state.attribute)) or 0))
+		local previous = state.authoritative
+		state.authoritative = nextValue
+		state.positiveToken += 1
+		local token = state.positiveToken
+		if nextValue <= previous then
+			state.overrideRevision += 1
+			setDisplayed(currency, nextValue)
+			return
 		end
-		if obj:IsA("GuiObject") and obj.BackgroundTransparency < 1 then
-			UiMotion.create(obj, fadeTweenInfo, { BackgroundTransparency = 1 }):Play()
+
+		-- A real earn event normally arrives in the same replication turn and cancels this
+		-- correlation timer. Direct corrections still reconcile after this bounded grace period.
+		task.delay(getTuning("EventMatchSeconds"), function()
+			if state.positiveToken ~= token or state.authoritative ~= nextValue then
+				return
+			end
+			state.overrideRevision += 1
+			setDisplayed(currency, nextValue)
+		end)
+	end)
+end
+
+local function isVisibleIcon(icon)
+	if not (icon and icon:IsA("GuiObject") and icon.Parent and icon.Visible and icon.AbsoluteSize.Magnitude > 0) then
+		return false
+	end
+	local current = icon.Parent
+	while current and current ~= screenGui do
+		if current:IsA("GuiObject") and not current.Visible then
+			return false
+		end
+		current = current.Parent
+	end
+	return current == screenGui
+end
+
+local function slotIcon(slot)
+	if not slot then
+		return nil
+	end
+	for _, child in ipairs(slot:GetChildren()) do
+		if child:IsA("ImageLabel") or child:IsA("ImageButton") then
+			return child
 		end
 	end
-	fadeOne(toast)
-	for _, d in ipairs(toast:GetDescendants()) do
-		fadeOne(d)
-	end
+	return nil
 end
 
-local function show(amount)
-	amount = math.floor(tonumber(amount) or 0)
+local storeIcons = {
+	[GOLDEN] = slotIcon(storeGolden),
+	[GEMS] = slotIcon(storeGems),
+}
+local hudIcons = {
+	[GOLDEN] = slotIcon(hudGolden),
+	[GEMS] = slotIcon(hudGems),
+}
+
+local function resolveDestination(currency)
+	local storeIcon = storeIcons[currency]
+	if strip.isStoreVisible() and isVisibleIcon(storeIcon) then
+		return storeIcon
+	end
+	local hudIcon = hudIcons[currency]
+	if isVisibleIcon(hudIcon) and hudIcon.ImageTransparency < 0.99 then
+		return hudIcon
+	end
+	return nil
+end
+
+local function prepareDestination(currency)
+	if strip.isStoreVisible() then
+		strip.setRewardActive(true)
+	end
+	return resolveDestination(currency)
+end
+
+local function resolveUiSource(key)
+	local wheel = screenGui:FindFirstChild("WheelModal")
+	if key == "DailyClaim" then
+		return wheel and wheel:FindFirstChild("ClaimButton", true) or nil
+	elseif key == "WheelReward" then
+		return wheel and wheel:FindFirstChild("RewardCard", true) or nil
+	end
+	return nil
+end
+
+local function getIconSource(currency)
+	return hudIcons[currency] or storeIcons[currency]
+end
+
+local queue = {}
+local processing = false
+local pendingBatch
+local batchGeneration = 0
+
+local function sourceKey(anchor)
+	if type(anchor) ~= "table" then
+		return "ScreenCenter"
+	end
+	if anchor.Kind == "WorldBounds" and typeof(anchor.CFrame) == "CFrame" then
+		local p = anchor.CFrame.Position
+		return ("WorldBounds:%d:%d:%d"):format(math.round(p.X), math.round(p.Y), math.round(p.Z))
+	end
+	if anchor.Kind == "World" and typeof(anchor.Position) == "Vector3" then
+		local p = anchor.Position
+		return ("World:%d:%d:%d"):format(math.round(p.X), math.round(p.Y), math.round(p.Z))
+	end
+	return tostring(anchor.Kind) .. ":" .. tostring(anchor.Key or "")
+end
+
+local animator
+
+local function countToArrival(item, duration)
+	local state = currencyState[item.currency]
+	if item.invalidated or item.overrideRevision ~= state.overrideRevision or state.authoritative < item.newTotal then
+		return
+	end
+	local startValue = state.displayed
+	local target = item.newTotal
+	if target <= startValue then
+		return
+	end
+	local firstValue = math.min(target, startValue + 1)
+	setDisplayed(item.currency, firstValue)
+	if duration <= 0 or firstValue == target then
+		setDisplayed(item.currency, target)
+		return
+	end
+	task.spawn(function()
+		local started = os.clock()
+		while item.overrideRevision == state.overrideRevision do
+			local alpha = math.clamp((os.clock() - started) / duration, 0, 1)
+			local value = math.floor(firstValue + (target - firstValue) * alpha + 0.5)
+			setDisplayed(item.currency, value)
+			if alpha >= 1 then
+				break
+			end
+			RunService.RenderStepped:Wait()
+		end
+	end)
+end
+
+animator = CurrencyRewardAnimator.new({
+	screenGui = screenGui,
+	overlay = overlay,
+	template = template,
+	getTuning = getTuning,
+	resolveUiSource = resolveUiSource,
+	resolveDestination = resolveDestination,
+	prepareDestination = prepareDestination,
+	getIconSource = getIconSource,
+	onArrival = countToArrival,
+})
+
+local function processQueue()
+	if processing then
+		return
+	end
+	processing = true
+	task.spawn(function()
+		while #queue > 0 do
+			local item = table.remove(queue, 1)
+			animator.play(item)
+		end
+		processing = false
+		if not pendingBatch then
+			task.wait(getTuning("StorePostLandingHoldSeconds"))
+			if #queue == 0 and not pendingBatch then
+				strip.setRewardActive(false)
+			end
+		end
+	end)
+end
+
+local function flushBatch(generation)
+	if generation and generation ~= batchGeneration then
+		return
+	end
+	if not pendingBatch then
+		return
+	end
+	table.insert(queue, pendingBatch)
+	pendingBatch = nil
+	processQueue()
+end
+
+local function enqueueEarn(currency, amount, source, newTotal, sourceAnchor)
+	amount = math.max(0, math.floor(tonumber(amount) or 0))
+	newTotal = math.max(0, math.floor(tonumber(newTotal) or 0))
 	if amount <= 0 then
 		return
 	end
-
-	local toast = template:Clone()
-	toast.Name = "Toast"
-	local holdSeconds = getTuning("HoldSeconds")
-	local riseSeconds = getTuning("RiseSeconds")
-	local fadeSeconds = getTuning("FadeSeconds")
-	local rise = UDim2.fromScale(0, getTuning("RiseDistanceScale"))
-	local jitterScale = getTuning("HorizontalJitterScale")
-	local riseTweenInfo = TweenInfo.new(riseSeconds, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-	local fadeTweenInfo = TweenInfo.new(fadeSeconds, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-
-	local label = toast:FindFirstChild("Label", true)
-	if label and label:IsA("TextLabel") then
-		local formattedAmount = NumberFormat.abbreviate(amount)
-		label.Text = string.gsub(getTuning("TextFormat"), "{amount}", function()
-			return formattedAmount
+	local state = currencyState[currency]
+	state.positiveToken += 1
+	local currentAttribute = math.max(0, math.floor(tonumber(player:GetAttribute(state.attribute)) or 0))
+	state.authoritative = currentAttribute
+	local key = currency .. ":" .. tostring(source) .. ":" .. sourceKey(sourceAnchor)
+	if pendingBatch and pendingBatch.key == key then
+		pendingBatch.amount += amount
+		pendingBatch.newTotal = newTotal
+		pendingBatch.invalidated = currentAttribute < newTotal
+	else
+		flushBatch()
+		pendingBatch = {
+			key = key,
+			currency = currency,
+			amount = amount,
+			source = source,
+			newTotal = newTotal,
+			sourceAnchor = type(sourceAnchor) == "table" and sourceAnchor or { Kind = "ScreenCenter" },
+			overrideRevision = state.overrideRevision,
+			invalidated = currentAttribute < newTotal,
+		}
+	end
+	batchGeneration += 1
+	local generation = batchGeneration
+	if source == "spawn" then
+		-- Ground cookies are singular, contested pickups and should react on the first server
+		-- confirmation frame. They gain nothing from the ordinary rapid-reward batch window.
+		flushBatch(generation)
+	else
+		task.delay(getTuning("BatchWindowSeconds"), function()
+			flushBatch(generation)
 		end)
-		label.TextSize = getTuning("TextSize")
-		label.TextColor3 = getTuning("TextColor")
-
-		local stroke = label:FindFirstChildWhichIsA("UIStroke")
-		if stroke then
-			stroke.Thickness = getTuning("TextStrokeThickness")
-			stroke.Color = getTuning("TextStrokeColor")
-		end
-	end
-
-	local icon = toast:FindFirstChild("Icon", true)
-	if icon and (icon:IsA("ImageLabel") or icon:IsA("ImageButton")) then
-		local iconSize = getTuning("IconSize")
-		icon.Visible = getTuning("ShowIcon")
-		icon.Size = UDim2.fromOffset(iconSize, iconSize)
-		icon.ImageColor3 = getTuning("IconColor")
-	end
-
-	-- small horizontal jitter so concurrent earns don't sit exactly on top of each other
-	toast.Position = template.Position + UDim2.fromScale((math.random() * 2 - 1) * jitterScale, 0)
-	toast.Visible = true
-	toast.Parent = container
-
-	UiMotion.create(toast, riseTweenInfo, { Position = toast.Position + rise }):Play()
-	task.delay(holdSeconds, function()
-		if toast and toast.Parent then
-			fade(toast, fadeTweenInfo)
-		end
-	end)
-
-	task.delay(math.max(riseSeconds, holdSeconds + fadeSeconds), function()
-		if toast and toast.Parent then
-			toast:Destroy()
-		end
-	end)
-end
-
--- Previewing is entirely client-side: it neither grants GC nor fires the earn remote. The
--- observers also make every edit produce a fresh example while PreviewEnabled remains on.
-local previewObservations = {}
-local previewReady = false
-local function showPreviewIfEnabled()
-	if previewReady and getTuning("PreviewEnabled") then
-		show(getTuning("PreviewAmount"))
 	end
 end
 
-for _, feature in ipairs(DevTuning.getCatalog().features) do
-	if feature.name == "GoldenCookieToast" then
-		for _, definition in ipairs(feature.tunables) do
-			table.insert(previewObservations, DevTuning.observe(definition.fullId, showPreviewIfEnabled))
-		end
-		break
-	end
-end
-previewReady = true
-showPreviewIfEnabled()
-
-Net.on(Net.Names.GoldenCookieEarned, function(amount)
-	show(amount)
+Net.on(Net.Names.GoldenCookieEarned, function(amount, source, newTotal, sourceAnchor)
+	enqueueEarn(GOLDEN, amount, source, newTotal, sourceAnchor)
+end)
+Net.on(Net.Names.GemEarned, function(amount, source, newTotal, sourceAnchor)
+	enqueueEarn(GEMS, amount, source, newTotal, sourceAnchor)
 end)

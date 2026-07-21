@@ -39,12 +39,14 @@ local function encodeJson(value)
 end
 
 local function createPersistentAttributes(player, persistent)
-	-- Domain 4 Data is canonical even during initialization. Preserve the legacy XP
-	-- clamp and GC numeric coercion before projecting the exact saved values.
+	-- Domain 4 Data is canonical even during initialization. Normalize each scalar
+	-- currency before projecting the exact values that services will subsequently own.
 	persistent.Xp = math.max(0, math.floor(tonumber(persistent.Xp) or 0))
-	persistent.GoldenCookies = tonumber(persistent.GoldenCookies) or 0
+	persistent.GoldenCookies = math.max(0, math.floor(tonumber(persistent.GoldenCookies) or 0))
+	persistent.Gems = math.max(0, math.floor(tonumber(persistent.Gems) or 0))
 	player:SetAttribute(Attrs.Xp, persistent.Xp)
 	player:SetAttribute(Attrs.GoldenCookies, persistent.GoldenCookies)
+	player:SetAttribute(Attrs.Gems, persistent.Gems)
 	player:SetAttribute(Attrs.LoginStreak, tonumber(persistent.LoginStreak) or 0)
 	player:SetAttribute(Attrs.LastLoginDay, tonumber(persistent.LastLoginDay) or 0)
 	player:SetAttribute(Attrs.LastSeenTimestamp, tonumber(persistent.LastSeenTimestamp) or 0)

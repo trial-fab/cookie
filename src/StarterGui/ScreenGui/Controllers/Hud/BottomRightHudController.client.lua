@@ -66,7 +66,6 @@ end
 
 local titleLabel = findText("TitleLabel")
 local levelLabel = findText("LevelLabel")
-local goldenAmount = findAmount("GoldenCookieCount") or findText("GoldenAmount")
 local friendBoostAmount = findAmount("FriendBoost") or findText("FriendBoostAmount")
 local xpBar = findGui("XpBar")
 local xpFill = xpBar and xpBar:FindFirstChild("Fill", true) or nil
@@ -194,17 +193,9 @@ local function renderXp()
 	setXpFill(info.progress)
 end
 
-local function renderGoldenCookies()
-	if goldenAmount then
-		goldenAmount.Text = NumberFormat.exact(player:GetAttribute(Attrs.GoldenCookies) or 0)
-	end
-end
-
 player:GetAttributeChangedSignal(Attrs.Xp):Connect(renderXp)
-player:GetAttributeChangedSignal(Attrs.GoldenCookies):Connect(renderGoldenCookies)
 
 renderXp()
-renderGoldenCookies()
 liveCountBinding.refresh()
 
 -- Shrink the HUD on phones so it stops bleeding into the hotbar; UIScale-only so its mixed
@@ -256,7 +247,6 @@ end
 do
 	local top = hud:FindFirstChild("Top")
 	local left = top and top:FindFirstChild("Left")
-	local right = top and top:FindFirstChild("Right")
 
 	registerOrder(hud:FindFirstChild("XpBar"), 0)
 	registerOrder(top, 1)
@@ -265,11 +255,7 @@ do
 		registerOrder(left:FindFirstChild("TitleLabel"), 2)
 		registerOrder(left:FindFirstChild("empty"), 3)
 	end
-	if right then
-		registerOrder(right:FindFirstChild("LiveCookieCount"), 1)
-		registerOrder(right:FindFirstChild("GoldenCookieCount"), 2)
-		registerOrder(right:FindFirstChild("FriendBoost"), 3)
-	end
+	-- Right-column order and the nested cookieCount row are authored entirely in Studio.
 end
 
 local function updateLayoutOrder()

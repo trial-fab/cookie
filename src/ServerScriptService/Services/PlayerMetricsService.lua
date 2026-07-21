@@ -269,6 +269,19 @@ function PlayerMetricsService.RecordGoldenCookiesSpent(player, amount)
 	return persistent and addMetric(player, persistent, Attrs.GoldenCookiesSpent, amount) ~= nil or false
 end
 
+function PlayerMetricsService.RecordGemsEarned(player, amount, source)
+	local persistent = getPersistent(player, true)
+	if not persistent or source == "test" then
+		return false
+	end
+	return addMetric(player, persistent, Attrs.GemsEarned, amount) ~= nil
+end
+
+function PlayerMetricsService.RecordGemsSpent(player, amount)
+	local persistent = getPersistent(player, true)
+	return persistent and addMetric(player, persistent, Attrs.GemsSpent, amount) ~= nil or false
+end
+
 function PlayerMetricsService.RecordWheelSpin(player)
 	local persistent = getPersistent(player, true)
 	return persistent and addMetric(player, persistent, Attrs.WheelSpins, 1) ~= nil or false

@@ -112,7 +112,7 @@ function DailyRewardService.Claim(player)
 
 	local gc = math.max(0, math.floor(tonumber(reward.Gc) or 0))
 	if gc > 0 then
-		GoldenCookieService.AddGoldenCookies(player, gc, "daily")
+		GoldenCookieService.AddGoldenCookies(player, gc, "daily", { Kind = "Ui", Key = "DailyClaim" })
 	end
 
 	local skinGranted = false

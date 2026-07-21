@@ -98,8 +98,7 @@ function StoreCookieStats.new(ctx)
 		if previewFrame then
 			previewShiftedPosition = previewFrame.Position
 			previewShiftedAnchor = previewFrame.AnchorPoint
-			previewCenteredPosition =
-				UDim2.new(0.5, 0, previewShiftedPosition.Y.Scale, previewShiftedPosition.Y.Offset)
+			previewCenteredPosition = UDim2.new(0.5, 0, previewShiftedPosition.Y.Scale, previewShiftedPosition.Y.Offset)
 			previewCenteredAnchor = Vector2.new(0.5, previewShiftedAnchor.Y)
 		end
 
@@ -110,18 +109,30 @@ function StoreCookieStats.new(ctx)
 		local fadeEntries = {}
 		local function captureFade(object)
 			if object:IsA("GuiObject") and object.BackgroundTransparency < 1 then
-				table.insert(fadeEntries, { object = object, prop = "BackgroundTransparency", base = object.BackgroundTransparency })
+				table.insert(
+					fadeEntries,
+					{ object = object, prop = "BackgroundTransparency", base = object.BackgroundTransparency }
+				)
 			end
 			if object:IsA("TextLabel") or object:IsA("TextButton") then
 				if object.TextTransparency < 1 then
-					table.insert(fadeEntries, { object = object, prop = "TextTransparency", base = object.TextTransparency })
+					table.insert(
+						fadeEntries,
+						{ object = object, prop = "TextTransparency", base = object.TextTransparency }
+					)
 				end
 				if object.TextStrokeTransparency < 1 then
-					table.insert(fadeEntries, { object = object, prop = "TextStrokeTransparency", base = object.TextStrokeTransparency })
+					table.insert(
+						fadeEntries,
+						{ object = object, prop = "TextStrokeTransparency", base = object.TextStrokeTransparency }
+					)
 				end
 			elseif object:IsA("ImageLabel") or object:IsA("ImageButton") then
 				if object.ImageTransparency < 1 then
-					table.insert(fadeEntries, { object = object, prop = "ImageTransparency", base = object.ImageTransparency })
+					table.insert(
+						fadeEntries,
+						{ object = object, prop = "ImageTransparency", base = object.ImageTransparency }
+					)
 				end
 			elseif object:IsA("UIStroke") then
 				if object.Transparency < 1 then
@@ -290,7 +301,12 @@ function StoreCookieStats.new(ctx)
 			end
 
 			local function updatePreviewDrag(input)
-				if previewInteraction.activeDragOwner ~= lockCatch or not dragInput or not dragStartPosition or not lastDragPosition then
+				if
+					previewInteraction.activeDragOwner ~= lockCatch
+					or not dragInput
+					or not dragStartPosition
+					or not lastDragPosition
+				then
 					return
 				end
 
@@ -562,10 +578,10 @@ function StoreCookieStats.new(ctx)
 			return
 		end
 
-		local pointerPosition = UserInputService:GetMouseLocation()
-		if not screenGui.IgnoreGuiInset then
-			pointerPosition -= GuiService:GetGuiInset()
-		end
+		-- MouseLocation is in full-screen coordinates while GuiObject.AbsolutePosition is in
+		-- ScreenGui coordinates. The inset must be removed even when IgnoreGuiInset is true;
+		-- otherwise a row reads as hovered while the pointer is visibly above its preview.
+		local pointerPosition = UserInputService:GetMouseLocation() - GuiService:GetGuiInset()
 		for _, controller in ipairs(statsSlideControllers) do
 			local excluded = false
 			for _, object in ipairs(controller.HoverExclusions) do

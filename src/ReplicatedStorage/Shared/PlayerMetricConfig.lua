@@ -21,6 +21,8 @@ PlayerMetricConfig.PersistentAttributes = {
 	Attrs.HighestCps,
 	Attrs.GoldenCookiesEarned,
 	Attrs.GoldenCookiesSpent,
+	Attrs.GemsEarned,
+	Attrs.GemsSpent,
 	Attrs.BuildingsPlaced,
 	Attrs.LifetimeFloorUnlocks,
 	Attrs.HighestFloorUnlocked,

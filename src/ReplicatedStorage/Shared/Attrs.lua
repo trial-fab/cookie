@@ -107,6 +107,7 @@ return {
 	Cps = "Cps",
 	Xp = "Xp",
 	GoldenCookies = "GoldenCookies",
+	Gems = "Gems",
 	-- Lifetime profile metrics. PlayerMetricsService owns these server-written,
 	-- persistent counters; ProfileController only reads their replicated values.
 	LifetimeCookiesEarned = "LifetimeCookiesEarned",
@@ -124,6 +125,8 @@ return {
 	HighestCps = "HighestCps",
 	GoldenCookiesEarned = "GoldenCookiesEarned",
 	GoldenCookiesSpent = "GoldenCookiesSpent",
+	GemsEarned = "GemsEarned",
+	GemsSpent = "GemsSpent",
 	BuildingsPlaced = "BuildingsPlaced",
 	LifetimeFloorUnlocks = "LifetimeFloorUnlocks",
 	HighestFloorUnlocked = "HighestFloorUnlocked",

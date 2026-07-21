@@ -101,7 +101,12 @@ function WheelService.Spin(player)
 
 	local duplicate = GooSkinService.IsOwned(player, def.Id)
 	if duplicate then
-		GoldenCookieService.AddGoldenCookies(player, WheelConfig.DuplicateRefundGC, "refund")
+		GoldenCookieService.AddGoldenCookies(
+			player,
+			WheelConfig.DuplicateRefundGC,
+			"refund",
+			{ Kind = "Ui", Key = "WheelReward" }
+		)
 	else
 		GooSkinService.GrantSkin(player, def.Id)
 	end

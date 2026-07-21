@@ -37,7 +37,6 @@ local PvpConfig = require(shared:WaitForChild("PvpConfig"))
 local NumberFormat = require(shared:WaitForChild("NumberFormat"))
 local ProductionFormula = require(shared:WaitForChild("ProductionFormula"))
 local GridPlacement = require(shared:WaitForChild("GridPlacement"))
-local LiveCookieCount = require(shared:WaitForChild("LiveCookieCount"))
 local UiMotion = require(shared:WaitForChild("UiMotion"))
 local upgradeCountData = player:WaitForChild("UpgradeCountData")
 local cookiesValue = player:WaitForChild("leaderstats"):WaitForChild("Cookies")
@@ -1187,11 +1186,6 @@ ctx.robuxTab = require(script.Parent.StoreRobuxTab).new(ctx)
 ctx.robuxSubTabScroller =
 	require(script.Parent.StoreSubTabScroller).new(pageContainer, SELL_TAB_LAYOUT_TWEEN_INFO, setActiveRobuxSubTab)
 
--- ── live cookie counter ───────────────────────────────────────────────────────
--- Exact, un-abbreviated running cookie total. The shared binder keeps this StoreBottom
--- pill and the always-on bottom-right HUD in sync behaviorally.
-local liveCount = LiveCookieCount.bind(store:FindFirstChild("LiveCookieCount", true), cookiesValue)
-
 local function createRow(upgradeId, index)
 	local config = UpgradeConfig[upgradeId]
 	if not config then
@@ -1256,7 +1250,11 @@ local function createRow(upgradeId, index)
 					ctx.affordance.pulseRequirementPreview(blockWidget)
 				end
 				if blockContainer == "cookieCost" then
-					liveCount.flashShortage()
+					local liveCount = store:FindFirstChild("LiveCookieCount", true)
+					local amountLabel = liveCount and liveCount:FindFirstChild("Amount", true)
+					if amountLabel and (amountLabel:IsA("TextLabel") or amountLabel:IsA("TextButton")) then
+						ctx.affordance.flashNumberText(amountLabel)
+					end
 				end
 				return
 			end
