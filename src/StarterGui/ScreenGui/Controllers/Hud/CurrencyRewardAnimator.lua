@@ -190,12 +190,18 @@ function CurrencyRewardAnimator.new(ctx)
 		visual.Position = UDim2.fromOffset(destinationPoint.X, destinationPoint.Y - 24)
 		task.wait(getTuning("LandingLabelHoldSeconds"))
 		local fadeSeconds = getTuning("LandingLabelFadeSeconds")
-		UiMotion.create(label, TweenInfo.new(fadeSeconds, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		local fadeInfo = TweenInfo.new(fadeSeconds, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		UiMotion.create(label, fadeInfo, {
 			TextTransparency = 1,
 			TextStrokeTransparency = 1,
 		}):Play()
+		for _, descendant in ipairs(label:GetDescendants()) do
+			if descendant:IsA("UIStroke") then
+				UiMotion.create(descendant, fadeInfo, { Transparency = 1 }):Play()
+			end
+		end
 		local rise =
-			UiMotion.create(visual, TweenInfo.new(fadeSeconds, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			UiMotion.create(visual, fadeInfo, {
 				Position = visual.Position - UDim2.fromOffset(0, 18),
 			})
 		rise:Play()

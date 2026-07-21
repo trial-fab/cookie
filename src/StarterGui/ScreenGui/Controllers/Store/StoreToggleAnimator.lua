@@ -15,6 +15,7 @@
 -- ctx: { screenGui, store, setStoreOpen }. setStoreOpen(open) is called from the button input
 -- (the controller flips the attribute, the watcher below plays the animation).
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TextService = game:GetService("TextService")
 local UserInputService = game:GetService("UserInputService")
 
 local shared = ReplicatedStorage:WaitForChild("Shared")
@@ -107,6 +108,27 @@ function StoreToggleAnimator.new(ctx)
 	-- buildLabelBack (the backing behind the label) tracks the same width span, keeping its own height.
 	local backOpenSize = nil
 	local backClosedSize = nil
+	local toggleOnAuthoredSize = toggleOn and toggleOn.Size
+	local authoredLabelTextWidth = buildLabel
+		and TextService:GetTextSize(buildLabel.Text, buildLabel.TextSize, buildLabel.Font, Vector2.new(10000, 10000)).X
+
+	-- Preserve the authored Build-label padding, but let every other mode word contribute its
+	-- actual rendered-width difference. The label clip is scale-sized to this frame, so resizing
+	-- StoreBottomOn also keeps its backing, split-cookie positions, and hitbox in sync.
+	local function getToggleOnOpenSize()
+		if not (toggleOnAuthoredSize and buildLabel and authoredLabelTextWidth) then
+			return toggleOnAuthoredSize
+		end
+		local textWidth =
+			TextService:GetTextSize(buildLabel.Text, buildLabel.TextSize, buildLabel.Font, Vector2.new(10000, 10000)).X
+		local widthOffset = math.max(0, toggleOnAuthoredSize.X.Offset + textWidth - authoredLabelTextWidth)
+		return UDim2.new(
+			toggleOnAuthoredSize.X.Scale,
+			widthOffset,
+			toggleOnAuthoredSize.Y.Scale,
+			toggleOnAuthoredSize.Y.Offset
+		)
+	end
 
 	-- Tween the clip between its authored open width and an exact zero width. Keeping these fixed
 	-- avoids marker rounding drift and translucent seams during rapid hover reversals.
@@ -243,6 +265,9 @@ function StoreToggleAnimator.new(ctx)
 
 		drive(cookieBackgroundLeft, splitOpenLeft and { Position = open and splitOpenLeft or splitClosedLeft })
 		drive(cookieBackgroundRight, splitOpenRight and { Position = open and splitOpenRight or splitClosedRight })
+		if open then
+			drive(toggleOn, toggleOnAuthoredSize and { Size = getToggleOnOpenSize() })
+		end
 		drive(buildLabelClip, clipOpenSize and { Size = open and clipOpenSize or clipClosedSize })
 		drive(buildLabelBack, backOpenSize and { Size = open and backOpenSize or backClosedSize })
 	end

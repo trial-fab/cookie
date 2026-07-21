@@ -141,6 +141,13 @@ local function newPresenter(screenGui)
 	local activeContent = nil
 	local renderConnection = nil
 	local defaultRootZIndex = root and root.ZIndex or 1
+	local hint = root and root:FindFirstChild("Hint")
+	local header = hint and hint:FindFirstChild("Header")
+	local title = header and header:FindFirstChild("Title")
+	local keybind = header and header:FindFirstChild("Keybind")
+	local titleLabel = findTextObject(hint, "Title")
+	local keybindLabel = findTextObject(hint, "Keybind")
+	local descriptionLabel = findTextObject(hint, "Description")
 
 	local presenter = {
 		Priority = CursorTooltip.Priority,
@@ -148,6 +155,35 @@ local function newPresenter(screenGui)
 	}
 
 	local lastFollowPoint = nil
+	local lastHorizontalFlip = nil
+
+	if keybind and keybind:IsA("GuiObject") then
+		keybind.Size = UDim2.fromOffset(CursorTooltipConfig.KeybindSize, CursorTooltipConfig.KeybindSize)
+	end
+	if titleLabel then
+		titleLabel.TextSize = CursorTooltipConfig.TitleTextSize
+	end
+	if keybindLabel then
+		keybindLabel.TextSize = CursorTooltipConfig.KeybindTextSize
+	end
+	if descriptionLabel then
+		descriptionLabel.TextSize = CursorTooltipConfig.DescriptionTextSize
+	end
+
+	local function setHeaderHorizontalFlip(flipped)
+		if lastHorizontalFlip == flipped then
+			return
+		end
+		lastHorizontalFlip = flipped
+		if not (title and title:IsA("GuiObject") and keybind and keybind:IsA("GuiObject")) then
+			return
+		end
+		-- Normal placement is right of the cursor, so the keybind leads. Once the
+		-- tooltip flips left, the keybind trails on the cursor-facing right edge.
+		keybind.LayoutOrder = flipped and 2 or 1
+		title.LayoutOrder = flipped and 1 or 2
+	end
+	setHeaderHorizontalFlip(false)
 
 	local positionProviderWarned = false
 	local function getFollowPoint()
@@ -195,6 +231,7 @@ local function newPresenter(screenGui)
 		local size = root.AbsoluteSize
 		local x
 		local y
+		local flippedHorizontally = false
 		if placement == "Above" then
 			local offsetY = math.max(0, tonumber(activeContent.offsetY) or CursorTooltipConfig.OffsetY)
 			x = point.X - size.X / 2
@@ -202,12 +239,14 @@ local function newPresenter(screenGui)
 		else
 			x = point.X + CursorTooltipConfig.OffsetX
 			if x + size.X > viewport.X then
-				x = point.X - CursorTooltipConfig.OffsetX - size.X
+				x = point.X - CursorTooltipConfig.FlippedOffsetX - size.X
+				flippedHorizontally = true
 			end
 			y = point.Y + CursorTooltipConfig.OffsetY
 			if y + size.Y > viewport.Y then
-				y = point.Y - CursorTooltipConfig.OffsetY - size.Y
+				y = point.Y - CursorTooltipConfig.FlippedOffsetY - size.Y
 			end
+			setHeaderHorizontalFlip(flippedHorizontally)
 		end
 		x = math.clamp(x, 0, math.max(0, viewport.X - size.X))
 		y = math.clamp(y, 0, math.max(0, viewport.Y - size.Y))

@@ -45,7 +45,7 @@ local function register(target, tuningTarget, activeProvider, contentTransform)
 	if not (target and target:IsA("GuiObject")) then
 		return
 	end
-	tooltip:registerGui(target, {
+	return tooltip:registerGui(target, {
 		trigger = tooltip.Trigger.Hover,
 		getContent = function()
 			if UserInputService.PreferredInput ~= Enum.PreferredInput.KeyboardAndMouse then
@@ -57,7 +57,7 @@ local function register(target, tuningTarget, activeProvider, contentTransform)
 	})
 end
 
-local function registerNamedHitbox(parent, containerName, tuningTarget, stateProvider, contentTransform)
+local function registerNamedHitbox(parent, containerName, tuningTarget, stateProvider, contentTransform, refreshSignals)
 	task.spawn(function()
 		local container = waitForDescendant(parent, containerName)
 		local hitbox = container
@@ -68,7 +68,14 @@ local function registerNamedHitbox(parent, containerName, tuningTarget, statePro
 		local activeProvider = stateProvider and function()
 			return stateProvider(container)
 		end or nil
-		register(hitbox, tuningTarget, activeProvider, contentTransform)
+		local registration = register(hitbox, tuningTarget, activeProvider, contentTransform)
+		if registration and refreshSignals then
+			for _, signal in ipairs(refreshSignals) do
+				signal:Connect(function()
+					registration:refresh()
+				end)
+			end
+		end
 	end)
 end
 
@@ -84,19 +91,32 @@ if menuPill then
 	registerNamedHitbox(menuPill, GuiNames.Settings, "Settings")
 end
 
--- The leaderboard and both open/closed Mixer controls already have authored hitboxes.
+-- The leaderboard and Mixer controls already have authored hitboxes. While the
+-- store is closed, the Mixer tap belongs to the hotbar's SlotCenter hitbox; the
+-- StoreBottomOff launcher's hitbox is deliberately disabled by HotbarCarousel.
 registerNamedHitbox(screenGui, "BoardToggle", "Leaderboard", function()
 	return screenGui:GetAttribute(Attrs.LeaderboardOpen) == true
 end)
-local store = screenGui:FindFirstChild(GuiNames.StoreBottom, true)
-local function contextualizeMixer(content)
-	if content and store and store:GetAttribute(Attrs.CurrentCategory) == "Robux" then
-		content.title = "Robux"
-	end
-	return content
+local hotbar = screenGui:FindFirstChild(GuiNames.Hotbar)
+if hotbar then
+	registerNamedHitbox(hotbar, "SlotCenter", "MixerClosed", nil, function(content)
+		if screenGui:GetAttribute(Attrs.PlacementActive) == true then
+			local placementHint = screenGui:GetAttribute(Attrs.PlacementControlsEnabled) == true
+				and "PlacementRotate"
+				or "PlacementCancel"
+			return CursorTooltipTuning.getHint(placementHint, false)
+		end
+		if screenGui:GetAttribute(Attrs.StoreOpen) == true then
+			return nil
+		end
+		return content
+	end, {
+		screenGui:GetAttributeChangedSignal(Attrs.PlacementActive),
+		screenGui:GetAttributeChangedSignal(Attrs.PlacementControlsEnabled),
+		screenGui:GetAttributeChangedSignal(Attrs.StoreOpen),
+	})
 end
-registerNamedHitbox(screenGui, GuiNames.StoreBottomOff, "MixerClosed", nil, contextualizeMixer)
-registerNamedHitbox(screenGui, GuiNames.StoreBottomOn, "MixerOpen", nil, contextualizeMixer)
+registerNamedHitbox(screenGui, GuiNames.StoreBottomOn, "MixerOpen")
 
 -- Build View lives in a separate topbar ScreenGui, but can publish through the main
 -- ScreenGui's shared presenter. Its owning animator creates one outer-frame hitbox.
