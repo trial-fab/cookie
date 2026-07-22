@@ -4,7 +4,7 @@
 -- placement stay in Studio; this module owns only the reset action and click spin.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local UiMotion = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiMotion"))
+local ClickSpin = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ClickSpin"))
 
 local SettingsResetButton = {}
 
@@ -14,29 +14,7 @@ function SettingsResetButton.new(body, resetToDefaults)
 		return
 	end
 
-	local activeTween
-	button.Activated:Connect(function()
-		resetToDefaults()
-
-		if activeTween then
-			activeTween:Cancel()
-		end
-		local restRotation = button.Rotation % 360
-		button.Rotation = restRotation
-		local tween = UiMotion.create(
-			button,
-			TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{ Rotation = restRotation + 360 }
-		)
-		activeTween = tween
-		tween.Completed:Once(function()
-			if activeTween == tween then
-				activeTween = nil
-				button.Rotation = restRotation
-			end
-		end)
-		tween:Play()
-	end)
+	ClickSpin.bind(button, resetToDefaults)
 end
 
 return SettingsResetButton

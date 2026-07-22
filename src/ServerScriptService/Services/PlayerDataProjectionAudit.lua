@@ -37,6 +37,7 @@ local DOMAIN_4_FIELDS = {
 	{ field = "GoldenCookies", attribute = Attrs.GoldenCookies },
 	{ field = "Gems", attribute = Attrs.Gems },
 	{ field = "Xp", attribute = Attrs.Xp },
+	{ field = "SelectedTitleId", attribute = Attrs.SelectedTitleId },
 }
 
 local DOMAIN_5_JSON_FIELDS = {

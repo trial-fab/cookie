@@ -39,14 +39,20 @@ function HudStoreTransition.start(ctx)
 	local entries = {}
 	local function capture(object)
 		if object:IsA("GuiObject") and object.BackgroundTransparency < 1 then
-			table.insert(entries, { object = object, prop = "BackgroundTransparency", base = object.BackgroundTransparency })
+			table.insert(
+				entries,
+				{ object = object, prop = "BackgroundTransparency", base = object.BackgroundTransparency }
+			)
 		end
 		if object:IsA("TextLabel") or object:IsA("TextButton") then
 			if object.TextTransparency < 1 then
 				table.insert(entries, { object = object, prop = "TextTransparency", base = object.TextTransparency })
 			end
 			if object.TextStrokeTransparency < 1 then
-				table.insert(entries, { object = object, prop = "TextStrokeTransparency", base = object.TextStrokeTransparency })
+				table.insert(
+					entries,
+					{ object = object, prop = "TextStrokeTransparency", base = object.TextStrokeTransparency }
+				)
 			end
 		elseif object:IsA("ImageLabel") or object:IsA("ImageButton") then
 			if object.ImageTransparency < 1 then
@@ -79,6 +85,7 @@ function HudStoreTransition.start(ctx)
 	local storeVisible = false
 
 	local function applyState(visible)
+		hud:SetAttribute(Attrs.HudStoreSuppressed, visible)
 		if visible == storeVisible then
 			return
 		end

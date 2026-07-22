@@ -14,6 +14,7 @@ local ModalCoordinator = require(script.Parent:WaitForChild("ModalCoordinator"))
 local ModalPageTransition = require(script.Parent:WaitForChild("ModalPageTransition"))
 local ModalResponsiveLayout = require(script.Parent:WaitForChild("ModalResponsiveLayout"))
 local ProfileStats = require(script.Parent:WaitForChild("ProfileStats"))
+local ProfileTitleSelector = require(script.Parent:WaitForChild("ProfileTitleSelector"))
 
 local MY = "Profile"
 local ACTIVE_COLOR = Color3.fromRGB(0, 170, 255)
@@ -102,6 +103,15 @@ local profileStats = ProfileStats.bind({
 		return modal.Visible
 	end,
 })
+local titleSelector = ProfileTitleSelector.bind({
+	player = player,
+	body = body,
+	modal = modal,
+	screenGui = screenGui,
+	isVisible = function()
+		return modal.Visible and modal:GetAttribute(Attrs.Open) == true
+	end,
+})
 
 -- Avatar thumbnail (set once).
 do
@@ -136,6 +146,7 @@ local function refresh()
 	setNumber("PlayTime", playTime and tostring(playTime.Value) or "00:00")
 
 	profileStats.refresh()
+	titleSelector.refresh()
 
 	local pill = body:FindFirstChild("BuildingsPill", true)
 	local pillVal = pill and pill:FindFirstChild("Value")

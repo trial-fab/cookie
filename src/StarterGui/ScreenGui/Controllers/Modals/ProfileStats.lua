@@ -37,7 +37,10 @@ function ProfileStats.bind(ctx)
 
 	local function setNumber(frameName, text)
 		local frame = body:FindFirstChild(frameName, true)
-		local label = frame and (frame:FindFirstChild("Number", true) or frame:FindFirstChild("Value", true))
+		local label = frame
+		if frame and not (frame:IsA("TextLabel") or frame:IsA("TextButton")) then
+			label = frame:FindFirstChild("Number", true) or frame:FindFirstChild("Value", true)
+		end
 		if label and (label:IsA("TextLabel") or label:IsA("TextButton")) then
 			label.Text = text
 			return true
@@ -99,7 +102,7 @@ function ProfileStats.bind(ctx)
 		local passiveCookies = readMetric(Attrs.BuildingCookiesEarned)
 			+ readMetric(Attrs.AutoclickCookiesEarned)
 			+ readMetric(Attrs.OfflineCookiesEarned)
-		local xpInfo = XpConfig.GetLevelInfo(player:GetAttribute(Attrs.Xp))
+		local xpInfo = XpConfig.GetLevelInfo(player:GetAttribute(Attrs.Xp), player:GetAttribute(Attrs.SelectedTitleId))
 		local abbreviate = NumberFormat.abbreviate
 
 		setFirstNumber({ "LifetimeCookies", "LifetimeCookiesEarned" }, abbreviate(lifetimeCookies))
@@ -154,10 +157,10 @@ function ProfileStats.bind(ctx)
 		setFirstNumber({ "TopIncomeSource" }, getTopIncomeSource())
 		setFirstNumber({ "PlayerLevel", "Level" }, tostring(xpInfo.level))
 		setFirstNumber({ "TotalXp", "Xp" }, abbreviate(xpInfo.totalXp))
-		setFirstNumber({ "PlayerTitle" }, xpInfo.title)
 	end
 
 	player:GetAttributeChangedSignal(Attrs.Xp):Connect(render)
+	player:GetAttributeChangedSignal(Attrs.SelectedTitleId):Connect(render)
 	player:GetAttributeChangedSignal(Attrs.LoginStreak):Connect(render)
 	player:GetAttributeChangedSignal(Attrs.OwnedSkinsJson):Connect(render)
 	player:GetAttributeChangedSignal(Attrs.OwnedGooSkinsJson):Connect(render)

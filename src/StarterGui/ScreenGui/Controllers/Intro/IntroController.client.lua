@@ -62,6 +62,7 @@ local DESCENT_TIME = 4.0         -- seconds for the cinematic sky drop onto the 
 local DROP_LEAD_ANGLE = math.rad(22) -- title-orbit alignment point near the player's plot
 local ATMOSPHERE_ENTRY_LEAD_ANGLE = math.rad(24)
 local ATMOSPHERE_ENTRY_EXTRA_HEIGHT = 120
+local INTRO_EARTH_REFERENCE_RADIUS = 700 -- original 800x800x800 Earth used to tune the descent
 local ATMOSPHERE_CONTROL_HEIGHT = 90
 local ATMOSPHERE_CAMERA_BACK = 235
 local ATMOSPHERE_CAMERA_SIDE = 80
@@ -344,15 +345,18 @@ local function buildTitleGui(allowSkip)
 	button.Position = UDim2.fromScale(0.5, 0.88)
 	button.Size = UDim2.fromOffset(96, 96)
 	button.BackgroundColor3 = Color3.fromRGB(60, 130, 246)
-	button.TextColor3 = Color3.fromRGB(255, 255, 255)
-	button.Font = Enum.Font.SourceSansBold
-	button.TextSize = 54
-	button.Text = "\u{25B6}" -- play-triangle icon glyph
+	button.Text = ""
 	button.AutoButtonColor = true
 	button.Parent = gui
-	local pad = Instance.new("UIPadding") -- optical-centre the triangle
-	pad.PaddingLeft = UDim.new(0, 6)
-	pad.Parent = button
+	local glyph = Instance.new("ImageLabel")
+	glyph.Name = "Glyph"
+	glyph.AnchorPoint = Vector2.new(0.5, 0.5)
+	glyph.Position = UDim2.new(0.5, 4, 0.5, 0)
+	glyph.Size = UDim2.fromOffset(48, 48)
+	glyph.BackgroundTransparency = 1
+	glyph.Image = "rbxassetid://124626664950201"
+	glyph.ImageColor3 = Color3.fromRGB(255, 255, 255)
+	glyph.Parent = button
 	local corner = Instance.new("UICorner")
 	corner.CornerRadius = UDim.new(1, 0) -- full circle
 	corner.Parent = button
@@ -747,7 +751,7 @@ local function playIntro(options)
 	outwardDir = outwardDir.Magnitude > 0 and outwardDir.Unit or Vector3.xAxis
 
 	-- Radius is derived from Earth so the meteor orbits just above its surface.
-	local earthRadius = earth and earth.Size.X / 2 or 400
+	local earthRadius = earth and earth.Size.X / 2 or INTRO_EARTH_REFERENCE_RADIUS
 	local orbitRadius = earthRadius + ORBIT_ALTITUDE
 
 	-- Orbit plane: spanned by `outwardDir` (toward the plot) and an up-axis tilted by ORBIT_TILT,
@@ -845,7 +849,8 @@ local function playIntro(options)
 	local nowAtPlay = os.clock() - titleStart
 	local spinBase = nowAtPlay * TITLE_SPIN_SPEED
 	local entryAngle = dropAngle + ATMOSPHERE_ENTRY_LEAD_ANGLE
-	local dropStartPos = orbitPos(entryAngle) + Vector3.new(0, ATMOSPHERE_ENTRY_EXTRA_HEIGHT, 0)
+	local entryHeightOffset = ATMOSPHERE_ENTRY_EXTRA_HEIGHT - (earthRadius - INTRO_EARTH_REFERENCE_RADIUS)
+	local dropStartPos = orbitPos(entryAngle) + Vector3.new(0, entryHeightOffset, 0)
 	local entryDir = dropStartPos - orbitCenter
 	entryDir = entryDir.Magnitude > 0 and entryDir.Unit or outwardDir
 	local atmospherePiercePos = orbitCenter + entryDir * (earthRadius * 0.72)
@@ -864,7 +869,7 @@ local function playIntro(options)
 
 	local b1 = atmospherePiercePos
 		+ sideDir * DROP_CONTROL_SIDE
-		+ Vector3.new(0, ATMOSPHERE_CONTROL_HEIGHT + ATMOSPHERE_ENTRY_EXTRA_HEIGHT * 0.35, 0)
+		+ Vector3.new(0, ATMOSPHERE_CONTROL_HEIGHT + entryHeightOffset * 0.35, 0)
 	local b2 = restingPos + Vector3.new(0, IMPACT_HEIGHT, 0) -- steep, near-vertical final approach
 	local atmosphereCamPos = orbitCenter
 		+ entryDir * (earthRadius + ATMOSPHERE_CAMERA_BACK)

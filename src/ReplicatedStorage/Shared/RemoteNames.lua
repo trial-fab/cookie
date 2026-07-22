@@ -10,6 +10,7 @@ return {
 	SellAll = "SellAll",
 	ClaimDailyReward = "ClaimDailyReward",
 	SelectGooSkin = "SelectGooSkin",
+	SelectTitle = "SelectTitle",
 	DevTuningApply = "DevTuningApply",
 
 	-- client -> server (fire-and-forget actions; RemoteEvent)

@@ -256,7 +256,10 @@ local function createController(model)
 		if not dizzy then
 			return
 		end
-		for _, descendant in ipairs(dizzy:GetDescendants()) do
+		-- New skins use individually positioned BillboardGuis in DizzyStars so their orbit can lie
+		-- flat in world space. Legacy skins continue to toggle their original DizzyBirds contents.
+		local effectRoot = dizzy:FindFirstChild("DizzyStars") or dizzy
+		for _, descendant in ipairs(effectRoot:GetDescendants()) do
 			if descendant:IsA("ParticleEmitter") or descendant:IsA("Beam") or descendant:IsA("Trail") then
 				descendant.Enabled = enabled
 			elseif descendant:IsA("BillboardGui") then

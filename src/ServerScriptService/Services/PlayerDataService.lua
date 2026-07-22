@@ -42,6 +42,8 @@ local DEFAULT_RUN_DATA = {
 local DEFAULT_PERSISTENT_DATA = {
 	RealPlayTime = 0,
 	Xp = 0,
+	-- Empty string keeps title selection in auto-equip-newest mode.
+	SelectedTitleId = "",
 	GoldenCookies = 0,
 	Gems = 0,
 	OwnedSkins = {},

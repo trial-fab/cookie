@@ -17,6 +17,9 @@ return {
 	-- bottom-right HUD moves into the leaderboard's top-right slot, so it hides itself while the
 	-- board is open and reappears when it closes (BottomRightHudController reads this).
 	LeaderboardOpen = "LeaderboardOpen",
+	-- HudStoreTransition owns this on BottomRightHud while StoreBottom suppresses its visuals.
+	-- Tooltip/input presenters use it so transparent HUD controls cannot react through the store.
+	HudStoreSuppressed = "HudStoreSuppressed",
 	Hovering = "Hovering",
 	OpenModal = "OpenModal",
 	-- True while a main modal has temporarily taken ownership of Store and Leaderboard
@@ -106,6 +109,8 @@ return {
 	-- player stats / persisted data (server writes, client + server read)
 	Cps = "Cps",
 	Xp = "Xp",
+	-- Empty string means automatically equip the highest title unlocked by Xp.
+	SelectedTitleId = "SelectedTitleId",
 	GoldenCookies = "GoldenCookies",
 	Gems = "Gems",
 	-- Lifetime profile metrics. PlayerMetricsService owns these server-written,

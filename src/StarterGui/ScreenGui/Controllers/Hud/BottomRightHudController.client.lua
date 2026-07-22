@@ -14,8 +14,10 @@ local Attrs = require(shared:WaitForChild("Attrs"))
 local LiveCookieCount = require(shared:WaitForChild("LiveCookieCount"))
 local MobileScale = require(shared:WaitForChild("MobileScale"))
 local NumberFormat = require(shared:WaitForChild("NumberFormat"))
+local TitleTextEffects = require(shared:WaitForChild("TitleTextEffects"))
 local XpConfig = require(shared:WaitForChild("XpConfig"))
 local HudStoreTransition = require(script.Parent:WaitForChild("HudStoreTransition"))
+local XpBarShimmerPresenter = require(script.Parent:WaitForChild("XpBarShimmerPresenter"))
 
 local screenGui = script:FindFirstAncestorOfClass("ScreenGui")
 if not screenGui then
@@ -72,12 +74,19 @@ local xpFill = xpBar and xpBar:FindFirstChild("Fill", true) or nil
 local xpHoverHitbox = xpBar and xpBar:FindFirstChild("HoverHitbox", true) or nil
 local xpText = xpBar and xpBar:FindFirstChild("Tooltip", true) or nil
 local liveCookieCount = findGui("LiveCookieCount")
+local titleEffects = titleLabel and TitleTextEffects.bind(titleLabel) or nil
+if titleEffects then
+	titleEffects.setActive(true)
+end
+
+local xpShimmerPresenter = XpBarShimmerPresenter.bind(xpFill)
 
 if xpText and (xpText:IsA("TextLabel") or xpText:IsA("TextButton")) then
 	local shownTransparency = xpText.TextTransparency
 	local shownStrokeTransparency = xpText.TextStrokeTransparency
 	local fadeTween
 	local touchShown = false
+	local pointerOver = false
 	xpText.TextTransparency = 1
 	xpText.TextStrokeTransparency = 1
 	local hoverTarget = xpHoverHitbox and xpHoverHitbox:IsA("GuiObject") and xpHoverHitbox or xpBar
@@ -87,6 +96,11 @@ if xpText and (xpText:IsA("TextLabel") or xpText:IsA("TextButton")) then
 		hoverTarget.Size = UDim2.new(1, 0, 0, 36)
 	end
 	local function fadeTo(textTransparency, strokeTransparency)
+		if hud:GetAttribute(Attrs.HudStoreSuppressed) == true then
+			touchShown = false
+			textTransparency = 1
+			strokeTransparency = 1
+		end
 		if fadeTween then
 			fadeTween:Cancel()
 		end
@@ -97,12 +111,14 @@ if xpText and (xpText:IsA("TextLabel") or xpText:IsA("TextButton")) then
 		fadeTween:Play()
 	end
 	hoverTarget.MouseEnter:Connect(function()
+		pointerOver = true
 		if UserInputService.PreferredInput ~= Enum.PreferredInput.KeyboardAndMouse then
 			return
 		end
 		fadeTo(shownTransparency, shownStrokeTransparency)
 	end)
 	hoverTarget.MouseLeave:Connect(function()
+		pointerOver = false
 		if UserInputService.PreferredInput ~= Enum.PreferredInput.KeyboardAndMouse then
 			return
 		end
@@ -149,6 +165,18 @@ if xpText and (xpText:IsA("TextLabel") or xpText:IsA("TextButton")) then
 			fadeTo(1, 1)
 		end
 	end)
+	hud:GetAttributeChangedSignal(Attrs.HudStoreSuppressed):Connect(function()
+		if hud:GetAttribute(Attrs.HudStoreSuppressed) == true then
+			fadeTo(1, 1)
+		elseif pointerOver and UserInputService.PreferredInput == Enum.PreferredInput.KeyboardAndMouse then
+			fadeTo(shownTransparency, shownStrokeTransparency)
+		elseif
+			GuiService.SelectedObject == hoverTarget
+			and UserInputService.PreferredInput == Enum.PreferredInput.Gamepad
+		then
+			fadeTo(shownTransparency, shownStrokeTransparency)
+		end
+	end)
 end
 
 if friendBoostAmount then
@@ -176,10 +204,11 @@ local function setXpFill(progress)
 end
 
 local function renderXp()
-	local info = XpConfig.GetLevelInfo(player:GetAttribute(Attrs.Xp))
+	local info = XpConfig.GetLevelInfo(player:GetAttribute(Attrs.Xp), player:GetAttribute(Attrs.SelectedTitleId))
 
 	if titleLabel then
 		titleLabel.Text = info.title
+		titleEffects.apply(info.titleDef, true)
 	end
 	if levelLabel then
 		levelLabel.Text = "Level " .. tostring(info.level)
@@ -194,6 +223,7 @@ local function renderXp()
 end
 
 player:GetAttributeChangedSignal(Attrs.Xp):Connect(renderXp)
+player:GetAttributeChangedSignal(Attrs.SelectedTitleId):Connect(renderXp)
 
 renderXp()
 liveCountBinding.refresh()
