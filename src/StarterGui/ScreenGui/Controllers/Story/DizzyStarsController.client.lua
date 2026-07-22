@@ -59,6 +59,9 @@ local function register(root)
 	tracked[root] = {
 		stars = stars,
 		trails = trails,
+		heightOffsetDelta = if typeof(root:GetAttribute("HeightOffsetDeltaStuds")) == "number"
+			then root:GetAttribute("HeightOffsetDeltaStuds")
+			else 0,
 	}
 end
 
@@ -72,11 +75,11 @@ local function registerFromDescendant(descendant)
 	end
 end
 
-local function setPresentation(item, angle, size, transparency, color, rotation)
+local function setPresentation(item, angle, heightOffsetDelta, size, transparency, color, rotation)
 	item.billboard.Size = UDim2.fromScale(size, size)
 	item.billboard.StudsOffsetWorldSpace = Vector3.new(
 		tuning.OffsetXStuds + math.cos(angle) * tuning.RadiusXStuds,
-		tuning.HeightOffsetStuds,
+		tuning.HeightOffsetStuds + heightOffsetDelta,
 		tuning.OffsetZStuds + math.sin(angle) * tuning.RadiusZStuds
 	)
 	item.icon.ImageColor3 = color
@@ -100,7 +103,7 @@ local function updateStatic(state)
 			continue
 		end
 		local angle = ((starIndex - 1) / starCount) * TAU
-		setPresentation(star, angle, tuning.StarSizeStuds, 0, tuning.StarColor, 0)
+		setPresentation(star, angle, state.heightOffsetDelta, tuning.StarSizeStuds, 0, tuning.StarColor, 0)
 		for _, trail in ipairs(state.trails[starIndex]) do
 			trail.icon.Visible = false
 		end
@@ -123,7 +126,15 @@ local function updateAnimated(state, elapsed)
 		local phase = ((starIndex - 1) / starCount) * TAU
 		local angle = orbitAngle + phase
 		local rotation = (elapsed * tuning.SpinDegreesPerSecond + (starIndex - 1) * 35) % 360
-		setPresentation(star, angle, tuning.StarSizeStuds, 0, tuning.StarColor, rotation)
+		setPresentation(
+			star,
+			angle,
+			state.heightOffsetDelta,
+			tuning.StarSizeStuds,
+			0,
+			tuning.StarColor,
+			rotation
+		)
 
 		for trailIndex, trail in ipairs(state.trails[starIndex]) do
 			if trailIndex > trailCount then
@@ -135,6 +146,7 @@ local function updateAnimated(state, elapsed)
 			setPresentation(
 				trail,
 				trailAngle,
+				state.heightOffsetDelta,
 				tuning.StarSizeStuds * tuning.TrailScale * trailFalloff,
 				math.clamp(
 					tuning.TrailTransparency + (trailIndex - 1) * tuning.TrailFadePerGhost,
