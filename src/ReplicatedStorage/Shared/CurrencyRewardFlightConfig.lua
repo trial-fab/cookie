@@ -2,6 +2,9 @@
 -- CurrencyRewardFlight session and are now the single runtime source of truth.
 
 return {
+	CompletedEventName = "CurrencyRewardFlightCompleted",
+	QuestStrikeCompletedEventName = "QuestCompletionStrikeFinished",
+	QuestStrikeWaitTimeoutSeconds = 2,
 	SourceRiseSeconds = 0.35,
 	SourceRisePixels = 100,
 	SourcePauseSeconds = 0.4,

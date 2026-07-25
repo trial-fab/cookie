@@ -1,0 +1,19 @@
+{
+  "frameCount": 101,
+  "frameSize": {
+    "x": 128,
+    "y": 128
+  },
+  "padding": 2,
+  "cellSize": {
+    "x": 132,
+    "y": 132
+  },
+  "columns": 11,
+  "rows": 10,
+  "atlasSize": {
+    "x": 1452,
+    "y": 1320
+  },
+  "frameOrder": "left-to-right, then top-to-bottom, 0 through 100 percent"
+}

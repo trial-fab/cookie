@@ -13,6 +13,7 @@ local FloorService = require(ServerScriptService.Services.FloorService)
 local PlayerDataService = require(ServerScriptService.Services.PlayerDataService)
 local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
 local StoryService = require(ServerScriptService.Services.StoryService)
+local QuestService = require(ServerScriptService.Services.QuestService)
 local SheetService = require(ServerScriptService.Services.SheetService)
 local XpService = require(ServerScriptService.Services.XpService)
 local NumberFormat = require(ReplicatedStorage.Shared.NumberFormat)
@@ -1189,7 +1190,12 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFl
 	-- Deduct BEFORE applying: grantTool can yield (WaitForChild), and paying after a
 	-- yield lets two overlapped purchases both pass the funds check above. Refund if
 	-- the apply then fails.
+	local questPurchasePending = config.TemplateKind == "Building"
+		and QuestService.BeginBuildingPurchase(player, upgradeId)
 	if not CookieService.AddCookies(player, -cost, PlayerMetricsService.CookieSources.PendingPurchase) then
+		if questPurchasePending then
+			QuestService.CancelBuildingPurchase(player, upgradeId)
+		end
 		return false, "Player data is not ready."
 	end
 	local applied, applyMessage, placedBuilding = UpgradeService.ApplyUpgrade(
@@ -1204,16 +1210,25 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFl
 		if getRun(player) == run then
 			CookieService.AddCookies(player, cost, PlayerMetricsService.CookieSources.Refund)
 		end
+		if questPurchasePending then
+			QuestService.CancelBuildingPurchase(player, upgradeId)
+		end
 		return false, applyMessage or "Upgrade could not be applied."
 	end
 	-- ApplyUpgrade can yield while granting gear. Re-check the live profile after that exact
 	-- transaction step and before count/metric recording; do not add a rollback or move the
 	-- existing deduction -> apply -> failure-refund -> count -> metric order.
 	if getRun(player) ~= run then
+		if questPurchasePending then
+			QuestService.CancelBuildingPurchase(player, upgradeId)
+		end
 		return false, "Player data is not ready."
 	end
 
 	if addUpgradeCount(player, upgradeId, 1, run) == nil then
+		if questPurchasePending then
+			QuestService.CancelBuildingPurchase(player, upgradeId)
+		end
 		return false, "Player data is not ready."
 	end
 	PlayerMetricsService.RecordCookiesSpent(player, cost)
@@ -1234,6 +1249,7 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFl
 			XpService.AwardBuildingUnlock(player, upgradeId, config)
 		end
 		StoryService.OnBuildingPlaced(player, upgradeId)
+		QuestService.OnBuildingPlaced(player, upgradeId)
 	end
 
 	return true, "Purchased " .. (config.DisplayName or upgradeId) .. "."

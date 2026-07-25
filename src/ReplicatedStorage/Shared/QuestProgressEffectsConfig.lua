@@ -1,0 +1,50 @@
+-- Default presentation for the in-development quest progress effects.
+-- DevTuning mirrors these values for live iteration until the feature is baked.
+
+return table.freeze({
+	EffectsEnabled = true,
+	PreviewProgressEnabled = false,
+	PreviewProgress = 0.65,
+
+	ProgressTweenSeconds = 0.85,
+	ProgressTweenEasingStyle = Enum.EasingStyle.Quad,
+
+	SheenEnabled = true,
+	SheenPreviewTrigger = false,
+	SheenProgressStep = 0.1,
+	SheenSweepSeconds = 1.15,
+	SheenCenterX = 22,
+	SheenCenterY = 22,
+	SheenRadius = 19.25,
+	SheenStartDegrees = 90,
+	SheenReverse = false,
+	SheenEasingStyle = Enum.EasingStyle.Linear,
+	SheenLength = 8,
+	SheenWidth = 4,
+	SheenTangentOffsetDegrees = 90,
+	SheenCoreWidth = 0.2,
+	SheenEdgeColor = Color3.fromRGB(76, 219, 255),
+	SheenCenterColor = Color3.fromRGB(255, 255, 255),
+	SheenEdgeTransparency = 1,
+	SheenCenterTransparency = 0.05,
+
+	PulseEnabled = true,
+	PulseScale = 1.08,
+	CompletionPulseScale = 1.15,
+	PulseGrowSeconds = 0.08,
+	PulseSettleSeconds = 0.16,
+	PulseSettleStyle = Enum.EasingStyle.Back,
+
+	BurstEnabled = true,
+	BurstDuration = 0.36,
+	BurstParticleCount = 8,
+	BurstStartDegrees = -90,
+	BurstOddDistance = 14,
+	BurstEvenDistance = 17,
+	BurstOddSize = 2,
+	BurstEvenSize = 3,
+	BurstPrimaryColor = Color3.fromRGB(76, 219, 255),
+	BurstSecondaryColor = Color3.fromRGB(255, 255, 255),
+	BurstStartTransparency = 0.05,
+	BurstEasingStyle = Enum.EasingStyle.Quad,
+})

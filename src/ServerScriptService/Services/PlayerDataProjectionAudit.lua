@@ -5,6 +5,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
+local BoostShopConfig = require(ReplicatedStorage.Shared.BoostShopConfig)
 local PlayerMetricConfig = require(ReplicatedStorage.Shared.PlayerMetricConfig)
 local SettingsConfig = require(ReplicatedStorage.Shared.SettingsConfig)
 
@@ -300,6 +301,23 @@ function PlayerDataProjectionAudit.Check(player, data)
 				"Persistent." .. definition.field,
 				persistent[definition.field],
 				player:GetAttribute(definition.attribute)
+			)
+		end
+
+		-- Boost charges are one canonical table fanning out to a scalar attribute per item, so
+		-- they are compared per item rather than through the field/attribute pairs above.
+		-- BoostShopService.SetupPlayer writes every item's count and attribute inside this same
+		-- yield-free domain-4 group, so after readiness both sides are concrete numbers and a
+		-- nil or wrong type on either side is a real mismatch. Read-only: a missing table is
+		-- substituted locally and never written back into Data.
+		local charges = type(persistent.BoostCharges) == "table" and persistent.BoostCharges or {}
+		for _, itemId in ipairs(BoostShopConfig.Order) do
+			local item = BoostShopConfig.Items[itemId]
+			warnMismatch(
+				player,
+				"Persistent.BoostCharges." .. itemId,
+				charges[itemId],
+				player:GetAttribute(item.OwnedAttribute)
 			)
 		end
 	end

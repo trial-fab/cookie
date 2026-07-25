@@ -4,12 +4,15 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local Workspace = game:GetService("Workspace")
 
 local CookieService = {}
+local Attrs = require(ReplicatedStorage.Shared.Attrs)
 local Net = require(ReplicatedStorage.Shared.Net)
 local NumberFormat = require(ReplicatedStorage.Shared.NumberFormat)
+local StoryConfig = require(ReplicatedStorage.Shared.StoryConfig)
 local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
 local GoldenCookieService = require(ServerScriptService.Services.GoldenCookieService)
 local PlayerDataService = require(ServerScriptService.Services.PlayerDataService)
 local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
+local QuestService = require(ServerScriptService.Services.QuestService)
 local StoryService = require(ServerScriptService.Services.StoryService)
 local XpService = require(ServerScriptService.Services.XpService)
 
@@ -147,6 +150,7 @@ function CookieService.AddCookies(player, amount, source)
 	run.Cookies = current
 	cookies.Value = current
 	PlayerMetricsService.RecordCookieDelta(player, current - previous, source)
+	QuestService.OnCookieBalanceChanged(player)
 	return true
 end
 
@@ -158,6 +162,12 @@ end
 function CookieService.HandleClick(player, options)
 	options = type(options) == "table" and options or {}
 	local automated = options.automated == true
+
+	-- During the meteor/rubble step, clicks belong to the intro presentation and must
+	-- never award normal cookie income—even if the server-owned detector is activated.
+	if not automated and player:GetAttribute(Attrs.StoryStep) == StoryConfig.STEPS.Meteor then
+		return false, 0
+	end
 
 	-- Do not consume rate-limit state before the canonical domain is ready.
 	if not getRun(player) then
@@ -182,7 +192,10 @@ function CookieService.HandleClick(player, options)
 		-- Autoclicks pass automated = true and never reach this branch.
 		GoldenCookieService.RollClickDrop(player, options.worldBounds or options.worldPosition)
 		XpService.AwardClick(player)
-		StoryService.OnCookieClicked(player)
+		local acceptedHealingClick, healingClicks = StoryService.OnCookieClicked(player)
+		if acceptedHealingClick then
+			QuestService.OnManualCookieClick(player, healingClicks)
+		end
 	end
 
 	return added, amount

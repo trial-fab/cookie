@@ -23,7 +23,8 @@ local CursorTooltip = require(shared:WaitForChild("CursorTooltip"))
 local CursorTooltipTuning = require(shared:WaitForChild("CursorTooltipTuning"))
 local GuiNames = require(shared:WaitForChild("GuiNames"))
 
-local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
 local tooltip = CursorTooltip.get(screenGui)
 local WAIT_SECONDS = 10
 
@@ -52,7 +53,10 @@ local function register(target, tuningTarget, activeProvider, contentTransform)
 				return nil
 			end
 			local content = CursorTooltipTuning.getHint(tuningTarget, activeProvider and activeProvider() or false)
-			return contentTransform and contentTransform(content) or content
+			if contentTransform then
+				return contentTransform(content)
+			end
+			return content
 		end,
 	})
 end
@@ -99,22 +103,36 @@ registerNamedHitbox(screenGui, "BoardToggle", "Leaderboard", function()
 end)
 local hotbar = screenGui:FindFirstChild(GuiNames.Hotbar)
 if hotbar then
+	local mixerSlot = hotbar:FindFirstChild("SlotCenter")
+	local mixerPlaceholder = mixerSlot and mixerSlot:FindFirstChild("placeholderLabel")
+	local mixerRefreshSignals = {
+		player:GetAttributeChangedSignal(Attrs.MixerUnlocked),
+		screenGui:GetAttributeChangedSignal(Attrs.PlacementActive),
+		screenGui:GetAttributeChangedSignal(Attrs.PlacementControlsEnabled),
+		screenGui:GetAttributeChangedSignal(Attrs.MixerUnlockPresented),
+		screenGui:GetAttributeChangedSignal(Attrs.StoreOpen),
+	}
+	if mixerPlaceholder and mixerPlaceholder:IsA("GuiObject") then
+		table.insert(mixerRefreshSignals, mixerPlaceholder:GetPropertyChangedSignal("Visible"))
+	end
 	registerNamedHitbox(hotbar, "SlotCenter", "MixerClosed", nil, function(content)
 		if screenGui:GetAttribute(Attrs.PlacementActive) == true then
-			local placementHint = screenGui:GetAttribute(Attrs.PlacementControlsEnabled) == true
-				and "PlacementRotate"
+			local placementHint = screenGui:GetAttribute(Attrs.PlacementControlsEnabled) == true and "PlacementRotate"
 				or "PlacementCancel"
 			return CursorTooltipTuning.getHint(placementHint, false)
+		end
+		if
+			player:GetAttribute(Attrs.MixerUnlocked) ~= true
+			or screenGui:GetAttribute(Attrs.MixerUnlockPresented) ~= true
+			or (mixerPlaceholder and mixerPlaceholder:IsA("GuiObject") and mixerPlaceholder.Visible)
+		then
+			return nil
 		end
 		if screenGui:GetAttribute(Attrs.StoreOpen) == true then
 			return nil
 		end
 		return content
-	end, {
-		screenGui:GetAttributeChangedSignal(Attrs.PlacementActive),
-		screenGui:GetAttributeChangedSignal(Attrs.PlacementControlsEnabled),
-		screenGui:GetAttributeChangedSignal(Attrs.StoreOpen),
-	})
+	end, mixerRefreshSignals)
 end
 registerNamedHitbox(screenGui, GuiNames.StoreBottomOn, "MixerOpen")
 

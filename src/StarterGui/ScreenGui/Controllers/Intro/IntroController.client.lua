@@ -41,6 +41,7 @@ local shared = ReplicatedStorage:WaitForChild("Shared")
 local Net = require(shared:WaitForChild("Net"))
 local Attrs = require(shared:WaitForChild("Attrs"))
 local AudioSettings = require(shared:WaitForChild("AudioSettings"))
+local QuestReplayConfig = require(shared:WaitForChild("QuestReplayConfig"))
 local StoryConfig = require(shared:WaitForChild("StoryConfig"))
 local UiMotion = require(shared:WaitForChild("UiMotion"))
 
@@ -568,6 +569,20 @@ local function getReplayEvent()
 	return event
 end
 
+local function getChapterReplayEvent(name)
+	local existing = mainGui and mainGui:FindFirstChild(name)
+	if existing and existing:IsA("BindableEvent") then
+		return existing
+	end
+	if not mainGui then
+		return nil
+	end
+	local event = Instance.new("BindableEvent")
+	event.Name = name
+	event.Parent = mainGui
+	return event
+end
+
 local function playIntro(options)
 	if running then
 		return
@@ -575,6 +590,7 @@ local function playIntro(options)
 	options = options or {}
 	local shouldMarkSeen = options.markSeen ~= false
 	local completeStory = options.completeStory == true
+	local replayPresentation = options.replayPresentation == true
 	local allowSkip = options.allowSkip ~= false
 	local markSeenSent = false
 
@@ -590,6 +606,12 @@ local function playIntro(options)
 			Net.fireServer(Net.Names.StoryAction, "RubbleCleared")
 		else
 			markIntroSeen()
+			if replayPresentation then
+				local event = getChapterReplayEvent(QuestReplayConfig.RubbleClearedEvent)
+				if event then
+					event:Fire()
+				end
+			end
 		end
 	end
 
@@ -642,8 +664,11 @@ local function playIntro(options)
 	end
 	meteor.Anchored = true
 
-	-- Hide the real Cookie locally (server ClickDetector untouched; others unaffected).
+	-- Hide the real Cookie locally and keep it from intercepting rubble clicks while the
+	-- meteor clone is still covering it. The server-owned ClickDetector remains untouched.
+	local cookieBaseCanQuery = cookie.CanQuery
 	cookie.LocalTransparencyModifier = 1
+	cookie.CanQuery = false
 	-- Rubble stays hidden until impact.
 	setPartsHidden(rubble, true)
 
@@ -706,6 +731,7 @@ local function playIntro(options)
 			letterboxBottom = nil
 		end
 		cookie.LocalTransparencyModifier = 0
+		cookie.CanQuery = cookieBaseCanQuery
 		if not craterDestroyed then
 			craterDestroyed = true
 			craterClone:Destroy()
@@ -1021,8 +1047,22 @@ local function playIntro(options)
 	camera.CFrame = savedCameraCFrame
 	if mainGui then
 		mainGui.Enabled = true
+		local questReadyDeadline = os.clock() + 2
+		while mainGui:GetAttribute(Attrs.QuestSnapshotReady) ~= true and os.clock() < questReadyDeadline do
+			RunService.Heartbeat:Wait()
+		end
+		-- Give the restored HUD one rendered frame at 0% before its automatic objective completes.
+		RunService.RenderStepped:Wait()
 	end
 	humanoidRootPart.Anchored = wasRootAnchored
+	if replayPresentation then
+		local event = getChapterReplayEvent(QuestReplayConfig.IntroCompletedEvent)
+		if event then
+			event:Fire()
+		end
+	elseif completeStory then
+		Net.fireServer(Net.Names.StoryAction, "IntroCompleted")
+	end
 
 	-- Back to day; remove Earth.
 	Lighting.ClockTime = GAMEPLAY_CLOCKTIME
@@ -1034,10 +1074,40 @@ local function playIntro(options)
 	----------------------------------------------------------------
 	-- Phase 4 + 5: each click chips rubble AND morphs the meteor a step toward the real Cookie.
 	----------------------------------------------------------------
-	local clickDetector = Instance.new("ClickDetector")
-	clickDetector.MaxActivationDistance = 32
-	clickDetector.CursorIcon = ""
-	clickDetector.Parent = meteor
+	local clickDetectors = {}
+	local normalCookieDetector = cookie:FindFirstChildOfClass("ClickDetector")
+	local normalCookieActivationDistance = normalCookieDetector and normalCookieDetector.MaxActivationDistance
+	if normalCookieDetector then
+		-- CanQuery does not suppress ClickDetector activation. Disable the normal cookie action
+		-- locally until rubble clearing is finished; a temporary detector below sends this same
+		-- surface through handleClearClick instead.
+		normalCookieDetector.MaxActivationDistance = 0
+	end
+
+	local function addClickTarget(part)
+		local detector = Instance.new("ClickDetector")
+		detector.MaxActivationDistance = 32
+		detector.CursorIcon = ""
+		detector.Parent = part
+		table.insert(clickDetectors, detector)
+	end
+	addClickTarget(meteor)
+	addClickTarget(cookie)
+	for _, part in ipairs(rubble) do
+		if part.Parent then
+			addClickTarget(part)
+		end
+	end
+
+	local function restoreNormalCookieInteraction()
+		for _, detector in ipairs(clickDetectors) do
+			detector:Destroy()
+		end
+		table.clear(clickDetectors)
+		if normalCookieDetector and normalCookieDetector.Parent then
+			normalCookieDetector.MaxActivationDistance = normalCookieActivationDistance
+		end
+	end
 
 	local prompt = Instance.new("BillboardGui")
 	prompt.Name = "IntroClearPrompt"
@@ -1055,6 +1125,10 @@ local function playIntro(options)
 	promptLabel.TextStrokeTransparency = 0
 	promptLabel.Text = UserInputService.TouchEnabled and "Tap to clear the rubble!" or "Click to clear the rubble!"
 	promptLabel.Parent = prompt
+	local rubbleProgressEvent = getChapterReplayEvent(QuestReplayConfig.RubbleProgressEvent)
+	if rubbleProgressEvent then
+		rubbleProgressEvent:Fire(0, CLICKS_TO_CLEAR)
+	end
 
 	local SINK_INFO = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 	local MORPH_INFO = TweenInfo.new(MORPH_STEP_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -1076,12 +1150,15 @@ local function playIntro(options)
 
 	local clicksLeft = CLICKS_TO_CLEAR
 	local clearing = false
-	clickDetector.MouseClick:Connect(function(clicker)
+	local function handleClearClick(clicker)
 		if clearing or clicker ~= player then
 			return
 		end
 		clicksLeft -= 1
 		local progress = (CLICKS_TO_CLEAR - clicksLeft) / CLICKS_TO_CLEAR -- 1/N .. N/N
+		if rubbleProgressEvent then
+			rubbleProgressEvent:Fire(CLICKS_TO_CLEAR - clicksLeft, CLICKS_TO_CLEAR)
+		end
 
 		-- Chip a slice of the remaining rubble (all of it on the final click).
 		local remainingRubble = {}
@@ -1109,7 +1186,9 @@ local function playIntro(options)
 			setEffectEnabled(meteor, "Smoke", false)
 			stepTween.Completed:Wait()
 			-- Meteor now coincides with the Cookie: reveal the real Cookie and remove the clone.
+			restoreNormalCookieInteraction()
 			cookie.LocalTransparencyModifier = 0
+			cookie.CanQuery = cookieBaseCanQuery
 			craterDestroyed = true
 			craterClone:Destroy()
 			markRubbleCleared()
@@ -1117,7 +1196,10 @@ local function playIntro(options)
 		else
 			promptLabel.Text = "Keep clicking! (" .. clicksLeft .. ")"
 		end
-	end)
+	end
+	for _, detector in ipairs(clickDetectors) do
+		detector.MouseClick:Connect(handleClearClick)
+	end
 end
 
 ----------------------------------------------------------------------
@@ -1145,21 +1227,16 @@ local function replayFullChapter()
 		return
 	end
 
-	Net.fireServer(Net.Names.StoryAction, "ResetChapter")
-
-	local deadline = os.clock() + 5
-	while os.clock() < deadline do
-		local resetComplete = player:GetAttribute(Attrs.StoryStep) == StoryConfig.STEPS.Meteor
-			and player:GetAttribute(Attrs.StoryHealingClicks) == 0
-			and player:GetAttribute(Attrs.MixerUnlocked) == false
-		if resetComplete then
-			playIntro({ markSeen = false, allowSkip = false, completeStory = true })
-			return
-		end
-		task.wait(0.05)
+	local started = getChapterReplayEvent(QuestReplayConfig.StartedEvent)
+	if started then
+		started:Fire()
 	end
-
-	warn("IntroController: timed out waiting for the Chapter 1 replay reset.")
+	playIntro({
+		markSeen = false,
+		allowSkip = false,
+		completeStory = false,
+		replayPresentation = true,
+	})
 end
 
 local replayEvent = getReplayEvent()
@@ -1167,6 +1244,27 @@ if replayEvent then
 	replayEvent.Event:Connect(function()
 		task.spawn(replayFullChapter)
 	end)
+end
+
+local function resetOnboardingForDevelopment()
+	if running then
+		return
+	end
+	Net.fireServer(Net.Names.DebugOnboardingReset)
+	local deadline = os.clock() + 8
+	while os.clock() < deadline do
+		if
+			player:GetAttribute(Attrs.StoryStep) == StoryConfig.STEPS.Meteor
+			and player:GetAttribute(Attrs.StoryHealingClicks) == 0
+			and player:GetAttribute(Attrs.MixerUnlocked) == false
+		then
+			task.wait(0.2)
+			playIntro({ markSeen = false, allowSkip = false, completeStory = true })
+			return
+		end
+		task.wait(0.05)
+	end
+	warn("IntroController: timed out waiting for the Studio onboarding reset.")
 end
 
 -- Studio dev controls: test the goo joy animation or replay Chapter 1 on demand.
@@ -1206,5 +1304,9 @@ if RunService:IsStudio() then
 
 	makeDevButton("\u{21BB} Replay Chapter 1", 318, Color3.fromRGB(60, 46, 120), function()
 		task.spawn(replayFullChapter)
+	end)
+
+	makeDevButton("Reset Quest Test", 356, Color3.fromRGB(112, 55, 46), function()
+		task.spawn(resetOnboardingForDevelopment)
 	end)
 end

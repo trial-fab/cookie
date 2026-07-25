@@ -3,6 +3,7 @@ local HttpService = game:GetService("HttpService")
 local ServerScriptService = game:GetService("ServerScriptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local BoostShopService = require(ServerScriptService.Services.BoostShopService)
 local CookieService = require(ServerScriptService.Services.CookieService)
 local FloorService = require(ServerScriptService.Services.FloorService)
 local PlayerDataProjectionAudit = require(ServerScriptService.Services.PlayerDataProjectionAudit)
@@ -16,6 +17,7 @@ local OfflineEarningsService = require(ServerScriptService.Services.OfflineEarni
 local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
 local SettingsService = require(ServerScriptService.Services.SettingsService)
 local StoryService = require(ServerScriptService.Services.StoryService)
+local QuestService = require(ServerScriptService.Services.QuestService)
 local TitleService = require(ServerScriptService.Services.TitleService)
 local Net = require(ReplicatedStorage.Shared.Net)
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
@@ -60,6 +62,8 @@ local function createPersistentAttributes(player, persistent)
 	player:SetAttribute(Attrs.StoryStep, persistent.StoryStep or "Meteor")
 	player:SetAttribute(Attrs.StoryHealingClicks, tonumber(persistent.StoryHealingClicks) or 0)
 	player:SetAttribute(Attrs.MixerUnlocked, persistent.MixerUnlocked == true)
+	-- Projects the saved boost-shop charge counts (and normalizes them to the current stack cap).
+	BoostShopService.SetupPlayer(player, persistent)
 end
 
 local function createPlayerValues(player, data)
@@ -172,6 +176,9 @@ local function setupPlayer(player)
 		return
 	end
 	if not PlayerDataService.MarkPlacementSerializationReady(player) then
+		return
+	end
+	if not QuestService.SetupPlayer(player) then
 		return
 	end
 	ShieldService.SetupPlayer(player)

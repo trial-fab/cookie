@@ -1,12 +1,15 @@
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local ServerScriptService = game:GetService("ServerScriptService")
 
+local BoostShopService = require(ServerScriptService.Services.BoostShopService)
 local CookieService = require(ServerScriptService.Services.CookieService)
 local FloorService = require(ServerScriptService.Services.FloorService)
+local GemService = require(ServerScriptService.Services.GemService)
 local PlayerDataService = require(ServerScriptService.Services.PlayerDataService)
+local QuestService = require(ServerScriptService.Services.QuestService)
 local ShieldService = require(ServerScriptService.Services.ShieldService)
+local StoryService = require(ServerScriptService.Services.StoryService)
 local UpgradeService = require(ServerScriptService.Services.UpgradeService)
-local Net = require(ReplicatedStorage.Shared.Net)
 
 local ResetStatsService = {}
 
@@ -53,12 +56,36 @@ function ResetStatsService.ResetPlayer(player)
 	return true
 end
 
-function ResetStatsService.Init()
-	Net.on(Net.Names.ResetStats, function(player)
-		ResetStatsService.ResetPlayer(player)
-	end)
+function ResetStatsService.ResetOnboardingForDevelopment(player)
+	if
+		not (RunService:IsStudio() or player.UserId == game.CreatorId)
+		or not PlayerDataService.GetDomain7Data(player)
+		or not UpgradeService.IsUnlockedBuildingsReady(player)
+	then
+		return false
+	end
 
-	print("ResetStatsService initialized")
+	-- These canonical persistent mutations are grouped without yielding. World/projection
+	-- resynchronization happens afterward through the existing run-reset path.
+	if
+		not QuestService.ResetForDevelopment(player)
+		or not StoryService.ResetForDevelopment(player)
+		or GemService.SetGems(player, 0) == nil
+		-- Charges bought with those test gems go with them, so a dev reset returns the player to
+		-- a clean pre-purchase state instead of leaving stock behind.
+		or not BoostShopService.ClearCharges(player)
+	then
+		return false
+	end
+	if not ResetStatsService.ResetPlayer(player) then
+		return false
+	end
+	QuestService.SetupPlayer(player)
+	return true
+end
+
+function ResetStatsService.Init()
+	print("ResetStatsService initialized (public reset disabled)")
 end
 
 return ResetStatsService

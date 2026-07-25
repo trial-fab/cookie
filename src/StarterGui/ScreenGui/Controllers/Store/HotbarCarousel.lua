@@ -20,6 +20,7 @@
 --
 -- ctx: { screenGui, store, setStoreOpen }.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
 local UserInputService = game:GetService("UserInputService")
 
@@ -27,6 +28,7 @@ local shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(shared:WaitForChild("Attrs"))
 local GuiNames = require(shared:WaitForChild("GuiNames"))
 local MobileScale = require(shared:WaitForChild("MobileScale"))
+local StoryConfig = require(shared:WaitForChild("StoryConfig"))
 local UiMotion = require(shared:WaitForChild("UiMotion"))
 
 local HotbarCarousel = {}
@@ -43,10 +45,12 @@ local GROW_INFO = TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection
 local FOOTPRINT_FACTOR = 0.85
 local KEYBIND_BADGE_NAME = "KeybindBadge"
 local HOTBAR_MOBILE_SCALE = 0.82 -- match StoreBottom's mobile shrink
+local MIXER_REVEAL_FALLBACK_SECONDS = 7
 
 function HotbarCarousel.new(ctx)
 	local screenGui = ctx.screenGui
 	local setStoreOpen = ctx.setStoreOpen
+	local player = Players.LocalPlayer
 
 	-- Hide Roblox's default backpack so the custom bar doesn't double up with the real hotbar.
 	pcall(function()
@@ -104,6 +108,7 @@ function HotbarCarousel.new(ctx)
 	-- The centre disc: capture its authored full geometry + resting opacities so the open/close morph
 	-- can return to exactly the authored look (the disc BG is intentionally semi-transparent).
 	local mixerIcon = slotCenter:FindFirstChild("icon")
+	local mixerPlaceholder = slotCenter:FindFirstChild("placeholderLabel")
 	local centerStroke = slotCenter:FindFirstChildWhichIsA("UIStroke")
 	local fullSize = slotCenter.Size
 	local fullPos = slotCenter.Position
@@ -188,6 +193,10 @@ function HotbarCarousel.new(ctx)
 	slotRight:SetAttribute("HotbarItemNumber", 3)
 
 	local unlocked = false
+	local unlockStateInitialized = false
+	local mixerRevealPending = false
+	local mixerRevealGeneration = 0
+	local spinSettlesAt = 0
 	local keybindBadgesSuppressed = false
 	local mixerTransition = "idle"
 	local pendingSelectAfterClose = nil
@@ -223,7 +232,7 @@ function HotbarCarousel.new(ctx)
 	end
 
 	local function updateKeybindBadges()
-		local visible = unlocked and not storeOpen() and not isMobileDevice() and not keybindBadgesSuppressed
+		local visible = not storeOpen() and not isMobileDevice() and not keybindBadgesSuppressed
 		for itemNumber, slot in pairs(slotByItemNumber) do
 			local badge = slot:FindFirstChild(KEYBIND_BADGE_NAME)
 			if badge and badge:IsA("GuiObject") then
@@ -269,7 +278,10 @@ function HotbarCarousel.new(ctx)
 			centerStroke.Transparency = stroke
 		end
 		if mixerIcon then
-			mixerIcon.ImageTransparency = icon
+			mixerIcon.ImageTransparency = if not unlocked or mixerRevealPending then 1 else icon
+		end
+		if mixerPlaceholder and mixerPlaceholder:IsA("GuiObject") then
+			mixerPlaceholder.Visible = (not unlocked or mixerRevealPending) and bg < 0.99
 		end
 	end
 
@@ -385,8 +397,8 @@ function HotbarCarousel.new(ctx)
 		local centerHit = slotCenter:FindFirstChild("hitbox")
 		local open = storeOpen()
 		if centerHit then
-			centerHit.Active = not open
-			centerHit.Interactable = not open
+			centerHit.Active = not open and not mixerRevealPending
+			centerHit.Interactable = not open and not mixerRevealPending
 		end
 		if storeOffHit then
 			storeOffHit.Interactable = false
@@ -447,6 +459,7 @@ function HotbarCarousel.new(ctx)
 	local function restoreCanonicalCarouselPose()
 		slotByPose = { left = slotLeft, center = slotCenter, right = slotRight }
 		centerSlot = slotCenter
+		spinSettlesAt = 0
 		for poseName, slot in pairs(slotByPose) do
 			applyPose(slot, poseName, false)
 		end
@@ -470,6 +483,7 @@ function HotbarCarousel.new(ctx)
 		for poseName, s in pairs(slotByPose) do
 			applyPose(s, poseName, true)
 		end
+		spinSettlesAt = os.clock() + SPIN_INFO.Time
 		return true
 	end
 
@@ -479,6 +493,9 @@ function HotbarCarousel.new(ctx)
 	local openToken = 0
 	local function requestOpenMixer()
 		if not setStoreOpen then
+			return
+		end
+		if not unlocked or mixerRevealPending then
 			return
 		end
 		if isPlacementActive() then
@@ -528,11 +545,15 @@ function HotbarCarousel.new(ctx)
 	-- A slot tap: the mixer routes through the open gate; a placeholder just spins to centre (becomes
 	-- active) with no open, since it has no item yet.
 	local function selectSlot(slot)
-		if not unlocked or placementOwnsHotbar() then
+		if mixerRevealPending or placementOwnsHotbar() then
 			return
 		end
 		if slot == slotCenter then
-			requestOpenMixer()
+			if unlocked then
+				requestOpenMixer()
+			elseif slot ~= centerSlot then
+				rotateToCenter(slot)
+			end
 		elseif slot ~= centerSlot then
 			rotateToCenter(slot)
 		end
@@ -610,7 +631,7 @@ function HotbarCarousel.new(ctx)
 				mixerTransition = "closing"
 			end
 			setKeybindBadgesSuppressed(true)
-			setPlaceholdersVisible(unlocked)
+			setPlaceholdersVisible(true)
 			updateMixerFace()
 			updateKeybindBadges()
 			-- Safety: if no cookie flight happens (so growToRest never fires), restore the disc.
@@ -652,33 +673,99 @@ function HotbarCarousel.new(ctx)
 		end)
 	end
 
-	-- Mixer gate: the controller hides the whole bar until building is unlocked, then restores it.
+	-- The hotbar is always present. Mixer ownership gates opening and swaps item 1 from its
+	-- placeholder to the authored icon; it does not gate the three-slot carousel itself.
 	local function updateVisibility()
-		hotbar.Visible = unlocked
-			and screenGui:GetAttribute(Attrs.CompactModalActive) ~= true
+		hotbar.Visible = screenGui:GetAttribute(Attrs.CompactModalActive) ~= true
 			and screenGui:GetAttribute(Attrs.BackgroundSurfacesSuspended) ~= true
 	end
 
-	local function setUnlocked(value)
-		unlocked = value == true
-		if not unlocked then
-			updateVisibility()
-		else
-			updateVisibility()
-			if placementOwnsHotbar() then
-				updateKeybindBadges()
-				return
+	local function prepareMixerUnlockSlot(generation)
+		screenGui:SetAttribute(Attrs.MixerUnlockSlotReady, false)
+		rotateToCenter(slotCenter)
+		local remaining = math.max(0, spinSettlesAt - os.clock())
+		local function markReady()
+			if generation == mixerRevealGeneration and mixerRevealPending and unlocked and centerSlot == slotCenter then
+				screenGui:SetAttribute(Attrs.MixerUnlockSlotReady, true)
 			end
-			setPlaceholdersVisible(not storeOpen())
-			if storeOpen() then
-				snapOpen()
-			else
-				snapRest()
-			end
-			updateMixerFace()
 		end
+		if remaining > 0 then
+			task.delay(remaining, markReady)
+		else
+			markReady()
+		end
+	end
+
+	local function setUnlocked(value)
+		local nextUnlocked = value == true
+		local wasUnlocked = unlocked
+		unlocked = nextUnlocked
+		if not unlockStateInitialized then
+			unlockStateInitialized = true
+			mixerRevealPending = unlocked
+				and player:GetAttribute(Attrs.StoryStep) ~= StoryConfig.STEPS.Complete
+				and screenGui:GetAttribute(Attrs.MixerUnlockPresented) ~= true
+			screenGui:SetAttribute(Attrs.MixerUnlockPresented, not mixerRevealPending and unlocked)
+		elseif unlocked and not wasUnlocked then
+			mixerRevealPending = player:GetAttribute(Attrs.StoryStep) ~= StoryConfig.STEPS.Complete
+			screenGui:SetAttribute(Attrs.MixerUnlockPresented, not mixerRevealPending)
+		elseif not unlocked then
+			mixerRevealPending = false
+			screenGui:SetAttribute(Attrs.MixerUnlockPresented, false)
+		end
+		mixerRevealGeneration += 1
+		local revealGeneration = mixerRevealGeneration
+		if not unlocked then
+			screenGui:SetAttribute(Attrs.MixerUnlockSlotReady, false)
+			restoreCanonicalCarouselPose()
+		elseif mixerRevealPending then
+			prepareMixerUnlockSlot(revealGeneration)
+		else
+			screenGui:SetAttribute(Attrs.MixerUnlockSlotReady, true)
+		end
+		if mixerRevealPending then
+			task.delay(MIXER_REVEAL_FALLBACK_SECONDS, function()
+				if
+					revealGeneration == mixerRevealGeneration
+					and mixerRevealPending
+					and unlocked
+					and player:GetAttribute(Attrs.MixerUnlocked) == true
+				then
+					screenGui:SetAttribute(Attrs.MixerUnlockPresented, true)
+				end
+			end)
+		end
+		updateVisibility()
+		if placementOwnsHotbar() then
+			updateKeybindBadges()
+			return
+		end
+		setPlaceholdersVisible(not storeOpen())
+		if storeOpen() and unlocked then
+			snapOpen()
+		else
+			snapRest()
+		end
+		updateMixerFace()
 		updateKeybindBadges()
 	end
+	screenGui:GetAttributeChangedSignal(Attrs.MixerUnlockPresented):Connect(function()
+		if screenGui:GetAttribute(Attrs.MixerUnlockPresented) ~= true or not mixerRevealPending then
+			return
+		end
+		mixerRevealPending = false
+		mixerRevealGeneration += 1
+		if unlocked and not storeOpen() and not placementOwnsHotbar() then
+			snapRest()
+		end
+		updateMixerFace()
+		updateKeybindBadges()
+	end)
+	player:GetAttributeChangedSignal(Attrs.StoryStep):Connect(function()
+		if unlocked and mixerRevealPending and player:GetAttribute(Attrs.StoryStep) == StoryConfig.STEPS.Complete then
+			screenGui:SetAttribute(Attrs.MixerUnlockPresented, true)
+		end
+	end)
 	screenGui:GetAttributeChangedSignal(Attrs.CompactModalActive):Connect(updateVisibility)
 	screenGui:GetAttributeChangedSignal(Attrs.BackgroundSurfacesSuspended):Connect(updateVisibility)
 
@@ -719,11 +806,12 @@ function HotbarCarousel.new(ctx)
 		end,
 	})
 
-	-- Initial pose: disc at full authored rest, bar hidden until unlock/onStoreOpen drives it.
+	-- Initial pose: three visible placeholders with item 1 in the authored center pose.
 	snapRest()
+	setPlaceholdersVisible(true)
 	updateMixerFace()
 	updateKeybindBadges()
-	hotbar.Visible = false
+	updateVisibility()
 
 	return {
 		requestOpenMixer = requestOpenMixer,

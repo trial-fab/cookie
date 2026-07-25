@@ -4,7 +4,7 @@
 -- Preferences are mirrored as attributes on the ScreenGui so other controllers can
 -- read them (ReducedMotionEnabled, etc.) and persisted by SettingsPersistence. Upgrade-owned
 -- toggles such as Multi-Place live in the Store. Reset Stats lives in the bottom bar and is
--- driven by ResetStatsController. Only one of Help/Settings/Profile/Wheel is open at a time.
+-- Only one of Help/Settings/Profile/Wheel is open at a time.
 local GuiService = game:GetService("GuiService")
 local RunService = game:GetService("RunService")
 local Attrs = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Attrs"))

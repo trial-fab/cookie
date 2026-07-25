@@ -20,6 +20,29 @@ local DEFAULT_SETTINGS = {
 	settleTurnDuration = 0.35,
 }
 
+-- Reveal/idle anchors preserve the original goo helper-root orientation, whose
+-- local X axis pointed up. The replacement Blender meshes use a conventional
+-- upright root with their faces along local +Z. Keep each anchor's authored +Z
+-- facing, but rebuild an upright frame so the legacy 90-degree roll is not
+-- applied to the new meshes.
+local function getUprightAnchorCFrame(anchor)
+	local anchorCFrame = anchor.WorldCFrame
+	local front = Vector3.new(anchorCFrame.ZVector.X, 0, anchorCFrame.ZVector.Z)
+	if front.Magnitude <= 0.001 then
+		return CFrame.new(anchorCFrame.Position)
+	end
+	return CFrame.lookAt(anchorCFrame.Position, anchorCFrame.Position - front.Unit)
+end
+
+local function getPartTopY(part)
+	local halfSize = part.Size * 0.5
+	local cframe = part.CFrame
+	local verticalExtent = math.abs(cframe.XVector.Y) * halfSize.X
+		+ math.abs(cframe.YVector.Y) * halfSize.Y
+		+ math.abs(cframe.ZVector.Y) * halfSize.Z
+	return part.Position.Y + verticalExtent
+end
+
 local controllers = setmetatable({}, { __mode = "k" })
 
 local function getNumberAttribute(model, name, fallback)
@@ -29,6 +52,51 @@ local function getNumberAttribute(model, name, fallback)
 	end
 	model:SetAttribute(name, fallback)
 	return fallback
+end
+
+local function captureSurfaceAppearances(part)
+	local entries = {}
+	for _, descendant in ipairs(part:GetDescendants()) do
+		if descendant:IsA("SurfaceAppearance") then
+			table.insert(entries, {
+				instance = descendant,
+				color = descendant.Color,
+				emissiveTint = descendant.EmissiveTint,
+			})
+		end
+	end
+	return entries
+end
+
+local function setSurfaceAppearanceColors(entries, resolveColors)
+	for _, entry in ipairs(entries) do
+		local surfaceAppearance = entry.instance
+		if surfaceAppearance.Parent then
+			local color, emissiveTint = resolveColors(entry)
+			surfaceAppearance.Color = color
+			surfaceAppearance.EmissiveTint = emissiveTint
+		end
+	end
+end
+
+local function tweenSurfaceAppearanceColors(entries, tweenInfo, resolveColors)
+	for _, entry in ipairs(entries) do
+		local surfaceAppearance = entry.instance
+		if surfaceAppearance.Parent then
+			local color, emissiveTint = resolveColors(entry)
+			local tween = TweenService:Create(surfaceAppearance, tweenInfo, {
+				Color = color,
+				EmissiveTint = emissiveTint,
+			})
+			tween:Play()
+		end
+	end
+end
+
+local function getHealingBodyColor(baseColor, progress)
+	local h = baseColor:ToHSV()
+	local dimColor = Color3.fromHSV(h, 0.12, 0.48)
+	return dimColor:Lerp(baseColor, progress)
 end
 
 local function tweenValue(className, startValue, endValue, duration, onChanged)
@@ -97,7 +165,15 @@ local function createController(model)
 		warn("MascotService: alien template is missing required body/root parts.")
 		return nil
 	end
-	if not (body:IsA("BasePart") and eyes:IsA("BasePart") and root:IsA("BasePart")) then
+	if
+		not (
+			body:IsA("BasePart")
+			and eyes:IsA("BasePart")
+			and root:IsA("BasePart")
+			and leftEyeRoot:IsA("BasePart")
+			and rightEyeRoot:IsA("BasePart")
+		)
+	then
 		return nil
 	end
 
@@ -130,6 +206,8 @@ local function createController(model)
 	local authoredEyesColor = model:GetAttribute("DefaultEyesColor")
 	local defaultBodyColor = typeof(authoredBodyColor) == "Color3" and authoredBodyColor or body.Color
 	local defaultEyesColor = typeof(authoredEyesColor) == "Color3" and authoredEyesColor or eyes.Color
+	local bodySurfaceAppearances = captureSurfaceAppearances(body)
+	local eyeSurfaceAppearances = captureSurfaceAppearances(eyes)
 	local currentRootCFrame = originalRootCFrame
 	local currentBodySize = originalBodySize
 	local currentEyesOffsetY = 0
@@ -145,6 +223,21 @@ local function createController(model)
 	originalFront = originalFront.Magnitude > 0.001 and originalFront.Unit or Vector3.zAxis
 
 	local controller = {}
+
+	function controller.getAnchorCFrame(anchor)
+		local anchorCFrame = getUprightAnchorCFrame(anchor)
+		local anchorParent = anchor.Parent
+		if not (anchorParent and anchorParent:IsA("BasePart")) then
+			return anchorCFrame
+		end
+
+		-- The attachments carry the old helper-root height, which is not a
+		-- ground-contact position for the replacement centered roots. Translate
+		-- each skin independently so its authored body bottom meets the surface.
+		local bodyBase = anchorCFrame * originalBodyLocalCFrame
+		local bodyBottomY = bodyBase.Position.Y - originalBodySize.Y * 0.5
+		return anchorCFrame + Vector3.new(0, getPartTopY(anchorParent) - bodyBottomY, 0)
+	end
 
 	function controller.applyPose(rootCFrame)
 		if not alive or not model.Parent then
@@ -205,7 +298,7 @@ local function createController(model)
 
 	function controller.setVisible(nextVisible)
 		visible = nextVisible
-		local dizzyBirds = model:FindFirstChild("DizzyBirds")
+		local dizzy = model:FindFirstChild("Dizzy")
 		for _, descendant in ipairs(model:GetDescendants()) do
 			if descendant:IsA("BasePart") then
 				if descendant:GetAttribute("MascotBaseTransparency") == nil then
@@ -213,7 +306,7 @@ local function createController(model)
 				end
 				descendant.Transparency = nextVisible and descendant:GetAttribute("MascotBaseTransparency") or 1
 			elseif
-				not (dizzyBirds and descendant:IsDescendantOf(dizzyBirds))
+				not (dizzy and descendant:IsDescendantOf(dizzy))
 				and (
 					descendant:IsA("ParticleEmitter")
 					or descendant:IsA("Sparkles")
@@ -252,17 +345,23 @@ local function createController(model)
 	end
 
 	function controller.setDizzy(enabled)
-		local dizzy = model:FindFirstChild("DizzyBirds")
-		if not dizzy then
+		local dizzy = model:FindFirstChild("Dizzy")
+		local effectRoot = dizzy and dizzy:FindFirstChild("DizzyStars")
+		if not effectRoot then
 			return
 		end
-		-- New skins use individually positioned BillboardGuis in DizzyStars so their orbit can lie
-		-- flat in world space. Legacy skins continue to toggle their original DizzyBirds contents.
-		local effectRoot = dizzy:FindFirstChild("DizzyStars") or dizzy
+		-- The client animates these Studio-authored stars; the server owns whether
+		-- their presentation is enabled for the current story state.
 		for _, descendant in ipairs(effectRoot:GetDescendants()) do
 			if descendant:IsA("ParticleEmitter") or descendant:IsA("Beam") or descendant:IsA("Trail") then
 				descendant.Enabled = enabled
 			elseif descendant:IsA("BillboardGui") then
+				-- DizzyStars stores BillboardGuis under a Folder, so they need an
+				-- explicit 3D render target. Authored templates normally point at
+				-- GooRoot; this also repairs older or newly imported skins.
+				if descendant.Adornee == nil then
+					descendant.Adornee = root
+				end
 				descendant.Enabled = enabled
 			elseif descendant:IsA("BasePart") then
 				descendant.Transparency = enabled and 0 or 1
@@ -272,17 +371,27 @@ local function createController(model)
 
 	function controller.setColorProgress(progress, animate)
 		progress = math.clamp(progress, 0, 1)
-		local h, _, _ = defaultBodyColor:ToHSV()
-		local dimColor = Color3.fromHSV(h, 0.12, 0.48)
-		local targetBody = dimColor:Lerp(defaultBodyColor, progress)
-		local targetEyes = Color3.fromRGB(170, 170, 170):Lerp(defaultEyesColor, progress)
+		local targetBody = getHealingBodyColor(defaultBodyColor, progress)
+		local healingEyesColor = Color3.fromRGB(170, 170, 170)
+		local targetEyes = healingEyesColor:Lerp(defaultEyesColor, progress)
+		local function bodySurfaceColors(entry)
+			return getHealingBodyColor(entry.color, progress), getHealingBodyColor(entry.emissiveTint, progress)
+		end
+		local function eyeSurfaceColors(entry)
+			return healingEyesColor:Lerp(entry.color, progress), healingEyesColor:Lerp(entry.emissiveTint, progress)
+		end
 		if not animate then
 			body.Color = targetBody
 			eyes.Color = targetEyes
+			setSurfaceAppearanceColors(bodySurfaceAppearances, bodySurfaceColors)
+			setSurfaceAppearanceColors(eyeSurfaceAppearances, eyeSurfaceColors)
 			return
 		end
-		local bodyTween = TweenService:Create(body, TweenInfo.new(settings.colorTweenTime), { Color = targetBody })
-		local eyesTween = TweenService:Create(eyes, TweenInfo.new(settings.colorTweenTime), { Color = targetEyes })
+		local tweenInfo = TweenInfo.new(settings.colorTweenTime)
+		local bodyTween = TweenService:Create(body, tweenInfo, { Color = targetBody })
+		local eyesTween = TweenService:Create(eyes, tweenInfo, { Color = targetEyes })
+		tweenSurfaceAppearanceColors(bodySurfaceAppearances, tweenInfo, bodySurfaceColors)
+		tweenSurfaceAppearanceColors(eyeSurfaceAppearances, tweenInfo, eyeSurfaceColors)
 		bodyTween:Play()
 		eyesTween:Play()
 	end
@@ -352,14 +461,21 @@ local function createController(model)
 			Color3.fromRGB(170, 90, 255),
 			defaultBodyColor,
 		}
-		for _, color in ipairs(colors) do
+		for index, color in ipairs(colors) do
 			if not model.Parent then
 				break
 			end
 			if activeRainbowTween then
 				activeRainbowTween:Cancel()
 			end
-			local tween = TweenService:Create(body, TweenInfo.new(0.12), { Color = color })
+			local tweenInfo = TweenInfo.new(0.12)
+			local tween = TweenService:Create(body, tweenInfo, { Color = color })
+			tweenSurfaceAppearanceColors(bodySurfaceAppearances, tweenInfo, function(entry)
+				if index == #colors then
+					return entry.color, entry.emissiveTint
+				end
+				return color, color
+			end)
 			activeRainbowTween = tween
 			tween:Play()
 			tween.Completed:Wait()
@@ -367,6 +483,9 @@ local function createController(model)
 		activeRainbowTween = nil
 		if alive and body.Parent then
 			body.Color = defaultBodyColor
+			setSurfaceAppearanceColors(bodySurfaceAppearances, function(entry)
+				return entry.color, entry.emissiveTint
+			end)
 		end
 		busy -= 1
 	end
@@ -404,6 +523,13 @@ local function createController(model)
 					TweenInfo.new(0.28, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
 					{ Color = colors[index] }
 				)
+				tweenSurfaceAppearanceColors(
+					bodySurfaceAppearances,
+					TweenInfo.new(0.28, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+					function()
+						return colors[index], colors[index]
+					end
+				)
 				activeRainbowTween = tween
 				tween:Play()
 				tween.Completed:Wait()
@@ -423,6 +549,13 @@ local function createController(model)
 				body,
 				TweenInfo.new(0.24, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
 				{ Color = defaultBodyColor }
+			)
+			tweenSurfaceAppearanceColors(
+				bodySurfaceAppearances,
+				TweenInfo.new(0.24, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
+				function(entry)
+					return entry.color, entry.emissiveTint
+				end
 			)
 			settleTween:Play()
 			settleTween.Completed:Wait()
@@ -557,21 +690,21 @@ end
 function MascotService.MoveToAnchor(model, anchor)
 	local controller = getController(model)
 	if controller and anchor and anchor:IsA("Attachment") then
-		controller.moveTo(anchor.WorldCFrame)
+		controller.moveTo(controller.getAnchorCFrame(anchor))
 	end
 end
 
 function MascotService.RevealFromSquash(model, anchor)
 	local controller = getController(model)
 	if controller and anchor and anchor:IsA("Attachment") then
-		controller.revealFromSquash(anchor.WorldCFrame)
+		controller.revealFromSquash(controller.getAnchorCFrame(anchor))
 	end
 end
 
 function MascotService.HopToAuthoredAnchor(model, anchor)
 	local controller = getController(model)
 	if controller and anchor and anchor:IsA("Attachment") then
-		controller.hopToAuthoredPose(anchor.WorldCFrame)
+		controller.hopToAuthoredPose(controller.getAnchorCFrame(anchor))
 	end
 end
 

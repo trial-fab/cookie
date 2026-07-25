@@ -1,11 +1,11 @@
 local StoryDialogue = {}
 
 function StoryDialogue.new(screenGui)
-	local frame = screenGui:FindFirstChild("StoryDialogue")
-	local speaker = frame and frame:FindFirstChild("Speaker", true)
-	local body = frame and frame:FindFirstChild("Body", true)
-	local continueButton = frame and frame:FindFirstChild("Continue", true)
-	local skipButton = frame and frame:FindFirstChild("Skip", true)
+	local frame = screenGui:WaitForChild("StoryDialogue", 10)
+	local speaker = frame and frame:WaitForChild("Speaker", 10)
+	local body = frame and frame:WaitForChild("Body", 10)
+	local continueButton = frame and frame:WaitForChild("Continue", 10)
+	local skipButton = frame and frame:WaitForChild("Skip", 10)
 
 	if frame and frame:IsA("GuiObject") then
 		frame.Visible = false
@@ -15,7 +15,8 @@ function StoryDialogue.new(screenGui)
 
 	function api.play(lines)
 		if not frame or not frame:IsA("GuiObject") or not continueButton or not continueButton:IsA("GuiButton") then
-			return
+			warn("StoryDialogue: authored frame or Continue button was unavailable")
+			return false
 		end
 
 		frame.Visible = true
@@ -58,6 +59,7 @@ function StoryDialogue.new(screenGui)
 		end
 
 		frame.Visible = false
+		return true
 	end
 
 	function api.hide()

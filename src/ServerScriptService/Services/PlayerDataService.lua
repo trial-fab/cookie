@@ -46,6 +46,9 @@ local DEFAULT_PERSISTENT_DATA = {
 	SelectedTitleId = "",
 	GoldenCookies = 0,
 	Gems = 0,
+	-- Boost-shop field charges the player is holding, itemId -> count (BoostShopService owns it).
+	-- Persistent like the gems that bought them: they survive run resets and rejoins.
+	BoostCharges = {},
 	OwnedSkins = {},
 	EquippedSkins = {},
 	OwnedGooSkins = {},
@@ -67,6 +70,17 @@ local DEFAULT_PERSISTENT_DATA = {
 	StoryHealingClicks = 0,
 	MixerUnlocked = false,
 	CompletedStoryChapters = {},
+	QuestState = {
+		SchemaVersion = 2,
+		Initialized = false,
+		CompletedQuestIds = {},
+		QuestProgress = {},
+		ObjectiveLedger = {},
+		QuestRewardReceipts = {},
+		ArcRewardReceipts = {},
+		SelectedQuestId = "gooey_beginning",
+		HideCompleted = false,
+	},
 	Receipts = {},
 }
 

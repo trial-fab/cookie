@@ -10,6 +10,7 @@ local UpgradeService = require(Services:WaitForChild("UpgradeService"))
 local GoldenCookieService = require(Services:WaitForChild("GoldenCookieService"))
 local GemService = require(Services:WaitForChild("GemService"))
 local PlayerMetricsService = require(Services:WaitForChild("PlayerMetricsService"))
+local ResetStatsService = require(Services:WaitForChild("ResetStatsService"))
 local WheelService = require(Services:WaitForChild("WheelService"))
 local SheetService = require(Services:WaitForChild("SheetService"))
 local Net = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Net"))
@@ -88,6 +89,12 @@ local function handleCommand(player, message)
 	if message == "!refreshgear" then
 		UpgradeService.SyncPlayerUpgrades(player)
 		print("Refreshed gear for", player.Name)
+		return
+	end
+
+	if message == "!onboardingreset" then
+		local reset = ResetStatsService.ResetOnboardingForDevelopment(player)
+		print("Onboarding reset for", player.Name, reset and "succeeded" or "failed")
 		return
 	end
 
@@ -210,6 +217,14 @@ function TestCommandService.Init()
 			SheetService.DebugRemovePlot()
 		end
 	end)
+
+	-- The onboarding reset remote does not exist on production servers. Its Studio-only
+	-- button resets canonical story, quest ledger/receipts, test gems, and run progression.
+	if RunService:IsStudio() then
+		Net.on(Net.Names.DebugOnboardingReset, function(player)
+			ResetStatsService.ResetOnboardingForDevelopment(player)
+		end)
+	end
 
 	print("TestCommandService initialized")
 end

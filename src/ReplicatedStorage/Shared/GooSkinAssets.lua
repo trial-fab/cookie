@@ -81,8 +81,8 @@ function GooSkinAssets.Validate()
 			else
 				table.insert(warnings, message)
 			end
-		elseif not model:FindFirstChild("DizzyBirds") then
-			table.insert(warnings, ("GooSkinAssets.%s has no optional DizzyBirds"):format(def.AssetName))
+		elseif not model:FindFirstChild("Dizzy") then
+			table.insert(warnings, ("GooSkinAssets.%s has no optional Dizzy effects folder"):format(def.AssetName))
 		end
 	end
 	return errors, warnings

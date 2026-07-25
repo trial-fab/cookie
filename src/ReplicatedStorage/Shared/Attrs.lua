@@ -105,6 +105,15 @@ return {
 	StoryHealingClicks = "StoryHealingClicks",
 	-- Whether the alien's dough tool (the "Mixer") is unlocked — gates building/the build shop.
 	MixerUnlocked = "MixerUnlocked",
+	-- Client-only presentation handoff: false while the tutorial Mixer visual is flying into the
+	-- center hotbar placeholder, true once HotbarCarousel may reveal its authored Mixer icon.
+	MixerUnlockPresented = "MixerUnlockPresented",
+	-- Client-only choreography gate: HotbarCarousel sets this after item 1 has finished returning
+	-- to the center pose, so the tutorial flight always lands in the active center slot.
+	MixerUnlockSlotReady = "MixerUnlockSlotReady",
+	-- Client-only handoff set after the quest controller renders its first server snapshot.
+	-- The intro waits for this before crediting its automatic opening objective.
+	QuestSnapshotReady = "QuestSnapshotReady",
 
 	-- player stats / persisted data (server writes, client + server read)
 	Cps = "Cps",
@@ -113,6 +122,11 @@ return {
 	SelectedTitleId = "SelectedTitleId",
 	GoldenCookies = "GoldenCookies",
 	Gems = "Gems",
+	-- Boost-shop field charges the player is holding (stack cap 1 per type). Server-owned
+	-- inventory counts; the boost purchase window reads them for its Owned / stack-full state.
+	-- Unset until the purchase service ships, which the window reads as 0.
+	PowerFieldCharges = "PowerFieldCharges",
+	SpeedFieldCharges = "SpeedFieldCharges",
 	-- Lifetime profile metrics. PlayerMetricsService owns these server-written,
 	-- persistent counters; ProfileController only reads their replicated values.
 	LifetimeCookiesEarned = "LifetimeCookiesEarned",

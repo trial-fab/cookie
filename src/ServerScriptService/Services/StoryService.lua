@@ -10,6 +10,7 @@ local GooSkinService = require(Services:WaitForChild("GooSkinService"))
 local MascotService = require(Services:WaitForChild("MascotService"))
 local PlayerDataProjectionAudit = require(Services:WaitForChild("PlayerDataProjectionAudit"))
 local PlayerDataService = require(Services:WaitForChild("PlayerDataService"))
+local QuestService = require(Services:WaitForChild("QuestService"))
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(Shared:WaitForChild("Attrs"))
@@ -115,6 +116,7 @@ end
 local function setStep(player, step)
 	if setStoryValue(player, "StoryStep", Attrs.StoryStep, step) then
 		broadcastState(player)
+		QuestService.OnStoryStepChanged(player, step)
 	end
 end
 
@@ -189,6 +191,7 @@ local function finishHealing(player)
 		local mascot = mascotByPlayer[player]
 		if mascot then
 			MascotService.SetDizzy(mascot, false)
+			QuestService.OnHealingCelebrationStarted(player)
 			MascotService.PlayRainbow(mascot)
 		end
 		if not transitionIsCurrent(player, transitionVersion) then
@@ -253,12 +256,12 @@ end
 
 function StoryService.OnCookieClicked(player)
 	if getStep(player) ~= StoryConfig.STEPS.Healing or transitioningByPlayer[player] then
-		return
+		return false
 	end
 
 	local clicks = math.min(StoryConfig.HEALING_CLICKS, getHealingClicks(player) + 1)
 	if not setStoryValue(player, "StoryHealingClicks", Attrs.StoryHealingClicks, clicks) then
-		return
+		return false
 	end
 
 	local mascot = mascotByPlayer[player]
@@ -271,6 +274,7 @@ function StoryService.OnCookieClicked(player)
 	else
 		broadcastState(player)
 	end
+	return true, clicks
 end
 
 function StoryService.OnBuildingPlaced(player, upgradeId)
@@ -319,8 +323,32 @@ function StoryService.MarkIntroSeen(player)
 	return setStoryValue(player, "IntroSeen", Attrs.IntroSeen, true)
 end
 
+function StoryService.ResetForDevelopment(player)
+	local persistent = getPersistent(player)
+	if not persistent then
+		return false
+	end
+	transitionVersionByPlayer[player] = (transitionVersionByPlayer[player] or 0) + 1
+	transitioningByPlayer[player] = nil
+	persistent.IntroSeen = false
+	persistent.StoryChapter = StoryConfig.CHAPTER_ID
+	persistent.StoryStep = StoryConfig.STEPS.Meteor
+	persistent.StoryHealingClicks = 0
+	persistent.MixerUnlocked = false
+	player:SetAttribute(Attrs.IntroSeen, persistent.IntroSeen)
+	player:SetAttribute(Attrs.StoryChapter, persistent.StoryChapter)
+	player:SetAttribute(Attrs.StoryStep, persistent.StoryStep)
+	player:SetAttribute(Attrs.StoryHealingClicks, persistent.StoryHealingClicks)
+	player:SetAttribute(Attrs.MixerUnlocked, persistent.MixerUnlocked)
+	setMascotPresentation(player)
+	broadcastState(player)
+	return true
+end
+
 local function handleAction(player, action)
-	if action == "RubbleCleared" and getStep(player) == StoryConfig.STEPS.Meteor then
+	if action == "IntroCompleted" and getStep(player) == StoryConfig.STEPS.Meteor then
+		QuestService.OnIntroCompleted(player)
+	elseif action == "RubbleCleared" and getStep(player) == StoryConfig.STEPS.Meteor then
 		if transitioningByPlayer[player] then
 			return
 		end
@@ -352,28 +380,6 @@ local function handleAction(player, action)
 		setStep(player, StoryConfig.STEPS.BuildTask)
 		setMascotPresentation(player)
 	elseif action == "RequestState" then
-		broadcastState(player)
-	elseif action == "ResetChapter" then
-		local persistent = getPersistent(player)
-		if not persistent then
-			return
-		end
-		transitionVersionByPlayer[player] = (transitionVersionByPlayer[player] or 0) + 1
-		transitioningByPlayer[player] = nil
-
-		-- Reset the canonical chapter as one group before publishing any projected changes.
-		persistent.IntroSeen = false
-		persistent.StoryChapter = StoryConfig.CHAPTER_ID
-		persistent.StoryStep = StoryConfig.STEPS.Meteor
-		persistent.StoryHealingClicks = 0
-		persistent.MixerUnlocked = false
-
-		player:SetAttribute(Attrs.IntroSeen, persistent.IntroSeen)
-		player:SetAttribute(Attrs.StoryChapter, persistent.StoryChapter)
-		player:SetAttribute(Attrs.StoryStep, persistent.StoryStep)
-		player:SetAttribute(Attrs.StoryHealingClicks, persistent.StoryHealingClicks)
-		player:SetAttribute(Attrs.MixerUnlocked, persistent.MixerUnlocked)
-		setMascotPresentation(player)
 		broadcastState(player)
 	elseif action == "DebugPlayJoy" then
 		playDebugJoy(player)

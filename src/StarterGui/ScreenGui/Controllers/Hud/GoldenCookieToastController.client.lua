@@ -22,6 +22,17 @@ local function getTuning(key)
 	return CurrencyRewardFlightConfig[key]
 end
 
+local function getEvent(parent, name)
+	local event = parent:FindFirstChild(name)
+	if event and event:IsA("BindableEvent") then
+		return event
+	end
+	event = Instance.new("BindableEvent")
+	event.Name = name
+	event.Parent = parent
+	return event
+end
+
 local screenGui = script:FindFirstAncestorOfClass("ScreenGui")
 if not screenGui then
 	warn("Currency reward controller must be inside a ScreenGui")
@@ -31,6 +42,8 @@ if screenGui:GetAttribute("CurrencyRewardControllerRunning") then
 	return
 end
 screenGui:SetAttribute("CurrencyRewardControllerRunning", true)
+local flightCompletedEvent = getEvent(screenGui, CurrencyRewardFlightConfig.CompletedEventName)
+local questStrikeCompletedEvent = getEvent(screenGui, CurrencyRewardFlightConfig.QuestStrikeCompletedEventName)
 
 local player = Players.LocalPlayer
 local leaderstats = player:WaitForChild("leaderstats")
@@ -247,6 +260,10 @@ local function resolveUiSource(key)
 		return wheel and wheel:FindFirstChild("ClaimButton", true) or nil
 	elseif key == "WheelReward" then
 		return wheel and wheel:FindFirstChild("RewardCard", true) or nil
+	elseif key == "QuestReward" then
+		local questProgress = screenGui:FindFirstChild("QuestProgress")
+		local rewardStrip = questProgress and questProgress:FindFirstChild("QuestRewardStrip", true)
+		return rewardStrip and rewardStrip:FindFirstChild("RewardIcon", true) or rewardStrip
 	end
 	return nil
 end
@@ -328,6 +345,7 @@ local function processQueue()
 		while #queue > 0 do
 			local item = table.remove(queue, 1)
 			animator.play(item)
+			flightCompletedEvent:Fire(item.currency, item.source)
 		end
 		processing = false
 		if not pendingBatch then
@@ -392,9 +410,43 @@ local function enqueueEarn(currency, amount, source, newTotal, sourceAnchor)
 	end
 end
 
+local completedQuestStrikeSources = {}
+local pendingQuestGemEarns = {}
+
+local function enqueueGemEarn(amount, source, newTotal, sourceAnchor)
+	if type(source) ~= "string" or string.sub(source, 1, 6) ~= "quest:" or completedQuestStrikeSources[source] then
+		enqueueEarn(GEMS, amount, source, newTotal, sourceAnchor)
+		return
+	end
+
+	local pending = {
+		amount = amount,
+		source = source,
+		newTotal = newTotal,
+		sourceAnchor = sourceAnchor,
+	}
+	pendingQuestGemEarns[source] = pending
+	task.delay(getTuning("QuestStrikeWaitTimeoutSeconds"), function()
+		if pendingQuestGemEarns[source] == pending then
+			pendingQuestGemEarns[source] = nil
+			enqueueEarn(GEMS, pending.amount, pending.source, pending.newTotal, pending.sourceAnchor)
+		end
+	end)
+end
+
+questStrikeCompletedEvent.Event:Connect(function(questId)
+	local source = "quest:" .. tostring(questId or "")
+	completedQuestStrikeSources[source] = true
+	local pending = pendingQuestGemEarns[source]
+	if pending then
+		pendingQuestGemEarns[source] = nil
+		enqueueEarn(GEMS, pending.amount, pending.source, pending.newTotal, pending.sourceAnchor)
+	end
+end)
+
 Net.on(Net.Names.GoldenCookieEarned, function(amount, source, newTotal, sourceAnchor)
 	enqueueEarn(GOLDEN, amount, source, newTotal, sourceAnchor)
 end)
 Net.on(Net.Names.GemEarned, function(amount, source, newTotal, sourceAnchor)
-	enqueueEarn(GEMS, amount, source, newTotal, sourceAnchor)
+	enqueueGemEarn(amount, source, newTotal, sourceAnchor)
 end)

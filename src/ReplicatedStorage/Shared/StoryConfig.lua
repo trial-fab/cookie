@@ -11,8 +11,6 @@ StoryConfig.STEPS = {
 
 StoryConfig.HEALING_CLICKS = 5
 StoryConfig.FIRST_BUILDING_ID = "Noob Clicker"
-StoryConfig.FIRST_BUILDING_COST = 15
-StoryConfig.TOOL_NAME = "Mixer"
 
 StoryConfig.Dialogue = {
 	{
@@ -27,11 +25,6 @@ StoryConfig.Dialogue = {
 		Speaker = "Goo Alien",
 		Text = "Take the Mixer. Feed it cookies, shape the cosmic dough, and we can build this place back up.",
 	},
-}
-
-StoryConfig.Prompts = {
-	[StoryConfig.STEPS.Healing] = "Click your cookie to help the goo alien recover! (%d/%d)",
-	[StoryConfig.STEPS.BuildTask] = "Collect %d cookies, open the Mixer, and place a Noob Clicker.",
 }
 
 StoryConfig.Mascot = {

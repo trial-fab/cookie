@@ -9,6 +9,7 @@ return {
 	SellUpgrade = "SellUpgrade",
 	SellAll = "SellAll",
 	ClaimDailyReward = "ClaimDailyReward",
+	PurchaseBoostItem = "PurchaseBoostItem",
 	SelectGooSkin = "SelectGooSkin",
 	SelectTitle = "SelectTitle",
 	DevTuningApply = "DevTuningApply",
@@ -16,7 +17,6 @@ return {
 	-- client -> server (fire-and-forget actions; RemoteEvent)
 	DamageBuilding = "DamageBuilding",
 	ToggleShield = "ToggleShield",
-	ResetStats = "ResetStats",
 	RequestSpin = "RequestSpin",
 	EquipSkin = "EquipSkin",
 	DisableBuildViewNudge = "DisableBuildViewNudge",
@@ -24,9 +24,11 @@ return {
 	UpdateSetting = "UpdateSetting",
 	StoryAction = "StoryAction",
 	PlacementControlUsed = "PlacementControlUsed",
+	QuestAction = "QuestAction",
 
 	-- debug / test harness only (server handler is gated to Studio or the place creator)
 	DebugPlot = "DebugPlot",
+	DebugOnboardingReset = "DebugOnboardingReset",
 
 	-- server -> client (results / pushes)
 	ProductionEarnings = "ProductionEarnings",
@@ -38,4 +40,5 @@ return {
 	SkinInventoryChanged = "SkinInventoryChanged",
 	GooSkinInventoryChanged = "GooSkinInventoryChanged",
 	StoryStateChanged = "StoryStateChanged",
+	QuestSnapshot = "QuestSnapshot",
 }

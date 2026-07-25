@@ -32,6 +32,7 @@ return {
 	-- holding round slot buttons (SlotLeft/SlotCenter/SlotRight, resolved as local literals in
 	-- HotbarCarousel since they're single-module structural lookups). SlotCenter is the mixer.
 	Hotbar = "Hotbar",
+	QuestProgress = "QuestProgress",
 
 	-- store frame + its open/close toggles
 	-- Store is the legacy single-shell name (kept as a fallback). The store now has two

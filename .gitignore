@@ -12,5 +12,21 @@ sourcemap.json
 *.rbxlx.lock
 *.rbxlx.tmp
 
+# Blender sources, backups, and exported 3D assets
+*.blend
+*.blend[0-9]*
+*.fbx
+*.obj
+*.mtl
+*.gltf
+*.glb
+*.abc
+*.dae
+*.stl
+*.ply
+*.usd
+*.usda
+*.usdc
+
 # Historical local snapshots; Git history is the source of rollback history.
 /backups/
