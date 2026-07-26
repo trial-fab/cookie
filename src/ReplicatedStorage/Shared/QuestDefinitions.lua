@@ -15,7 +15,7 @@ QuestDefinitions.Arcs = table.freeze({
 	opening_tutorial = table.freeze({
 		Id = "opening_tutorial",
 		Order = 1,
-		Title = "Opening Tutorial",
+		Title = "Getting Started",
 		UnlockCondition = table.freeze({ Kind = "Always" }),
 		QuestIds = table.freeze({ "gooey_beginning" }),
 		DisplayQuestCount = 5,
@@ -43,7 +43,7 @@ QuestDefinitions.Quests = table.freeze({
 			table.freeze({
 				Id = "begin_rescue",
 				Title = "Witness the Impact",
-				CompactObjective = "Watch the Goo's meteor crash-land.",
+				CompactObjective = "Watch the cookie meteor crash-land.",
 				ObjectiveKind = "StoryTransition",
 				ObjectiveTarget = "IntroCompleted",
 				GuideCapability = false,
@@ -51,7 +51,7 @@ QuestDefinitions.Quests = table.freeze({
 			table.freeze({
 				Id = "unearth_cookie",
 				Title = "Free the Goo",
-				CompactObjective = "Clear the meteor rubble.",
+				CompactObjective = "Clear the rubble around the cookie.",
 				ObjectiveKind = "StoryTransition",
 				ObjectiveTarget = "Healing",
 				GuideCapability = false,
@@ -59,7 +59,7 @@ QuestDefinitions.Quests = table.freeze({
 			table.freeze({
 				Id = "help_goo_recover",
 				Title = "Help the Goo Recover",
-				CompactObjective = "Click the cookie 5 times to heal Goob.",
+				CompactObjective = "Click the cookie 5 times to heal the goo.",
 				ObjectiveKind = "ManualOwnerClickCount",
 				ObjectiveTarget = 5,
 				GuideCapability = true,
@@ -67,7 +67,7 @@ QuestDefinitions.Quests = table.freeze({
 			table.freeze({
 				Id = "unlock_mixer",
 				Title = "Unlock the Mixer",
-				CompactObjective = "Finish talking with the goo.",
+				CompactObjective = "Finish talking with Goob.",
 				ObjectiveKind = "StoryTransition",
 				ObjectiveTarget = "BuildTask",
 				GuideCapability = true,
@@ -75,7 +75,7 @@ QuestDefinitions.Quests = table.freeze({
 			table.freeze({
 				Id = "build_first_helper",
 				Title = "Build Your First Helper",
-				CompactObjective = "Place a Noob Clicker from the Mixer.",
+				CompactObjective = "Buy and place a Noob Clicker from the Mixer.",
 				ObjectiveKind = "BuildingPlaced",
 				ObjectiveTarget = "Noob Clicker",
 				GuideCapability = true,

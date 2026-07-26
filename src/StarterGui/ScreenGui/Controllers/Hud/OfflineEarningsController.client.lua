@@ -71,9 +71,13 @@ local function show(payload)
 
 	amountLabel.Text = "+" .. NumberFormat.abbreviate(amount) .. " cookies"
 
-	local detailText = "Your bases baked at 50% for " .. formatAway(payload.AwaySeconds or 0) .. " away."
+	local detailText = "Your buildings earned cookies at 50% of their normal rate for "
+		.. formatAway(payload.AwaySeconds or 0)
+		.. "."
 	if payload.Capped then
-		detailText = detailText .. " (capped at " .. tostring(math.floor((payload.CapHours or 8) + 0.5)) .. "h)"
+		detailText = "Your buildings earned cookies at 50% of their normal rate for "
+			.. tostring(math.floor((payload.CapHours or 8) + 0.5))
+			.. "h, the current offline limit."
 	end
 	detail.Text = detailText
 

@@ -10,6 +10,7 @@ return {
 	SellAll = "SellAll",
 	ClaimDailyReward = "ClaimDailyReward",
 	PurchaseBoostItem = "PurchaseBoostItem",
+	DropBoostField = "DropBoostField",
 	SelectGooSkin = "SelectGooSkin",
 	SelectTitle = "SelectTitle",
 	DevTuningApply = "DevTuningApply",

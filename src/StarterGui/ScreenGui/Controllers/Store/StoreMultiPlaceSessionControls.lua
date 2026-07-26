@@ -9,6 +9,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(Shared:WaitForChild("Attrs"))
 local CursorTooltipTuning = require(Shared:WaitForChild("CursorTooltipTuning"))
 local Net = require(Shared:WaitForChild("Net"))
+local PlacementControls = require(Shared:WaitForChild("PlacementControls"))
 local SettingsConfig = require(Shared:WaitForChild("SettingsConfig"))
 
 local StoreMultiPlaceSessionControls = {}
@@ -46,8 +47,12 @@ function StoreMultiPlaceSessionControls.new(ctx)
 			and screenGui:GetAttribute(Attrs.MultiPlaceSessionActive) == true
 	end
 
+	-- A boost field shares this placement session and drives its own Cancel, so the building
+	-- cancel on the centre face must stay inert while the field owns it.
 	local function classicSessionActive()
-		return placementSessionActive() and screenGui:GetAttribute(Attrs.PlacementControlsEnabled) ~= true
+		return placementSessionActive()
+			and not PlacementControls.screenControlsActive(screenGui)
+			and screenGui:GetAttribute(Attrs.BoostFieldPlacementActive) ~= true
 	end
 
 	local function refresh()
@@ -110,12 +115,13 @@ function StoreMultiPlaceSessionControls.new(ctx)
 
 	for _, attribute in ipairs({
 		Attrs.PlacementActive,
-		Attrs.PlacementControlsEnabled,
 		Attrs.MultiPlaceSessionActive,
 		Attrs.MultiPlaceSessionCount,
+		Attrs.BoostFieldPlacementActive,
 	}) do
 		screenGui:GetAttributeChangedSignal(attribute):Connect(refresh)
 	end
+	PlacementControls.observe(screenGui, refresh)
 
 	refresh()
 	return {}

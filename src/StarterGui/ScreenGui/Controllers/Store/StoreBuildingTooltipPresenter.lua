@@ -122,6 +122,15 @@ function StoreBuildingTooltipPresenter.new(screenGui)
 				setNamedText(root, name, value)
 			end
 		end
+		-- Icons are toggled, never authored: the artwork and colour belong to the Studio instance.
+		if type(content.icons) == "table" then
+			for name, shown in pairs(content.icons) do
+				local icon = root:FindFirstChild(name, true)
+				if icon and icon:IsA("GuiObject") then
+					icon.Visible = shown == true
+				end
+			end
+		end
 		root.Visible = true
 		if not renderConnection then
 			renderConnection = RunService.RenderStepped:Connect(updatePosition)

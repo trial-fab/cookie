@@ -4,8 +4,8 @@
 -- shown over the first card of the section; cards within a section sit side-by-side and the
 -- whole strip scrolls horizontally. Prices use a Studio-authored RobuxIcon ImageLabel beside a
 -- bare number (PriceAmount), matching the cookie/GC currency-icon convention; the live price is
--- fetched once per product via MarketplaceService and cached. The gift button is present but
--- inert until the gifting phase lands.
+-- fetched once per product via MarketplaceService and cached. Gifting remains post-launch, so
+-- the authored gift control stays hidden until there is a complete ownership and receipt design.
 --
 -- This module only binds to Studio-authored UI. StoreController passes TemplateRobuxProduct
 -- when present, or the old TemplateGearGiver as a temporary shell fallback. The render path
@@ -13,6 +13,7 @@
 -- PriceAmount / GiftButton) it falls back to the legacy Price/Cost text + buy-button label.
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local NumberFormat = require(Shared:WaitForChild("NumberFormat"))
 
@@ -29,10 +30,11 @@ function StoreRobuxTab.new(ctx)
 	local firstCardBySection = {}
 	local priceCache = {}
 	local warnedMissingTemplate = false
+	local showCatalogPreview = RunService:IsStudio()
 
 	local function getItems()
 		if MonetizationConfig and MonetizationConfig.GetVisibleItems then
-			return MonetizationConfig.GetVisibleItems()
+			return MonetizationConfig.GetVisibleItems(showCatalogPreview)
 		end
 
 		return {}
@@ -42,7 +44,7 @@ function StoreRobuxTab.new(ctx)
 	-- when the config predates GetSections.
 	local function getSections()
 		if MonetizationConfig and MonetizationConfig.GetSections then
-			return MonetizationConfig.GetSections()
+			return MonetizationConfig.GetSections(showCatalogPreview)
 		end
 
 		local items = getItems()
@@ -182,27 +184,16 @@ function StoreRobuxTab.new(ctx)
 		end
 	end
 
-	-- Gap (px) between the BuyButton and the GiftButton when gifting is shown. Adjust freely.
-	local GIFT_BUTTON_PADDING = 2
-
-	-- Shows/hides the gift button and, when shown, shrinks the BuyButton by the gift's width
-	-- plus GIFT_BUTTON_PADDING so the two tile cleanly with no overlap (BuyButton is
-	-- left-anchored inside ActionRow, GiftButton right-anchored).
-	local function updateActionLayout(row, item)
-		local giftVisible = item.Giftable == true
-
+	-- Gifting is post-launch. Restore the split action layout only with the complete feature.
+	local function updateActionLayout(row)
 		local gift = row:FindFirstChild("GiftButton", true)
 		if gift and gift:IsA("GuiObject") then
-			gift.Visible = giftVisible
+			gift.Visible = false
 		end
 
 		local buy = resolveButton(row)
 		if buy and buy:IsA("GuiObject") then
-			local reserved = 0
-			if giftVisible and gift and gift:IsA("GuiObject") then
-				reserved = gift.Size.X.Offset + GIFT_BUTTON_PADDING
-			end
-			buy.Size = UDim2.new(1, -reserved, buy.Size.Y.Scale, buy.Size.Y.Offset)
+			buy.Size = UDim2.new(1, 0, buy.Size.Y.Scale, buy.Size.Y.Offset)
 		end
 	end
 
@@ -220,7 +211,7 @@ function StoreRobuxTab.new(ctx)
 		setIcon(row, item.Icon)
 		iconPresenter.bind(row, item)
 		hideProgressChrome(row)
-		updateActionLayout(row, item)
+		updateActionLayout(row)
 
 		local hasPriceUI = updatePrice(row, item)
 		if not hasPriceUI then
@@ -269,17 +260,6 @@ function StoreRobuxTab.new(ctx)
 
 				if ctx.showStatus then
 					ctx.showStatus((item.DisplayName or "This item") .. " is coming soon.")
-				end
-			end)
-		end
-
-		-- Gift button is inert until the gifting phase lands.
-		local gift = row:FindFirstChild("GiftButton", true)
-		if gift and (gift:IsA("ImageButton") or gift:IsA("TextButton")) then
-			gift.AutoButtonColor = false
-			gift.MouseButton1Click:Connect(function()
-				if ctx.showStatus then
-					ctx.showStatus("Gifting coming soon!")
 				end
 			end)
 		end

@@ -342,7 +342,7 @@ local function buildDayCards()
 		if rewardLabel and rewardLabel:IsA("TextLabel") then
 			rewardLabel.Text = "+"
 				.. NumberFormat.abbreviate((reward and reward.Gc) or 0)
-				.. ((reward and reward.SkinId) and " + Skin" or "")
+				.. ((reward and reward.SkinId) and " + Celestial Goo" or "")
 		end
 		local preview = card:FindFirstChild("Preview")
 		if preview and preview:IsA("ViewportFrame") then
@@ -371,7 +371,8 @@ refreshDaily = function()
 		end
 	end
 	if streakLabel and streakLabel:IsA("TextLabel") then
-		streakLabel.Text = ("Day streak: %d"):format(state.streak)
+		streakLabel.Text = if state.streak == 1 then "Current streak: 1 day"
+			else ("Current streak: %d days"):format(state.streak)
 	end
 	if claimButton and claimButton:IsA("GuiButton") then
 		claimButton.Active = state.canClaim
@@ -392,7 +393,7 @@ if claimButton and claimButton:IsA("GuiButton") then
 		end
 		claiming = true
 		if claimButton:IsA("TextButton") then
-			claimButton.Text = "Claiming…"
+			claimButton.Text = "Claiming..."
 		end
 		task.spawn(function()
 			local ok, result = pcall(function()
@@ -401,15 +402,17 @@ if claimButton and claimButton:IsA("GuiButton") then
 			claiming = false
 			if dailyStatus and dailyStatus:IsA("TextLabel") then
 				if ok and type(result) == "table" and result.Success then
-					local message = "Claimed +" .. NumberFormat.abbreviate(result.RewardGC or 0) .. " GC!"
+					local message = "Claimed "
+						.. NumberFormat.abbreviate(result.RewardGC or 0)
+						.. " golden cookies."
 					if result.SkinId and result.SkinGranted then
-						message ..= " Mythical skin unlocked!"
+						message ..= " Celestial Goo unlocked."
 					end
 					dailyStatus.Text = message
 				elseif ok and type(result) == "table" and result.Reason == "AlreadyClaimed" then
 					dailyStatus.Text = "Already claimed today."
 				else
-					dailyStatus.Text = "Claim failed — try again."
+					dailyStatus.Text = "Claim failed. Try again."
 				end
 			end
 			refreshDaily()

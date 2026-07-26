@@ -457,6 +457,9 @@ local function tweenLetterboxOut(topBar, bottomBar)
 end
 
 local function playTitleReveal(playerGui)
+	-- The final game title is intentionally hidden until branding is approved.
+	return
+	--[[
 	local gui = Instance.new("ScreenGui")
 	gui.Name = "IntroTitleRevealGui"
 	gui.ResetOnSpawn = false
@@ -512,6 +515,7 @@ local function playTitleReveal(playerGui)
 	fadeTween:Play()
 	fadeTween.Completed:Wait()
 	gui:Destroy()
+	]]
 end
 
 ----------------------------------------------------------------------
@@ -1194,7 +1198,7 @@ local function playIntro(options)
 			markRubbleCleared()
 			running = false
 		else
-			promptLabel.Text = "Keep clicking! (" .. clicksLeft .. ")"
+			promptLabel.Text = "Clear the rubble! (" .. clicksLeft .. " left)"
 		end
 	end
 	for _, detector in ipairs(clickDetectors) do

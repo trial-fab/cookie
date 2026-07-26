@@ -3,6 +3,7 @@ local HttpService = game:GetService("HttpService")
 local ServerScriptService = game:GetService("ServerScriptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local BoostFieldService = require(ServerScriptService.Services.BoostFieldService)
 local BoostShopService = require(ServerScriptService.Services.BoostShopService)
 local CookieService = require(ServerScriptService.Services.CookieService)
 local FloorService = require(ServerScriptService.Services.FloorService)
@@ -189,6 +190,12 @@ local function setupPlayer(player)
 	-- timestamp, calculating earnings, and stamping the current value.
 	ProductionService.RefreshCps(player)
 	OfflineEarningsService.OnPlayerSetup(player)
+
+	-- §12.6: frozen boost fields resume only AFTER the offline claim above. Away-time is paid
+	-- against a live CpS snapshot, and a field restored first would be counted in it -- paying for
+	-- a boost that was frozen the whole time the player was gone.
+	BoostFieldService.RestoreFields(player)
+	ProductionService.RefreshCps(player)
 
 	player.CharacterAdded:Connect(function(character)
 		task.wait(0.1)

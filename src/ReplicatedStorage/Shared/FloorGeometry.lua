@@ -5,10 +5,19 @@
 --   Floors/<FloorId>/PlacementBounds (BasePart)
 --   Floors/<FloorId>/PlacementBounds/PlacementOrigin (Attachment)
 -- Ground continues to use CookieSheet.Base.
+--
+-- It also owns the QUERY half of a surface (ray/plane intersection, containment, top-of-surface
+-- points). Those live here rather than in one caller because placement, boost fields, and the
+-- server's authoritative drop resolution must all agree on where a surface is: a raycast against
+-- world geometry answers a different question (it lands on whatever building or prop is in the
+-- way) and drifts from the plane the server actually places on.
 local FloorConfig = require(script.Parent.FloorConfig)
 local GridPlacement = require(script.Parent.GridPlacement)
 
 local FloorGeometry = {}
+
+local PLANE_EPSILON = 1e-6
+local BOUNDS_EPSILON = 1e-4
 
 local function getGroundBase(sheet)
 	local base = sheet and sheet:FindFirstChild("Base")
@@ -121,6 +130,98 @@ function FloorGeometry.GetUnlockedSurfaces(sheet, unlockedCount)
 		end
 	end
 	return surfaces
+end
+
+-- ── Surface queries ─────────────────────────────────────────────────────────────
+
+-- World point on the top face of `surface` directly above/below `position`, ignoring the point's
+-- own height. This is where anything "sitting on the floor" belongs, and the single definition
+-- both the placement ghost and the server's field drop use so they cannot disagree.
+function FloorGeometry.GetTopPosition(surface, position, lift)
+	local localPosition = surface.cframe:PointToObjectSpace(position)
+	return surface.cframe:PointToWorldSpace(
+		Vector3.new(localPosition.X, surface.size.Y / 2 + (lift or 0), localPosition.Z)
+	)
+end
+
+-- Where `ray` crosses the surface's top plane. `requireBounds` rejects a hit outside the surface
+-- rectangle; without it the caller gets the unbounded plane point (used to keep a ghost moving
+-- when the pointer wanders past the plot edge, before clamping it back in).
+function FloorGeometry.IntersectRay(ray, surface, requireBounds)
+	local direction = ray.Direction
+	if direction.Magnitude <= PLANE_EPSILON then
+		return nil
+	end
+	direction = direction.Unit
+
+	local normal = surface.cframe.UpVector
+	local denominator = direction:Dot(normal)
+	if math.abs(denominator) < PLANE_EPSILON then
+		return nil
+	end
+
+	local planePoint = surface.cframe:PointToWorldSpace(Vector3.new(0, surface.size.Y / 2, 0))
+	local distance = (planePoint - ray.Origin):Dot(normal) / denominator
+	if distance < 0 then
+		return nil
+	end
+
+	local hitPosition = ray.Origin + direction * distance
+	if requireBounds then
+		local localPosition = surface.cframe:PointToObjectSpace(hitPosition)
+		if
+			math.abs(localPosition.X) > surface.size.X / 2 + BOUNDS_EPSILON
+			or math.abs(localPosition.Z) > surface.size.Z / 2 + BOUNDS_EPSILON
+		then
+			return nil
+		end
+	end
+	return hitPosition, distance
+end
+
+-- Nearest in-bounds surface the ray crosses. Returns surface, hitPosition, distance.
+function FloorGeometry.FindSurfaceAlongRay(ray, surfaces)
+	local bestSurface, bestHit = nil, nil
+	local bestDistance = math.huge
+	for _, surface in ipairs(surfaces) do
+		local hitPosition, distance = FloorGeometry.IntersectRay(ray, surface, true)
+		if hitPosition and distance < bestDistance then
+			bestSurface, bestHit, bestDistance = surface, hitPosition, distance
+		end
+	end
+	return bestSurface, bestHit, bestDistance
+end
+
+-- Pulls `position` inside the surface rectangle and onto its top face. A point already inside is
+-- only lifted onto the surface, so this is safe to apply unconditionally.
+function FloorGeometry.ClampToSurface(surface, position, lift)
+	local localPosition = surface.cframe:PointToObjectSpace(position)
+	return surface.cframe:PointToWorldSpace(Vector3.new(
+		math.clamp(localPosition.X, -surface.size.X / 2, surface.size.X / 2),
+		surface.size.Y / 2 + (lift or 0),
+		math.clamp(localPosition.Z, -surface.size.Z / 2, surface.size.Z / 2)
+	))
+end
+
+-- The surface `position` sits on, choosing the CLOSEST one vertically rather than the first that
+-- happens to match: a terraced stack puts several floors within any usable tolerance, and picking
+-- by iteration order would bind a field to whichever floor the definition list named first.
+function FloorGeometry.FindSurfaceAtPoint(surfaces, position, toleranceY)
+	local bestSurface = nil
+	local bestOffset = math.huge
+	for _, surface in ipairs(surfaces) do
+		local localPosition = surface.cframe:PointToObjectSpace(position)
+		local offsetY = math.abs(localPosition.Y) - surface.size.Y / 2
+		if
+			math.abs(localPosition.X) <= surface.size.X / 2 + BOUNDS_EPSILON
+			and math.abs(localPosition.Z) <= surface.size.Z / 2 + BOUNDS_EPSILON
+			and offsetY <= toleranceY
+			and offsetY < bestOffset
+		then
+			bestSurface, bestOffset = surface, offsetY
+		end
+	end
+	return bestSurface
 end
 
 return FloorGeometry

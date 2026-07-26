@@ -197,11 +197,23 @@ function HotbarCarousel.new(ctx)
 	local mixerRevealPending = false
 	local mixerRevealGeneration = 0
 	local spinSettlesAt = 0
+
+	-- Publish the spin deadline so other domains can wait for a slot to land without restating
+	-- SPIN_INFO.Time as their own constant (which then quietly drifts when this tween is retuned).
+	local function setSpinSettlesAt(value)
+		spinSettlesAt = value
+		hotbar:SetAttribute(Attrs.HotbarSpinSettlesAt, value)
+	end
+	setSpinSettlesAt(0)
 	local keybindBadgesSuppressed = false
 	local mixerTransition = "idle"
 	local pendingSelectAfterClose = nil
+	local pendingSelectAfterPlacement = nil
 	local onMixerRestored = nil
 	local placementMode = nil
+	-- Captured when a placement takes the bar, not read live: the field clears its own attribute
+	-- while tearing down, and the deferral below still has to know what kind of session is leaving.
+	local placementWasField = false
 
 	local function isPlacementActive()
 		return screenGui:GetAttribute(Attrs.PlacementActive) == true
@@ -209,6 +221,13 @@ function HotbarCarousel.new(ctx)
 
 	local function placementOwnsHotbar()
 		return isPlacementActive() or (placementMode and placementMode.isTransitioning())
+	end
+
+	-- A BUILDING placement locks item selection: the bar is its controls and there is nothing to
+	-- switch to. A boost field placement does not — pressing another item number ends the field and
+	-- moves on, which is why selection (and only selection) looks past it.
+	local function selectionBlocked()
+		return placementOwnsHotbar() and not placementWasField
 	end
 
 	local function storeOpen()
@@ -231,8 +250,24 @@ function HotbarCarousel.new(ctx)
 		end
 	end
 
+	-- A badge is pinned at scale (0.5, 1) of its slot, so it goes wherever that slot goes. While the
+	-- centre disc is collapsed into the cookie footprint -- store open, or any point during the
+	-- open/close morph -- that puts it right on top of the store's close X. Treat "the disc is not
+	-- at its authored size" as a hard reason to keep the badges down, rather than trusting every
+	-- transition path to have suppressed them in time.
+	local function isCenterCollapsed()
+		return centerSlot == slotCenter and slotCenter.Size ~= fullSize
+	end
+
 	local function updateKeybindBadges()
-		local visible = not storeOpen() and not isMobileDevice() and not keybindBadgesSuppressed
+		local visible = not storeOpen()
+			and not isMobileDevice()
+			and not keybindBadgesSuppressed
+			and not isCenterCollapsed()
+			-- While a placement owns the bar the slots are Cancel/Confirm faces, and
+			-- HotbarPlacementMode hides the badges itself. Refusing here too means a late
+			-- unsuppress arriving from the carousel cannot put one back on top of a face.
+			and not placementOwnsHotbar()
 		for itemNumber, slot in pairs(slotByItemNumber) do
 			local badge = slot:FindFirstChild(KEYBIND_BADGE_NAME)
 			if badge and badge:IsA("GuiObject") then
@@ -459,7 +494,7 @@ function HotbarCarousel.new(ctx)
 	local function restoreCanonicalCarouselPose()
 		slotByPose = { left = slotLeft, center = slotCenter, right = slotRight }
 		centerSlot = slotCenter
-		spinSettlesAt = 0
+		setSpinSettlesAt(0)
 		for poseName, slot in pairs(slotByPose) do
 			applyPose(slot, poseName, false)
 		end
@@ -483,7 +518,7 @@ function HotbarCarousel.new(ctx)
 		for poseName, s in pairs(slotByPose) do
 			applyPose(s, poseName, true)
 		end
-		spinSettlesAt = os.clock() + SPIN_INFO.Time
+		setSpinSettlesAt(os.clock() + SPIN_INFO.Time)
 		return true
 	end
 
@@ -545,7 +580,7 @@ function HotbarCarousel.new(ctx)
 	-- A slot tap: the mixer routes through the open gate; a placeholder just spins to centre (becomes
 	-- active) with no open, since it has no item yet.
 	local function selectSlot(slot)
-		if mixerRevealPending or placementOwnsHotbar() then
+		if mixerRevealPending or selectionBlocked() then
 			return
 		end
 		if slot == slotCenter then
@@ -561,20 +596,43 @@ function HotbarCarousel.new(ctx)
 
 	onMixerRestored = function()
 		mixerTransition = "idle"
-		setKeybindBadgesSuppressed(false)
 		local pending = pendingSelectAfterClose
 		pendingSelectAfterClose = nil
 		if pending and unlocked and not storeOpen() then
+			-- Spin FIRST, and only bring the badges back once it has landed. Unsuppressing before
+			-- the spin showed them at the poses the slots were about to leave: pressing 2 or 3 with
+			-- the store open closes it and re-centres a slot, so for that moment the badges appeared
+			-- bunched together around the store's close X.
 			selectSlot(pending)
+			task.delay(SPIN_INFO.Time, function()
+				-- The spin this select started is often the run-up to a placement (pressing 2 or 3
+				-- equips a boost), which lands at almost exactly this moment. Restoring the badges
+				-- without checking would undo the hiding the placement had just done.
+				if mixerTransition == "idle" and not storeOpen() and not placementOwnsHotbar() then
+					setKeybindBadgesSuppressed(false)
+				end
+			end)
+			return
 		end
+		setKeybindBadgesSuppressed(false)
 	end
 
 	local function selectItemNumber(number)
-		if placementOwnsHotbar() then
-			return
-		end
 		local slot = slotByItemNumber[number]
 		if not slot then
+			return
+		end
+		-- A field placement is wearing the bar as its Cancel/Confirm controls. Spinning right now
+		-- would rotate those faces, and the exit animation would then reset the poses underneath
+		-- the spin. So the selection waits for the bar to come back and runs on the other side --
+		-- the same deferral a store close already uses, and what makes pressing another item read
+		-- as "put the boost away, bring the new item to centre, open it".
+		-- Covers the BUILDING case too: that bar genuinely is its controls with nothing to switch
+		-- to, so the press is dropped rather than queued.
+		if placementOwnsHotbar() then
+			if placementWasField then
+				pendingSelectAfterPlacement = slot
+			end
 			return
 		end
 		-- If the Mixer is open/closing, selecting another identity should close cleanly,
@@ -781,6 +839,8 @@ function HotbarCarousel.new(ctx)
 			morphToken += 1
 			cancelSizeTween()
 			pendingSelectAfterClose = nil
+			pendingSelectAfterPlacement = nil
+			placementWasField = screenGui:GetAttribute(Attrs.BoostFieldPlacementActive) == true
 			setKeybindBadgesSuppressed(true)
 		end,
 		getExitTargets = function()
@@ -794,15 +854,37 @@ function HotbarCarousel.new(ctx)
 			return targets
 		end,
 		onExit = function()
-			-- Placement starts from the Store, so its exit always returns item 1 to the
-			-- canonical center pose. This also clears any interrupted carousel tween.
+			-- Placement returns item 1 to the canonical center pose. This also clears any
+			-- interrupted carousel tween.
+			placementWasField = false
 			restoreCanonicalCarouselPose()
+			-- The bar is ours again: run the selection that arrived while the field owned it, so
+			-- the pressed item now spins to centre and (for the mixer) opens the store.
+			local pendingPlacementSelect = pendingSelectAfterPlacement
+			pendingSelectAfterPlacement = nil
+			if pendingPlacementSelect then
+				task.defer(function()
+					if not placementOwnsHotbar() then
+						selectSlot(pendingPlacementSelect)
+					end
+				end)
+			end
 			if storeOpen() then
 				snapOpen()
-			else
-				snapRest()
+				onStoreOpenChanged()
+				return
 			end
-			onStoreOpenChanged()
+			snapRest()
+			-- Placement can now END with the store staying closed: a boost field is placed straight
+			-- from the hotbar, with no store round trip. onStoreOpenChanged's close path parks the
+			-- bar in `closing` and waits on a cookie flight that never comes in that case, which
+			-- left the carousel unresponsive. Restore the idle bar directly instead.
+			setPlaceholdersVisible(true)
+			updateMixerFace()
+			updateKeybindBadges()
+			if onMixerRestored then
+				onMixerRestored()
+			end
 		end,
 	})
 

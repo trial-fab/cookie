@@ -7,6 +7,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(Shared:WaitForChild("Attrs"))
+local PlacementControls = require(Shared:WaitForChild("PlacementControls"))
 local UiMotion = require(Shared:WaitForChild("UiMotion"))
 
 local HotbarPlacementMode = {}
@@ -17,6 +18,8 @@ local MODE_CLASSIC = "classic"
 local SLOT_SIZE_PIXELS = 72
 local SLOT_GAP_PIXELS = 8
 local TRANSITION_SECONDS = 0.25
+-- Size the controls start at for the opening entrance, as a fraction of their placed size.
+local OPEN_ENTRANCE_START_SCALE = 0.3
 
 local function findGui(slot, name)
 	local child = slot and slot:FindFirstChild(name)
@@ -35,6 +38,10 @@ function HotbarPlacementMode.new(ctx)
 	local transitionToken = 0
 	local activeTweens = {}
 	local multiPlaceFace = findGui(slotCenter, "MultiPlaceFace")
+	-- Captured once per session on entrance, not read live: the owner clears its attributes as part
+	-- of tearing down, and the exit animation still has to know which style it is closing.
+	local openEntrance = false
+	local noRotate = false
 
 	local records = {}
 	for _, slot in ipairs(slots) do
@@ -105,9 +112,13 @@ function HotbarPlacementMode.new(ctx)
 	local function setModeFaces(mode)
 		local fullControls = mode == MODE_CONTROLS
 		for _, record in ipairs(records) do
-			setPlacementFace(record, fullControls)
+			setPlacementFace(record, fullControls and not (noRotate and record.slot == slotCenter))
 		end
 		setMultiPlaceFaceVisible(mode == MODE_CLASSIC)
+		if mode == MODE_NONE then
+			-- Give the middle slot back to the carousel on the way out.
+			slotCenter.Visible = true
+		end
 
 		if mode == MODE_CLASSIC then
 			for _, record in ipairs(records) do
@@ -129,7 +140,7 @@ function HotbarPlacementMode.new(ctx)
 			end
 		elseif fullControls then
 			for _, slot in ipairs(slots) do
-				slot.Visible = true
+				slot.Visible = not (noRotate and slot == slotCenter)
 				slot.ZIndex = 5
 			end
 		end
@@ -138,6 +149,26 @@ function HotbarPlacementMode.new(ctx)
 	local function getPlacementTargets()
 		local size = SLOT_SIZE_PIXELS
 		local spacing = size + SLOT_GAP_PIXELS
+		-- Two-button layout: with no Rotate in the middle, Cancel and Confirm close up around the
+		-- centre as a pair rather than sitting at their three-slot positions with a hole between.
+		if noRotate and activeMode == MODE_CONTROLS then
+			local half = math.floor(spacing / 2)
+			return {
+				[slotLeft] = UDim2.new(
+					centerPosition.X.Scale,
+					centerPosition.X.Offset - half,
+					centerPosition.Y.Scale,
+					centerPosition.Y.Offset
+				),
+				[slotRight] = UDim2.new(
+					centerPosition.X.Scale,
+					centerPosition.X.Offset + half,
+					centerPosition.Y.Scale,
+					centerPosition.Y.Offset
+				),
+			},
+				UDim2.fromOffset(size, size)
+		end
 		return {
 			[slotLeft] = UDim2.new(
 				centerPosition.X.Scale,
@@ -156,7 +187,22 @@ function HotbarPlacementMode.new(ctx)
 			UDim2.fromOffset(size, size)
 	end
 
-	local function applyActivePose(animate)
+	-- Entrance-only: park the participating slots collapsed at the centre so the tween below plays
+	-- as the controls opening outward, instead of the discs sliding over from their hotbar poses.
+	local function applyOpenEntranceStart(positions)
+		for _, record in ipairs(records) do
+			local participates = positions[record.slot] ~= nil
+			if participates then
+				record.slot.Position = centerPosition
+				record.slot.Size = UDim2.fromOffset(
+					SLOT_SIZE_PIXELS * OPEN_ENTRANCE_START_SCALE,
+					SLOT_SIZE_PIXELS * OPEN_ENTRANCE_START_SCALE
+				)
+			end
+		end
+	end
+
+	local function applyActivePose(animate, isEntrance)
 		if activeMode == MODE_NONE then
 			return
 		end
@@ -165,14 +211,22 @@ function HotbarPlacementMode.new(ctx)
 		setModeFaces(activeMode)
 		local positions, size = getPlacementTargets()
 		local duration = TRANSITION_SECONDS
+		if isEntrance and animate and openEntrance then
+			applyOpenEntranceStart(positions)
+		end
 		for _, record in ipairs(records) do
-			local participates = activeMode == MODE_CONTROLS or record.slot == slotCenter
+			local participates = (activeMode == MODE_CONTROLS or record.slot == slotCenter)
+				and positions[record.slot] ~= nil
 			if participates then
 				local slot = record.slot
 				if animate and duration > 0 then
+					-- Back/Out gives the opening entrance a small overshoot as the controls pop
+					-- apart; the ordinary travel keeps the flatter Quad curve.
+					local style = (isEntrance and openEntrance) and Enum.EasingStyle.Back
+						or Enum.EasingStyle.Quad
 					local tween = UiMotion.create(
 						slot,
-						TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+						TweenInfo.new(duration, style, Enum.EasingDirection.Out),
 						{ Position = positions[slot], Size = size }
 					)
 					table.insert(activeTweens, tween)
@@ -191,6 +245,9 @@ function HotbarPlacementMode.new(ctx)
 		local token = transitionToken
 		cancelTweens()
 
+		-- Deaden the faces for the duration of the exit animation so a tap cannot reach a slot that
+		-- is mid-flight between poses. `finish` hands interactivity straight back: this module is
+		-- the only thing that takes it away, so it is the only thing that may restore it.
 		for _, record in ipairs(records) do
 			if record.hitbox then
 				record.hitbox.Active = false
@@ -198,7 +255,22 @@ function HotbarPlacementMode.new(ctx)
 			end
 		end
 
-		local targets = ctx.getExitTargets and ctx.getExitTargets() or nil
+		-- A session that OPENED from the centre closes back into it, instead of gliding out to the
+		-- carousel poses it never came from.
+		local collapsing = openEntrance
+		local targets = nil
+		if collapsing then
+			targets = {}
+			local collapsedSize = UDim2.fromOffset(
+				SLOT_SIZE_PIXELS * OPEN_ENTRANCE_START_SCALE,
+				SLOT_SIZE_PIXELS * OPEN_ENTRANCE_START_SCALE
+			)
+			for _, record in ipairs(records) do
+				targets[record.slot] = { Position = centerPosition, Size = collapsedSize }
+			end
+		else
+			targets = ctx.getExitTargets and ctx.getExitTargets() or nil
+		end
 		local duration = TRANSITION_SECONDS
 		local remaining = 0
 		local function finish()
@@ -208,6 +280,19 @@ function HotbarPlacementMode.new(ctx)
 			placementTransitioning = false
 			table.clear(activeTweens)
 			setModeFaces(MODE_NONE)
+			-- Hand the slots back to the carousel BEFORE onExit, which is where SlotCenter's own
+			-- owner (HotbarCarousel.updateMixerFace) re-disables it if the store is open. Nothing
+			-- else in the codebase re-enables the FLANK hitboxes, so leaving them off here made
+			-- every slot but the centre permanently dead after the first placement -- fatal on
+			-- touch, where the 2/3 item keys do not exist.
+			for _, record in ipairs(records) do
+				if record.hitbox then
+					record.hitbox.Active = true
+					record.hitbox.Interactable = true
+				end
+			end
+			openEntrance = false
+			noRotate = false
 			if ctx.onExit then
 				ctx.onExit()
 			end
@@ -224,7 +309,9 @@ function HotbarPlacementMode.new(ctx)
 					remaining += 1
 					local tween = UiMotion.create(
 						record.slot,
-						TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+						collapsing
+								and TweenInfo.new(duration, Enum.EasingStyle.Back, Enum.EasingDirection.In)
+							or TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 						target
 					)
 					table.insert(activeTweens, tween)
@@ -256,11 +343,15 @@ function HotbarPlacementMode.new(ctx)
 			transitionToken += 1
 			placementTransitioning = false
 			cancelTweens()
+			if previousMode == MODE_NONE then
+				openEntrance = screenGui:GetAttribute(Attrs.PlacementControlsOpenEntrance) == true
+				noRotate = screenGui:GetAttribute(Attrs.PlacementControlsNoRotate) == true
+			end
 			activeMode = mode
 			if previousMode == MODE_NONE and ctx.onEnter then
 				ctx.onEnter()
 			end
-			applyActivePose(true)
+			applyActivePose(true, previousMode == MODE_NONE)
 			return
 		end
 		if previousMode == MODE_NONE then
@@ -274,7 +365,7 @@ function HotbarPlacementMode.new(ctx)
 		if screenGui:GetAttribute(Attrs.PlacementActive) ~= true then
 			return MODE_NONE
 		end
-		if screenGui:GetAttribute(Attrs.PlacementControlsEnabled) == true then
+		if PlacementControls.screenControlsActive(screenGui) then
 			return MODE_CONTROLS
 		end
 		return MODE_CLASSIC
@@ -297,11 +388,13 @@ function HotbarPlacementMode.new(ctx)
 
 	for _, attribute in ipairs({
 		Attrs.PlacementActive,
-		Attrs.PlacementControlsEnabled,
 		Attrs.MultiPlaceSessionActive,
 	}) do
 		screenGui:GetAttributeChangedSignal(attribute):Connect(refreshMode)
 	end
+	-- Covers the setting AND the input device: picking up a controller mid-placement has to swap
+	-- classic mode for the on-screen faces, or the session is left with no way to commit.
+	PlacementControls.observe(screenGui, refreshMode)
 
 	refreshMode()
 
@@ -313,7 +406,7 @@ function HotbarPlacementMode.new(ctx)
 			return placementTransitioning
 		end,
 		refresh = function()
-			applyActivePose(false)
+			applyActivePose(false, false)
 		end,
 	}
 end

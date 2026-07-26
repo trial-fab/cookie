@@ -12,6 +12,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Net = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Net"))
 
+local BoostFieldPlacement = require(script.Parent:WaitForChild("BoostFieldPlacement"))
+local BoostFieldLabels = require(script.Parent:WaitForChild("BoostFieldLabels"))
+local BoostFieldPulse = require(script.Parent:WaitForChild("BoostFieldPulse"))
+local BoostHotbarSlots = require(script.Parent:WaitForChild("BoostHotbarSlots"))
 local BoostPurchaseModal = require(script.Parent:WaitForChild("BoostPurchaseModal"))
 local BoostShopPrompts = require(script.Parent:WaitForChild("BoostShopPrompts"))
 
@@ -61,6 +65,35 @@ if not modal then
 	-- better than a prompt that visibly does nothing.
 	return
 end
+
+-- Equip half: the hotbar flank slots enter field placement for the item they hold.
+local placement = BoostFieldPlacement.new({
+	screenGui = screenGui,
+	onMessage = function(text)
+		-- No status surface owns this domain yet, so a refused drop is only reported here. The
+		-- common refusals are already prevented client-side (an empty slot is inert, an off-plot
+		-- ghost reads invalid); what reaches this is mainly "that plot already has this field".
+		warn("BoostShop: " .. tostring(text))
+	end,
+})
+if placement then
+	BoostHotbarSlots.new({
+		screenGui = screenGui,
+		onActivate = function(item)
+			placement.enter(item)
+		end,
+		isPlacing = placement.isActive,
+		placingItemId = placement.activeItemId,
+		cancelPlacement = placement.exit,
+	})
+end
+
+-- Every dropped field on every plot gets its quiet ping and a status panel (item, boost, countdown,
+-- plus who gifted it). Both cover fields already on the ground when this client joined, and both are
+-- purely presentational: the fields themselves are server-owned.
+BoostFieldPulse.bindWorld()
+BoostFieldLabels.bindWorld(screenGui)
+
 
 BoostShopPrompts.bind(function(item)
 	modal.open(item)

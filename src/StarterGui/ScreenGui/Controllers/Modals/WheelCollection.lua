@@ -44,9 +44,9 @@ function WheelCollection.bind(ctx)
 		local best = tonumber(state.BestMultiplier) or 1
 		local applied = tonumber(ctx.player:GetAttribute(ctx.attrs.GooSkinMultiplier)) or 1
 		if not ctx.config.FeatureFlags.GooSkinsEnabled then
-			value.Text = ("Unavailable • Best owned %s • Applied %s"):format(fmtMult(best), fmtMult(applied))
+			value.Text = ("Unavailable. Best owned %s. Applied %s."):format(fmtMult(best), fmtMult(applied))
 		elseif math.abs(best - applied) > 0.0001 then
-			value.Text = ("Best owned %s • Applied %s"):format(fmtMult(best), fmtMult(applied))
+			value.Text = ("Best owned %s. Applied %s."):format(fmtMult(best), fmtMult(applied))
 		else
 			value.Text = "Best bonus " .. fmtMult(best)
 		end
@@ -82,7 +82,7 @@ function WheelCollection.bind(ctx)
 			end
 		end
 		if multiplier and multiplier:IsA("TextLabel") then
-			multiplier.Text = fmtMult(def.Multiplier) .. " universal"
+			multiplier.Text = fmtMult(def.Multiplier) .. " production"
 		end
 		if stroke and rarity then
 			stroke.Color = rarity.Color

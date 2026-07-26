@@ -61,6 +61,7 @@ local definitions = {
 		Order = 1,
 		DisplayName = "Industry Floor",
 		Theme = "Industry",
+		Description = "Unlocks Industry Floor. Cookie Mines and Factories get +50% production there.",
 		GridColorTuningId = "FloorGrids.IndustryColor",
 		Multiplier = 1.5,
 		Price = 75000,
@@ -70,8 +71,9 @@ local definitions = {
 		Id = "Floor2",
 		GeometryName = "Floor 2",
 		Order = 2,
-		DisplayName = "Finance & Distribution Floor",
+		DisplayName = "Commerce Floor",
 		Theme = "Finance & Distribution",
+		Description = "Unlocks Commerce Floor. Cookie Banks and Distributors get +50% production there.",
 		GridColorTuningId = "FloorGrids.FinanceColor",
 		Multiplier = 1.5,
 		Price = 500000000,
@@ -83,6 +85,7 @@ local definitions = {
 		Order = 3,
 		DisplayName = "Science Floor",
 		Theme = "Science",
+		Description = "Unlocks Science Floor. Cookie Labs, Portals, and Time Machines get +50% production there.",
 		GridColorTuningId = "FloorGrids.ScienceColor",
 		Multiplier = 1.5,
 		Price = 100000000000,
@@ -158,7 +161,8 @@ function FloorConfig.GetExpansionLevels()
 			Cost = definition.Price,
 			FloorId = definition.Id,
 			Effects = { FloorUnlock = definition.Order },
-			EffectText = "Unlock " .. definition.Theme .. " floor",
+			EffectText = "Unlock " .. definition.DisplayName,
+			Description = definition.Description,
 		})
 	end
 	return levels

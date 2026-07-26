@@ -86,6 +86,13 @@ function StoreSellConfirm.new(ctx)
 		return owned - ((config and config.InitialCount) or 0)
 	end
 
+	local function pluralize(displayName)
+		if displayName:sub(-1) == "y" then
+			return displayName:sub(1, -2) .. "ies"
+		end
+		return displayName .. "s"
+	end
+
 	-- Push the live quantity + refund into the dialog. Returns false (and closes) when there is
 	-- nothing left to sell — e.g. the player sold the last one elsewhere while this was open.
 	local function render(upgradeId, config)
@@ -100,7 +107,7 @@ function StoreSellConfirm.new(ctx)
 			if quantity == 1 then
 				titleLabel.Text = "Sell " .. displayName .. "?"
 			else
-				titleLabel.Text = "Sell " .. quantity .. " " .. displayName .. "?"
+				titleLabel.Text = "Sell all " .. quantity .. " " .. pluralize(displayName) .. "?"
 			end
 		end
 		-- The "You'll get" wording lives in a static `AmountPrefix` label; `Amount` holds only the

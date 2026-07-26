@@ -85,6 +85,18 @@ local function setCharacterControlsEnabled(enabled)
 	end)
 end
 
+-- Respawning rebuilds this ScreenGui (ResetOnSpawn is true), so this controller restarts with no
+-- memory of having been in Build View. The PlayerModule's controls object does NOT restart -- it
+-- lives in PlayerScripts -- so it comes back still carrying the Disable() that entering Build View
+-- applied, and nothing is left that would ever call Enable() again. Resetting while in Build View
+-- therefore respawned the player permanently unable to move.
+--
+-- Assert the pairing at startup instead of trusting the exit path to have run: a fresh controller
+-- is by definition not in Build View, so controls belong on.
+if screenGui:GetAttribute(Attrs.BuildModeActive) ~= true then
+	setCharacterControlsEnabled(true)
+end
+
 -- Mobile = touch without a mouse. Touch laptops keep MouseEnabled, so they take the
 -- PC path (explicit toggle only, never nagged).
 local function isMobileDevice()

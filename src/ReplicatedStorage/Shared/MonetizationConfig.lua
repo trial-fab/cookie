@@ -3,7 +3,8 @@
 -- Items are grouped into ordered sections (Boosts / Packs / Passes) that the Robux tab
 -- renders as side-by-side sections in the horizontal store strip. Each item carries a
 -- numeric Price (Robux) used as an immediate fallback until the live MarketplaceService
--- price loads, and a Giftable flag for the (later) gifting phase.
+-- price loads. Permanent paid goo skins live under Passes for storefront simplicity even
+-- though their eventual durable delivery uses developer-product receipts.
 --
 -- Server-side receipt grants live in ServerScriptService/Services/MonetizationService.
 local StoreRobuxIconConfig = require(script.Parent:WaitForChild("StoreRobuxIconConfig"))
@@ -21,90 +22,75 @@ MonetizationConfig.Sections = {
 MonetizationConfig.Items = {
 	-- ===== Boosts =====
 	{
-		Id = "DoubleCookies",
-		Kind = "DeveloperProduct",
-		Category = "Boosts",
-		ProductId = nil,
-		DisplayName = "Double Cookies",
-		Description = "Double your own cookie output for 15 minutes.",
-		Price = nil,
-		PriceText = "Coming Soon",
-		Icon = "",
-		Giftable = false,
-		Enabled = false,
-		LayoutOrder = 10,
-	},
-	{
-		Id = "LuckyFrenzy",
-		Kind = "DeveloperProduct",
-		Category = "Boosts",
-		ProductId = nil,
-		DisplayName = "Lucky Frenzy",
-		Description = "Boosted golden cookie spawns for 10 minutes.",
-		Price = nil,
-		PriceText = "Coming Soon",
-		Icon = "",
-		Giftable = false,
-		Enabled = false,
-		LayoutOrder = 20,
-	},
-	{
 		Id = "ServerBoost",
 		Kind = "DeveloperProduct",
 		Category = "Boosts",
 		ProductId = 3607454004,
 		DisplayName = "Server Boost",
-		Description = "Multiply all cookie production for the entire server!",
+		Description = "Doubles all cookie earnings for everyone in this server for 5 minutes. Additional purchases add 5 minutes.",
 		Price = 50,
 		PriceText = "R$ 50",
 		Icon = "rbxassetid://110573372829446",
-		Giftable = false,
 		Enabled = true,
-		LayoutOrder = 30,
+		LayoutOrder = 10,
 	},
 
 	-- ===== Packs =====
 	{
-		Id = "StarterCookiePack",
+		Id = "StarterPack",
 		Kind = "DeveloperProduct",
 		Category = "Packs",
 		ProductId = nil,
 		DisplayName = StoreRobuxIconConfig.StarterPackDisplayName,
-		Description = "A launch boost for the early bakery climb.",
-		Price = nil,
-		PriceText = "Coming Soon",
+		Description = "One-time early cookies and an exclusive goo skin.",
+		Price = 199,
+		PriceText = "R$ 199",
 		Icon = StoreRobuxIconConfig.StarterPackImage,
-		Giftable = true,
 		Enabled = false,
+		StoreVisible = false,
 		LayoutOrder = 10,
 	},
 	{
-		Id = "CookieVault",
+		Id = "GemPouch",
 		Kind = "DeveloperProduct",
 		Category = "Packs",
 		ProductId = nil,
-		DisplayName = "Cookie Vault",
-		Description = "A larger cookie pack for later upgrades.",
-		Price = nil,
-		PriceText = "Coming Soon",
+		DisplayName = "Gem Pouch",
+		Description = "Adds 50 gems to your balance.",
+		Price = 80,
+		PriceText = "R$ 80",
 		Icon = "",
-		Giftable = true,
 		Enabled = false,
+		StoreVisible = false,
 		LayoutOrder = 20,
 	},
 	{
-		Id = "CookieGalaxy",
+		Id = "GemChest",
 		Kind = "DeveloperProduct",
 		Category = "Packs",
 		ProductId = nil,
-		DisplayName = "Cookie Galaxy",
-		Description = "A massive cookie stockpile to skip ahead.",
-		Price = nil,
-		PriceText = "Coming Soon",
+		DisplayName = "Gem Chest",
+		Description = "Adds 180 gems to your balance.",
+		Price = 250,
+		PriceText = "R$ 250",
 		Icon = "",
-		Giftable = true,
 		Enabled = false,
+		StoreVisible = false,
 		LayoutOrder = 30,
+	},
+	{
+		Id = "GemVault",
+		Kind = "DeveloperProduct",
+		Category = "Packs",
+		ProductId = nil,
+		DisplayName = "Gem Vault",
+		Description = "Adds 650 gems to your balance.",
+		Price = 800,
+		PriceText = "R$ 800",
+		Icon = "",
+		Enabled = false,
+		StoreVisible = false,
+		LayoutOrder = 40,
 	},
 
 	-- ===== Passes =====
@@ -114,58 +100,41 @@ MonetizationConfig.Items = {
 		Category = "Passes",
 		ProductId = nil,
 		DisplayName = "VIP",
-		Description = "Permanent +25% cookies and a VIP tag.",
-		Price = nil,
-		PriceText = "Coming Soon",
+		Description = "Permanent VIP tag, cosmetic flair, and a longer offline earnings cap.",
+		Price = 499,
+		PriceText = "R$ 499",
 		Icon = StoreRobuxIconConfig.VipOutlineImage,
-		Giftable = true,
 		Enabled = false,
+		StoreVisible = false,
 		LayoutOrder = 10,
 	},
 	{
-		Id = "AutoClickerPass",
-		Kind = "GamePass",
+		Id = "NovaGooSkin",
+		Kind = "DeveloperProduct",
 		Category = "Passes",
 		ProductId = nil,
-		DisplayName = "Auto-Clicker",
-		Description = "Clicks for you automatically, forever.",
-		Price = nil,
-		PriceText = "Coming Soon",
+		DisplayName = "Nova Goo",
+		Description = "Unlocks Nova Goo with a permanent 2x production bonus. Goo bonuses do not stack. Only your strongest applies.",
+		Price = 400,
+		PriceText = "R$ 400",
 		Icon = "",
-		Giftable = true,
 		Enabled = false,
+		StoreVisible = false,
 		LayoutOrder = 20,
 	},
 	{
-		Id = "DoubleForever",
-		Kind = "GamePass",
+		Id = "QuasarGooSkin",
+		Kind = "DeveloperProduct",
 		Category = "Passes",
 		ProductId = nil,
-		DisplayName = "2x Cookies Forever",
-		Description = "Permanently double all your cookie production.",
-		Price = nil,
-		PriceText = "Coming Soon",
+		DisplayName = "Quasar Goo",
+		Description = "Unlocks Quasar Goo with a permanent 2.25x production bonus. Goo bonuses do not stack. Only your strongest applies.",
+		Price = 800,
+		PriceText = "R$ 800",
 		Icon = "",
-		Giftable = true,
-		Enabled = false,
-		LayoutOrder = 30,
-	},
-	{
-		-- Dormant until a real game-pass ID, price, and store presentation are approved.
-		-- Once configured, MonetizationService grants InstantWheelSpinEnabled on join/purchase.
-		Id = "InstantWheelSpinPass",
-		Kind = "GamePass",
-		Category = "Passes",
-		ProductId = nil,
-		DisplayName = "Instant Wheel Spins",
-		Description = "Skip the wheel reel animation after a result is rolled.",
-		Price = nil,
-		PriceText = "Coming Soon",
-		Icon = "",
-		Giftable = true,
 		Enabled = false,
 		StoreVisible = false,
-		LayoutOrder = 40,
+		LayoutOrder = 30,
 	},
 }
 
@@ -179,10 +148,13 @@ local function sortByLayoutOrder(left, right)
 	return leftOrder < rightOrder
 end
 
-function MonetizationConfig.GetVisibleItems()
+function MonetizationConfig.GetVisibleItems(includeUnshipped)
 	local items = {}
 	for _, item in ipairs(MonetizationConfig.Items) do
-		if item.StoreVisible ~= false then
+		-- Studio may preview the complete greenlit catalog for card-art authoring. Published
+		-- servers fail closed so an unfinished product never becomes a player-facing "Soon" card.
+		local isLive = item.StoreVisible ~= false and item.Enabled == true and item.ProductId ~= nil
+		if includeUnshipped == true or isLive then
 			table.insert(items, item)
 		end
 	end
@@ -194,9 +166,9 @@ end
 
 -- Returns ordered sections, each as { Id, Title, Order, Items = { ... } }, populated with
 -- the visible items whose Category matches. Sections with no visible items are omitted.
-function MonetizationConfig.GetSections()
+function MonetizationConfig.GetSections(includeUnshipped)
 	local itemsBySection = {}
-	for _, item in ipairs(MonetizationConfig.GetVisibleItems()) do
+	for _, item in ipairs(MonetizationConfig.GetVisibleItems(includeUnshipped)) do
 		local category = item.Category or "Boosts"
 		local bucket = itemsBySection[category]
 		if not bucket then

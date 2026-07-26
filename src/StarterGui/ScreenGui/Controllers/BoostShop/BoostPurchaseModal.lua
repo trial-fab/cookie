@@ -12,14 +12,15 @@
 --   Description    (TextLabel)  -> flavor line
 --   DurationValue  (TextLabel)  -> "5:00"        (+ optional DurationBar.Fill)
 --   StrengthValue  (TextLabel)  -> "+50%"        (+ optional StrengthBar.Fill)
---   OwnedValue     (TextLabel)  -> "0 / 1"
+--   SizeValue      (TextLabel)  -> "9 studs"
+--   OwnedValue     (TextLabel)  -> "0 / 3"
 --   Price          (TextLabel)  -> "40"          (GemIcon beside it is static art)
 --   Message        (TextLabel)  -> optional; blocked-state line ("Not enough gems")
 --   ConfirmButton  (GuiButton)  -> Buy
 --   CancelButton   (GuiButton)  -> Cancel
 --
 -- The three §7 states are driven from live data: the player's replicated gem balance and the
--- item's owned-charge attribute. When Buy is blocked (too few gems, or the 1-per-type stack is
+-- item's owned-charge attribute. When Buy is blocked (too few gems, or the 3-per-type stack is
 -- full) the button goes inert and dims from its authored color; nothing else is restyled.
 
 local Players = game:GetService("Players")
@@ -75,10 +76,7 @@ local function setFill(fill, fraction)
 	end
 end
 
-local function formatDuration(seconds)
-	local minutes = math.floor(seconds / 60)
-	return ("%d:%02d"):format(minutes, seconds - minutes * 60)
-end
+local formatDuration = BoostShopConfig.FormatDuration
 
 -- options: { screenGui, onConfirm(item) }
 function BoostPurchaseModal.new(options)
@@ -102,6 +100,7 @@ function BoostPurchaseModal.new(options)
 	local descriptionLabel = findText(root, "Description")
 	local durationLabel = findText(root, "DurationValue")
 	local strengthLabel = findText(root, "StrengthValue")
+	local sizeLabel = findText(root, "SizeValue")
 	local ownedLabel = findText(root, "OwnedValue")
 	local priceLabel = findText(root, "Price")
 	local messageLabel = findText(root, "Message")
@@ -150,13 +149,19 @@ function BoostPurchaseModal.new(options)
 			return
 		end
 
-		setText(promptLabel, ('Buy "%s"?'):format(item.DisplayName))
+		-- Read through the tuning layer, not the config defaults: the window must advertise the
+		-- duration and strength the field will actually have.
+		local durationSeconds = item.DurationSeconds
+		local strengthPercent = item.StrengthPercent
+
+		setText(promptLabel, ("Buy %s?"):format(item.DisplayName))
 		setText(itemNameLabel, item.DisplayName)
 		setText(descriptionLabel, item.Description)
-		setText(durationLabel, formatDuration(item.DurationSeconds))
-		setText(strengthLabel, ("+%d%%"):format(item.StrengthPercent))
-		setFill(durationFill, item.DurationSeconds / BoostShopConfig.BarReference.DurationSeconds)
-		setFill(strengthFill, item.StrengthPercent / BoostShopConfig.BarReference.StrengthPercent)
+		setText(durationLabel, formatDuration(durationSeconds))
+		setText(strengthLabel, ("+%d%%"):format(strengthPercent))
+		setText(sizeLabel, ("%d studs"):format(item.Radius))
+		setFill(durationFill, durationSeconds / BoostShopConfig.BarReference.DurationSeconds)
+		setFill(strengthFill, strengthPercent / BoostShopConfig.BarReference.StrengthPercent)
 
 		local owned = ownedCount(item)
 		setText(ownedLabel, ("%d / %d"):format(owned, item.StackCap))
@@ -166,9 +171,9 @@ function BoostPurchaseModal.new(options)
 		local affordable = gemBalance() >= item.PriceGems
 		-- Stack-full outranks the price: a full inventory blocks the buy whatever the balance is.
 		if full then
-			setText(messageLabel, ("Inventory full (%d / %d)"):format(owned, item.StackCap))
+			setText(messageLabel, ("Inventory full (%d/%d)."):format(owned, item.StackCap))
 		elseif not affordable then
-			setText(messageLabel, "Not enough gems")
+			setText(messageLabel, "Not enough gems.")
 		else
 			setText(messageLabel, "")
 		end

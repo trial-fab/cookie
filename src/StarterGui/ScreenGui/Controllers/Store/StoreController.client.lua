@@ -792,6 +792,7 @@ local function updateRow(upgradeId)
 	if not row or not config then
 		return
 	end
+	ctx.storeDescription.refresh(row, upgradeId)
 
 	-- Leveled upgrades: one row that levels in place (current level + next cost/effect).
 	if config.Levels then
@@ -1411,7 +1412,7 @@ if sellButton and (sellButton:IsA("TextButton") or sellButton:IsA("ImageButton")
 		-- cleared) immediately, not just on the next category switch.
 		refreshCategory()
 		if sellMode and currentCategory == "Building" then
-			showStatus("Click a card to sell all, or a placed building to sell one.")
+			showStatus("Select a building card to sell all of that type, or select a placed building to sell one.")
 		end
 	end)
 end

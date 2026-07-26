@@ -10,13 +10,12 @@ local Attrs = require(Shared:WaitForChild("Attrs"))
 local DevTuning = require(Shared:WaitForChild("DevTuning"):WaitForChild("DevTuning"))
 local FloorConfig = require(Shared:WaitForChild("FloorConfig"))
 local FloorGeometry = require(Shared:WaitForChild("FloorGeometry"))
+local PlacementControls = require(Shared:WaitForChild("PlacementControls"))
 
 local StoreFloorPlacement = {}
 
 local ACTIVE_TRANSPARENCY_ID = "FloorGrids.ActiveTransparency"
 local INACTIVE_TRANSPARENCY_ID = "FloorGrids.InactiveTransparency"
-local PLANE_EPSILON = 1e-6
-local BOUNDS_EPSILON = 1e-4
 local GRID_HEIGHT_OFFSET = 0.04
 local GRID_LINE_THICKNESS = 0.08
 
@@ -234,50 +233,15 @@ function StoreFloorPlacement.new(ctx)
 		return changed
 	end
 
-	local function intersectSurface(ray, surface, requireBounds)
-		local direction = ray.Direction
-		if direction.Magnitude <= PLANE_EPSILON then
-			return nil
-		end
-		direction = direction.Unit
-		local normal = surface.cframe.UpVector
-		local denominator = direction:Dot(normal)
-		if math.abs(denominator) < PLANE_EPSILON then
-			return nil
-		end
-
-		local planePoint = surface.cframe:PointToWorldSpace(Vector3.new(0, surface.size.Y / 2, 0))
-		local distance = (planePoint - ray.Origin):Dot(normal) / denominator
-		if distance < 0 then
-			return nil
-		end
-
-		local hitPosition = ray.Origin + direction * distance
-		if requireBounds then
-			local localPosition = surface.cframe:PointToObjectSpace(hitPosition)
-			if
-				math.abs(localPosition.X) > surface.size.X / 2 + BOUNDS_EPSILON
-				or math.abs(localPosition.Z) > surface.size.Z / 2 + BOUNDS_EPSILON
-			then
-				return nil
-			end
-		end
-		return hitPosition, distance
-	end
-
+	-- Ray/plane math lives in FloorGeometry so placement, boost fields, and the server's own drop
+	-- resolution cannot drift apart; this only supplies the surfaces to test.
 	local function findSurfaceAlongRay(ray)
-		local bestFloorId = nil
-		local bestHitPosition = nil
-		local bestDistance = math.huge
-		for floorId, surface in pairs(surfacesByFloorId) do
-			local hitPosition, distance = intersectSurface(ray, surface, true)
-			if hitPosition and distance < bestDistance then
-				bestFloorId = floorId
-				bestHitPosition = hitPosition
-				bestDistance = distance
-			end
+		local surfaces = {}
+		for _, surface in pairs(surfacesByFloorId) do
+			table.insert(surfaces, surface)
 		end
-		return bestFloorId, bestHitPosition
+		local surface, hitPosition = FloorGeometry.FindSurfaceAlongRay(ray, surfaces)
+		return surface and surface.floorId or nil, hitPosition
 	end
 
 	local function getPointerRay(screenPosition)
@@ -287,6 +251,12 @@ function StoreFloorPlacement.new(ctx)
 		end
 		if screenPosition then
 			return camera:ScreenPointToRay(screenPosition.X, screenPosition.Y)
+		end
+		-- A gamepad has no cursor to follow, so it aims down the middle of the screen: the stick
+		-- moves the camera and the ghost tracks the centre, the console convention players expect.
+		if PlacementControls.isGamepad() then
+			local viewport = camera.ViewportSize
+			return camera:ViewportPointToRay(viewport.X / 2, viewport.Y / 2)
 		end
 		return mouse.UnitRay
 	end
@@ -414,7 +384,7 @@ function StoreFloorPlacement.new(ctx)
 		end
 
 		local activeSurface = surfacesByFloorId[getActiveFloorId()]
-		local fallbackHit = activeSurface and intersectSurface(ray, activeSurface, false) or nil
+		local fallbackHit = activeSurface and FloorGeometry.IntersectRay(ray, activeSurface, false) or nil
 		return asBase(activeSurface), fallbackHit, false
 	end
 

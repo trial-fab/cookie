@@ -61,7 +61,7 @@ PlayerMetricConfig.IncomeAttributeBySource = {
 PlayerMetricConfig.IncomeProfiles = {
 	{ Attribute = Attrs.ManualCookiesEarned, Label = "Manual clicks" },
 	{ Attribute = Attrs.BuildingCookiesEarned, Label = "Buildings" },
-	{ Attribute = Attrs.AutoclickCookiesEarned, Label = "Autoclicker" },
+	{ Attribute = Attrs.AutoclickCookiesEarned, Label = "Auto-Clicker" },
 	{ Attribute = Attrs.OfflineCookiesEarned, Label = "Offline baking" },
 	{ Attribute = Attrs.RewardCookiesEarned, Label = "Rewards" },
 	{ Attribute = Attrs.StolenCookiesEarned, Label = "Cookie theft" },

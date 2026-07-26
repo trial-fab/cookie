@@ -43,6 +43,25 @@ local PICKAXE_TOOLS = {
 	["PA High Tech"] = true,
 }
 
+local function pluralizeDisplayName(displayName, count)
+	if count == 1 then
+		return displayName
+	end
+	if displayName:sub(-1) == "y" then
+		return displayName:sub(1, -2) .. "ies"
+	end
+	return displayName .. "s"
+end
+
+local function unlockRequirementMessage(displayName, requiredCount, ownedCount)
+	return ("Unlock requirement: %d %s (%d/%d)."):format(
+		requiredCount,
+		pluralizeDisplayName(displayName, requiredCount),
+		ownedCount,
+		requiredCount
+	)
+end
+
 local function getUpgradeCountProjection(player, upgradeId)
 	local upgradeCountData = player:FindFirstChild("UpgradeCountData")
 	if not upgradeCountData then
@@ -1126,7 +1145,7 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFl
 			if owned < requiredCount then
 				local targetConfig = UpgradeConfig[targetId]
 				local targetName = targetConfig and targetConfig.DisplayName or targetId
-				return false, "Requires " .. requiredCount .. " " .. targetName .. "."
+				return false, unlockRequirementMessage(targetName, requiredCount, owned)
 			end
 		end
 	end
@@ -1142,7 +1161,7 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFl
 			if owned < requiredCount then
 				local requiredConfig = UpgradeConfig[requiredId]
 				local requiredName = requiredConfig and requiredConfig.DisplayName or requiredId
-				return false, "Requires " .. requiredCount .. " " .. requiredName .. "."
+				return false, unlockRequirementMessage(requiredName, requiredCount, owned)
 			end
 		end
 	end
@@ -1294,7 +1313,12 @@ function UpgradeService.Sell(player, upgradeId)
 	end
 	CookieService.AddCookies(player, refund, PlayerMetricsService.CookieSources.Refund)
 
-	return true, "Sold " .. (config.DisplayName or upgradeId) .. " for " .. refund .. "."
+	return true,
+		"Sold "
+			.. (config.DisplayName or upgradeId)
+			.. " for "
+			.. NumberFormat.exact(refund)
+			.. " cookies."
 end
 
 function UpgradeService.SellBuilding(player, building)
@@ -1334,7 +1358,13 @@ function UpgradeService.SellBuilding(player, building)
 	building:Destroy()
 	CookieService.AddCookies(player, refund, PlayerMetricsService.CookieSources.Refund)
 
-	return true, "Sold " .. (config.DisplayName or upgradeId) .. " for " .. refund .. ".", upgradeId
+	return true,
+		"Sold "
+			.. (config.DisplayName or upgradeId)
+			.. " for "
+			.. NumberFormat.exact(refund)
+			.. " cookies.",
+		upgradeId
 end
 
 function UpgradeService.SellAllBuildings(player, upgradeId)
@@ -1373,7 +1403,13 @@ function UpgradeService.SellAllBuildings(player, upgradeId)
 	removeAllBuildings(player, upgradeId)
 	CookieService.AddCookies(player, refund, PlayerMetricsService.CookieSources.Refund)
 
-	return true, "Sold " .. soldCount .. " " .. (config.DisplayName or upgradeId) .. " for " .. refund .. ".", upgradeId
+	return true,
+		"Sold "
+			.. soldCount
+			.. " buildings for "
+			.. NumberFormat.exact(refund)
+			.. " cookies.",
+		upgradeId
 end
 
 function UpgradeService.SetupPlayer(player, buildingPlacements)

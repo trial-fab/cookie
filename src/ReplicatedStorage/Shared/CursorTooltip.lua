@@ -328,6 +328,16 @@ local function newPresenter(screenGui)
 					setNamedText(selected, name, value)
 				end
 			end
+			-- Icons are toggled, never authored: a producer says whether one applies, and the
+			-- Studio instance owns which artwork and colour that is.
+			if type(content.icons) == "table" then
+				for name, shown in pairs(content.icons) do
+					local icon = selected:FindFirstChild(name, true)
+					if icon and icon:IsA("GuiObject") then
+						icon.Visible = shown == true
+					end
+				end
+			end
 		end
 
 		root.Visible = true

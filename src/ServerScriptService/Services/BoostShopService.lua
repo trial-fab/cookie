@@ -1,7 +1,7 @@
 -- BoostShopService: authoritative gem purchases at the central Hub boost stall.
 --
 -- One purchase spends the item's gem price and grants one consumable field charge, capped at
--- BoostShopConfig's per-type stack cap (1 at launch). Charges live in Persistent data, so they
+-- BoostShopConfig's per-type stack cap (3 at launch). Charges live in Persistent data, so they
 -- survive run resets and rejoins alongside the gem balance that bought them.
 --
 -- Data-first, like GemService: `PlayerDataService` Data is canonical and the per-item
@@ -19,6 +19,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
 local BoostShopConfig = require(ReplicatedStorage.Shared.BoostShopConfig)
 local Net = require(ReplicatedStorage.Shared.Net)
+local BoostAnalyticsService = require(script.Parent.BoostAnalyticsService)
 local GemService = require(script.Parent.GemService)
 local PlayerDataService = require(script.Parent.PlayerDataService)
 
@@ -114,7 +115,7 @@ function BoostShopService.Purchase(player, itemId)
 
 	local owned = readCharge(persistent, item)
 	if owned >= item.StackCap then
-		return false, ("Inventory full (%d / %d)"):format(owned, item.StackCap), owned
+		return false, ("Inventory full (%d/%d)."):format(owned, item.StackCap), owned
 	end
 
 	-- TrySpend is the only balance authority: it re-reads canonical Data, so a stale attribute
@@ -124,7 +125,9 @@ function BoostShopService.Purchase(player, itemId)
 	end
 
 	local remaining = writeCharge(player, persistent, item, owned + 1)
-	return true, ("%s purchased."):format(item.DisplayName), remaining
+	-- After the spend, so GemsRemaining answers "was 40 a choice or their whole balance?".
+	BoostAnalyticsService.RecordPurchased(player, item.Id, item.PriceGems, GemService.GetGems(player))
+	return true, ("%s added to your inventory."):format(item.DisplayName), remaining
 end
 
 function BoostShopService.Init()

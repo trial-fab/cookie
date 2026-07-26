@@ -20,8 +20,8 @@ local UpgradeConfig = {
 	-- §4b: each purchase doubles total cookies per click (1 -> 2 -> 4 -> 8 ...).
 	-- Cost ladder 500, 5k, 50k, 500k ... via BaseCost 500 x CostMultiplier 10 ^ count.
 	["Clicking Power"] = {
-		DisplayName = "Clicking Power",
-		Description = "Doubles your cookies per click.",
+		DisplayName = "Click Power",
+		Description = "Doubles the cookies earned from each manual click.",
 		IconFill = "rbxassetid://84671355431653",
 		IconOutline = "rbxassetid://125420180944081",
 		InitialCount = 0,
@@ -131,7 +131,7 @@ local UpgradeConfig = {
 	-- §3 producer ladder: CostMultiplier 1.15, UpdateTime 10, CookiesGained = CpS x 10.
 	["Noob Clicker"] = {
 		DisplayName = "Noob Clicker",
-		Description = "This noob will cook cookies for you.",
+		Description = "A helpful noob who clicks cookies for you.",
 		InitialCount = 0,
 		BaseCost = 15,
 		CostMultiplier = 1.15,
@@ -143,8 +143,8 @@ local UpgradeConfig = {
 	},
 
 	Granny = {
-		DisplayName = "Granny",
-		Description = "Granny makes cookies over time.",
+		DisplayName = "Grandma",
+		Description = "Grandma bakes a steady supply of homemade cookies.",
 		InitialCount = 0,
 		BaseCost = 100,
 		CostMultiplier = 1.15,
@@ -156,8 +156,8 @@ local UpgradeConfig = {
 	},
 
 	Farm = {
-		DisplayName = "Farm",
-		Description = "Farms cookies over time.",
+		DisplayName = "Cookie Farm",
+		Description = "Grows fresh cookies by the field.",
 		InitialCount = 0,
 		BaseCost = 800,
 		CostMultiplier = 1.15,
@@ -170,7 +170,7 @@ local UpgradeConfig = {
 
 	["Cookie Mine"] = {
 		DisplayName = "Cookie Mine",
-		Description = "Mines cookies from deep underground.",
+		Description = "Digs deep for rich veins of cookie dough.",
 		InitialCount = 0,
 		BaseCost = 9000,
 		CostMultiplier = 1.15,
@@ -183,7 +183,7 @@ local UpgradeConfig = {
 
 	["Cookie Factory"] = {
 		DisplayName = "Cookie Factory",
-		Description = "Factories produce more cookies over time.",
+		Description = "Runs an assembly line that mass-produces cookies.",
 		InitialCount = 0,
 		BaseCost = 95000,
 		CostMultiplier = 1.15,
@@ -196,7 +196,7 @@ local UpgradeConfig = {
 
 	["Cookie Bank"] = {
 		DisplayName = "Cookie Bank",
-		Description = "Stores cookies and makes cookie investments.",
+		Description = "Turns cookie investments into steady returns.",
 		InitialCount = 0,
 		BaseCost = 1400000,
 		CostMultiplier = 1.15,
@@ -208,8 +208,8 @@ local UpgradeConfig = {
 	},
 
 	["Cookie Distributer"] = {
-		DisplayName = "Cookie Distributer",
-		Description = "Ships cookies around the world.",
+		DisplayName = "Cookie Distributor",
+		Description = "Ships cookies around the world at industrial scale.",
 		InitialCount = 0,
 		BaseCost = 20000000,
 		CostMultiplier = 1.15,
@@ -221,8 +221,8 @@ local UpgradeConfig = {
 	},
 
 	["Research Facility"] = {
-		DisplayName = "Research Facility",
-		Description = "Research cookie cloning and creation.",
+		DisplayName = "Cookie Lab",
+		Description = "Clones cookies using highly experimental science.",
 		InitialCount = 0,
 		BaseCost = 500000000,
 		CostMultiplier = 1.15,
@@ -237,7 +237,7 @@ local UpgradeConfig = {
 	-- purchase is gated behind owning >= 1 Research Facility.
 	Portal = {
 		DisplayName = "Portal",
-		Description = "Transports cookies from unknown regions of space.",
+		Description = "Pulls cookies through unstable rifts from distant worlds.",
 		InitialCount = 0,
 		BaseCost = 8000000000,
 		CostMultiplier = 1.15,
@@ -252,7 +252,7 @@ local UpgradeConfig = {
 
 	["Time Machine"] = {
 		DisplayName = "Time Machine",
-		Description = "Brings cookies from the past.",
+		Description = "Collects cookies from across history and delivers them now.",
 		InitialCount = 0,
 		BaseCost = 120000000000,
 		CostMultiplier = 1.15,
@@ -354,7 +354,7 @@ local UpgradeConfig = {
 	-- Lifetime cap x4 per building. TargetBuilding must match the producer's config key.
 	["Noob Clicker Upgrades"] = {
 		DisplayName = "Steady Hands",
-		Description = "Doubles Noob Clicker output per level.",
+		Description = "Doubles Noob Clicker production each level.",
 		InitialCount = 0,
 		TemplateKind = "BuildingUpgrade",
 		TargetBuilding = "Noob Clicker",
@@ -365,8 +365,8 @@ local UpgradeConfig = {
 	},
 
 	["Granny Upgrades"] = {
-		DisplayName = "Granny's Secret Recipe",
-		Description = "Doubles Granny output per level.",
+		DisplayName = "Grandma's Secret Recipe",
+		Description = "Doubles Grandma's production each level.",
 		InitialCount = 0,
 		TemplateKind = "BuildingUpgrade",
 		TargetBuilding = "Granny",
@@ -378,7 +378,7 @@ local UpgradeConfig = {
 
 	["Farm Upgrades"] = {
 		DisplayName = "Fertile Soil",
-		Description = "Doubles Farm output per level.",
+		Description = "Doubles Cookie Farm production each level.",
 		InitialCount = 0,
 		TemplateKind = "BuildingUpgrade",
 		TargetBuilding = "Farm",
@@ -389,8 +389,8 @@ local UpgradeConfig = {
 	},
 
 	["Cookie Mine Upgrades"] = {
-		DisplayName = "Diamond Pickaxes",
-		Description = "Doubles Cookie Mine output per level.",
+		DisplayName = "Dough Drills",
+		Description = "Doubles Cookie Mine production each level.",
 		InitialCount = 0,
 		TemplateKind = "BuildingUpgrade",
 		TargetBuilding = "Cookie Mine",
@@ -402,7 +402,7 @@ local UpgradeConfig = {
 
 	["Cookie Factory Upgrades"] = {
 		DisplayName = "Assembly Line",
-		Description = "Doubles Cookie Factory output per level.",
+		Description = "Doubles Cookie Factory production each level.",
 		InitialCount = 0,
 		TemplateKind = "BuildingUpgrade",
 		TargetBuilding = "Cookie Factory",
@@ -414,7 +414,7 @@ local UpgradeConfig = {
 
 	["Cookie Bank Upgrades"] = {
 		DisplayName = "Compound Interest",
-		Description = "Doubles Cookie Bank output per level.",
+		Description = "Doubles Cookie Bank production each level.",
 		InitialCount = 0,
 		TemplateKind = "BuildingUpgrade",
 		TargetBuilding = "Cookie Bank",
@@ -426,7 +426,7 @@ local UpgradeConfig = {
 
 	["Cookie Distributer Upgrades"] = {
 		DisplayName = "Express Shipping",
-		Description = "Doubles Cookie Distributer output per level.",
+		Description = "Doubles Cookie Distributor production each level.",
 		InitialCount = 0,
 		TemplateKind = "BuildingUpgrade",
 		TargetBuilding = "Cookie Distributer",
@@ -438,7 +438,7 @@ local UpgradeConfig = {
 
 	["Research Facility Upgrades"] = {
 		DisplayName = "Peer Review",
-		Description = "Doubles Research Facility output per level.",
+		Description = "Doubles Cookie Lab production each level.",
 		InitialCount = 0,
 		TemplateKind = "BuildingUpgrade",
 		TargetBuilding = "Research Facility",
@@ -450,7 +450,7 @@ local UpgradeConfig = {
 
 	["Portal Upgrades"] = {
 		DisplayName = "Stabilized Rifts",
-		Description = "Doubles Portal output per level.",
+		Description = "Doubles Portal production each level.",
 		InitialCount = 0,
 		TemplateKind = "BuildingUpgrade",
 		TargetBuilding = "Portal",
@@ -462,7 +462,7 @@ local UpgradeConfig = {
 
 	["Time Machine Upgrades"] = {
 		DisplayName = "Temporal Tuning",
-		Description = "Doubles Time Machine output per level.",
+		Description = "Doubles Time Machine production each level.",
 		InitialCount = 0,
 		TemplateKind = "BuildingUpgrade",
 		TargetBuilding = "Time Machine",
@@ -478,7 +478,7 @@ local UpgradeConfig = {
 	-- their future runtime services rather than mutating client state now.
 	["Multi-Place"] = {
 		DisplayName = "Multi-Place",
-		Description = "Place multiple buildings without reopening the store.",
+		Description = "Place multiple buildings without reopening the Mixer.",
 		-- Duplicating-block icon (StoreMultiPlaceIconAnim): three block images
 		-- authored as the expanded composition — On shows all three at their
 		-- authored spots. IconDetail1 is the middle block; IconFill/IconOutline
@@ -506,8 +506,8 @@ local UpgradeConfig = {
 	-- are NOT counted by OfflineEarningsService (in-session/idle engine only).
 	--
 	[AutoclickerConfig.UnlockUpgradeId] = {
-		DisplayName = "Autoclicker",
-		Description = "Your goo starts clicking for you and unlocks Autoclick Power and Autoclick Speed.",
+		DisplayName = "Auto-Clicker",
+		Description = "Makes your goo click automatically.",
 		IconFill = AutoclickerConfig.SlimeIcon,
 		IconOutline = AutoclickerConfig.CursorIcon,
 		IconTint = false,
@@ -531,8 +531,8 @@ local UpgradeConfig = {
 	-- EffectText shows CpS at base speed (2/s); it rises further with speed levels.
 	-- Numbers governed by tools/economy_sim.py — re-run after any change.
 	[AutoclickerConfig.PowerUpgradeId] = {
-		DisplayName = "Autoclick Power",
-		Description = "An auto-clicker taps your cookie for you. Each level raises cookies per auto-click. Buy Autoclick Speed to tap faster.",
+		DisplayName = "Auto-Click Power",
+		Description = "Increases the cookies earned from each automatic click.",
 		IconFill = "rbxassetid://84671355431653",
 		IconOutline = "rbxassetid://125420180944081",
 		IconDetail = "rbxassetid://119532598792293",
@@ -562,8 +562,8 @@ local UpgradeConfig = {
 	-- at 5/s (×2.5) so power × speed can't run away. Drives autoclick income AND the
 	-- orbiting-mice visual cadence (AutoclickVisualController). Read by AutoclickService.
 	["Autoclick Speed"] = {
-		DisplayName = "Autoclick Speed",
-		Description = "Your auto-clicker taps faster, multiplying all autoclick income.",
+		DisplayName = "Auto-Click Speed",
+		Description = "Increases the number of automatic clicks each second.",
 		IconFill = "rbxassetid://84671355431653",
 		IconOutline = "rbxassetid://125420180944081",
 		IconDetail = "rbxassetid://110236744350984",
@@ -587,7 +587,7 @@ local UpgradeConfig = {
 
 	["Offline Earnings"] = {
 		DisplayName = "Offline Earnings",
-		Description = "Raises your offline earnings cap.",
+		Description = "Increases how long your buildings keep earning while you're away.",
 		Icon = "rbxassetid://130190781987426",
 		IconTint = false,
 		-- Temporary while the baked icon colour matches the active upgrade orange.
@@ -607,6 +607,7 @@ local UpgradeConfig = {
 	["Base Expansion"] = {
 		DisplayName = "Base Expansion",
 		Description = "Unlocks the next production floor above your base.",
+		CompletedDescription = "All production floors unlocked.",
 		Icon = "rbxassetid://95705168103787",
 		IconTint = false,
 		-- Temporary while the baked icon colour matches the active upgrade orange.

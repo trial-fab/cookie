@@ -100,6 +100,23 @@ function StoreDescription.new(ctx)
 	local records = setmetatable({}, { __mode = "k" })
 	local setExpanded
 	local activeRecord
+	local function resolveDescription(upgradeId)
+		local config = ctx.UpgradeConfig[upgradeId]
+		if not config then
+			return ""
+		end
+		if config.Levels then
+			local levelsOwned = ctx.getOwnedCount(upgradeId)
+			local nextLevel = config.Levels[levelsOwned + 1]
+			if nextLevel and type(nextLevel.Description) == "string" then
+				return nextLevel.Description
+			end
+			if not nextLevel and type(config.CompletedDescription) == "string" then
+				return config.CompletedDescription
+			end
+		end
+		return config.Description or ""
+	end
 	local function hideInfoStroke(record, hidden)
 		if record.infoStroke then
 			record.infoStroke.Transparency = hidden and 1 or record.infoStrokeTransparency
@@ -198,7 +215,7 @@ function StoreDescription.new(ctx)
 			touchTarget.Visible = UserInputService.TouchEnabled
 		end
 
-		label.Text = (ctx.UpgradeConfig[upgradeId] and ctx.UpgradeConfig[upgradeId].Description) or ""
+		label.Text = resolveDescription(upgradeId)
 		local record = {
 			info = info,
 			infoStroke = info:FindFirstChildWhichIsA("UIStroke", true),
@@ -298,6 +315,12 @@ function StoreDescription.new(ctx)
 
 	return {
 		setup = setup,
+		refresh = function(row, upgradeId)
+			local record = records[row]
+			if record then
+				record.label.Text = resolveDescription(upgradeId)
+			end
+		end,
 	}
 end
 

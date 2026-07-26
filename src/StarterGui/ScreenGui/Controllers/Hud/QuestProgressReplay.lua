@@ -54,7 +54,7 @@ function QuestProgressReplay.new(screenGui, presenter, onStarted, onStopped)
 		if not active then
 			return
 		end
-		render(5, "Place a Noob Clicker from the Mixer.", 0.8)
+		render(5, "Buy and place a Noob Clicker from the Mixer.", 0.8)
 		local token = generation
 		task.delay(1.25, function()
 			if active and generation == token then

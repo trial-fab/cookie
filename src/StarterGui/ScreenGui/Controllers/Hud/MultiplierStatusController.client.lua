@@ -39,7 +39,13 @@ local function getContextBreakdown()
 
 	local floorId = mode == "Placement" and screenGui:GetAttribute(Attrs.ActiveFloorId)
 		or screenGui:GetAttribute(Attrs.MultiplierContextFloorId)
-	return ProductionFormula.GetMultiplierBreakdown(player, buildingId, config, floorId)
+	-- Published by whoever established the context, because a boost field is spatial and cannot be
+	-- derived from (buildingId, floorId) here. Absent during Placement, where the ghost has not
+	-- landed yet and any coverage would be speculative.
+	local powerFieldMultiplier = tonumber(screenGui:GetAttribute(Attrs.MultiplierContextPowerField))
+	return ProductionFormula.GetMultiplierBreakdown(player, buildingId, config, floorId, {
+		PowerFieldMultiplier = powerFieldMultiplier,
+	})
 end
 
 local function refresh()
@@ -152,6 +158,7 @@ for _, attribute in ipairs({
 	Attrs.MultiplierContextMode,
 	Attrs.MultiplierContextBuildingId,
 	Attrs.MultiplierContextFloorId,
+	Attrs.MultiplierContextPowerField,
 	Attrs.ActiveFloorId,
 	Attrs.CompactModalActive,
 	Attrs.StoreOpen,

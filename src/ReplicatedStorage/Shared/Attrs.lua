@@ -58,6 +58,28 @@ return {
 	-- placement so HotbarPlacementMode clears its controls before StoreBottom returns.
 	PlacementInstantExit = "PlacementInstantExit",
 	PlacementRotationY = "PlacementRotationY",
+	-- Opt-in entrance style for the placement controls: when true they OPEN from the centre
+	-- (collapsed, then apart and up to size) instead of travelling from their hotbar poses. A
+	-- building placement starts from the store band, where the slots are already tucked away, so it
+	-- reads as opening for free; one started from the visible hotbar does not, and sets this.
+	PlacementControlsOpenEntrance = "PlacementControlsOpenEntrance",
+	-- This placement has nothing to rotate (a boost field's radius disc). The middle Rotate control
+	-- is dropped and the remaining Cancel/Confirm pair is laid out symmetrically about the centre
+	-- instead of leaving a hole where Rotate would have been.
+	PlacementControlsNoRotate = "PlacementControlsNoRotate",
+	-- True while a boost field (not a building) owns the placement session. PlacementActive is
+	-- still set, so the authored hotbar Cancel/Confirm faces appear as usual; this flag is what
+	-- keeps the building placement controls inert while the field ghost owns those taps.
+	BoostFieldPlacementActive = "BoostFieldPlacementActive",
+	-- os.clock() at which the carousel's current spin finishes, written on the Hotbar by
+	-- HotbarCarousel (0 when nothing is spinning). Anything that must act on a slot only once it
+	-- has actually reached the centre waits on this instead of restating the tween's duration.
+	HotbarSpinSettlesAt = "HotbarSpinSettlesAt",
+	-- Power-field multiplier for the building currently being inspected. A boost field is SPATIAL,
+	-- so it cannot be derived from (buildingId, floorId) the way every other contextual multiplier
+	-- can -- two of the same building on the same floor differ when only one stands in the field.
+	-- The tooltip knows the instance and publishes the number; the multiplier HUD reads it.
+	MultiplierContextPowerField = "MultiplierContextPowerField",
 	-- Stable vertical-floor identity. The server writes FloorId on every placed
 	-- building; placement clients own ActiveFloorId locally until floor-selection UI ships.
 	FloorId = "FloorId",
@@ -122,7 +144,7 @@ return {
 	SelectedTitleId = "SelectedTitleId",
 	GoldenCookies = "GoldenCookies",
 	Gems = "Gems",
-	-- Boost-shop field charges the player is holding (stack cap 1 per type). Server-owned
+	-- Boost-shop field charges the player is holding (stack cap 3 per type). Server-owned
 	-- inventory counts; the boost purchase window reads them for its Owned / stack-full state.
 	-- Unset until the purchase service ships, which the window reads as 0.
 	PowerFieldCharges = "PowerFieldCharges",

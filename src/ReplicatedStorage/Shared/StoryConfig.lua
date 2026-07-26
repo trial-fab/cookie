@@ -14,16 +14,16 @@ StoryConfig.FIRST_BUILDING_ID = "Noob Clicker"
 
 StoryConfig.Dialogue = {
 	{
-		Speaker = "Goo Alien",
-		Text = "...Bloop? You found me. I thought that cookie meteor was going to be my new home forever.",
+		Speaker = "Goob",
+		Text = "Bloop? You found me! I thought I'd be stuck in that cookie meteor forever.",
 	},
 	{
-		Speaker = "Goo Alien",
-		Text = "I come from a world where dough can become anything—even something alive.",
+		Speaker = "Goob",
+		Text = "On my world, dough can become anything. Even something alive!",
 	},
 	{
-		Speaker = "Goo Alien",
-		Text = "Take the Mixer. Feed it cookies, shape the cosmic dough, and we can build this place back up.",
+		Speaker = "Goob",
+		Text = "Take the Mixer. Feed it cookies, and it will shape the dough into helpers. Let's rebuild this place!",
 	},
 }
 

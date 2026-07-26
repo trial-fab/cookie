@@ -266,6 +266,24 @@ function ProductionFormula.GetMultiplierBreakdown(player, buildingId, config, fl
 		FloorId = floorId,
 	})
 
+	-- A dropped Power field boosts only the buildings its disc covers, so it arrives on the context
+	-- the caller built for THIS group rather than being read from anywhere global. Routing it
+	-- through the breakdown (instead of multiplying it in at the call site) is what keeps the HUD's
+	-- explanation and the production math the same number.
+	local powerFieldMultiplier = 1
+	if type(skinContext) == "table" and type(skinContext.PowerFieldMultiplier) == "number" then
+		powerFieldMultiplier = math.max(0, skinContext.PowerFieldMultiplier)
+	end
+	addSource(sources, {
+		Id = "BoostField:Power",
+		Kind = "BoostField",
+		DisplayName = "Power Field",
+		Multiplier = powerFieldMultiplier,
+		Contextual = true,
+		ServerWide = false,
+		Scope = "Only buildings standing inside a dropped Power Field.",
+	})
+
 	local eventBreakdown = ProductionFormula.GetEventMultiplierBreakdown()
 	for _, source in ipairs(eventBreakdown.Sources) do
 		table.insert(sources, source)
@@ -273,7 +291,11 @@ function ProductionFormula.GetMultiplierBreakdown(player, buildingId, config, fl
 
 	return {
 		Sources = sources,
-		Total = upgradeMultiplier * skinSource.Multiplier * eventBreakdown.Total * floorMultiplier,
+		Total = upgradeMultiplier
+			* skinSource.Multiplier
+			* eventBreakdown.Total
+			* floorMultiplier
+			* powerFieldMultiplier,
 	}
 end
 

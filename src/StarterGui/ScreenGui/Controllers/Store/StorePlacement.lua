@@ -13,6 +13,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(Shared:WaitForChild("Attrs"))
 local FloorConfig = require(Shared:WaitForChild("FloorConfig"))
+local PlacementControls = require(Shared:WaitForChild("PlacementControls"))
 
 local StorePlacement = {}
 
@@ -52,7 +53,7 @@ function StorePlacement.new(ctx)
 	local hoveredSellBuilding = nil
 
 	local function usesScreenPlacementControls()
-		return screenGui:GetAttribute(Attrs.PlacementControlsEnabled) == true
+		return PlacementControls.screenControlsActive(screenGui)
 	end
 
 	local function refreshConfirmState()
@@ -389,9 +390,9 @@ function StorePlacement.new(ctx)
 		-- character-nearest or Build View center-ray floor, then park until direct input.
 		updatePlacementPreview(nil, false, usesScreenPlacementControls())
 		if usesScreenPlacementControls() then
-			ctx.showStatus("Tap or drag to position " .. displayName .. " then use the bottom controls")
+			ctx.showStatus("Drag " .. displayName .. " into position, then tap Confirm.")
 		else
-			ctx.showStatus("Move the mouse and click to place " .. displayName)
+			ctx.showStatus("Move " .. displayName .. " into position, then click to place it.")
 		end
 	end
 
@@ -479,7 +480,9 @@ function StorePlacement.new(ctx)
 				stopPlacement(success)
 			end, getActiveFloorId())
 		elseif not placementIsValid then
-			ctx.showStatus("Can't place there: it overlaps the Center or another building.")
+			ctx.showStatus(
+				"Can't place there. Keep the building inside the floor and away from the Center and other buildings."
+			)
 		end
 	end
 

@@ -1,6 +1,7 @@
 local RunService = game:GetService("RunService")
 local ServerScriptService = game:GetService("ServerScriptService")
 
+local BoostFieldService = require(ServerScriptService.Services.BoostFieldService)
 local BoostShopService = require(ServerScriptService.Services.BoostShopService)
 local CookieService = require(ServerScriptService.Services.CookieService)
 local FloorService = require(ServerScriptService.Services.FloorService)
@@ -72,8 +73,10 @@ function ResetStatsService.ResetOnboardingForDevelopment(player)
 		or not StoryService.ResetForDevelopment(player)
 		or GemService.SetGems(player, 0) == nil
 		-- Charges bought with those test gems go with them, so a dev reset returns the player to
-		-- a clean pre-purchase state instead of leaving stock behind.
+		-- a clean pre-purchase state instead of leaving stock behind. Fields already dropped go
+		-- too, or the reset leaves a boost running that nothing in the profile paid for.
 		or not BoostShopService.ClearCharges(player)
+		or not BoostFieldService.ClearFields(player)
 	then
 		return false
 	end

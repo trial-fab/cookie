@@ -1,7 +1,7 @@
 -- StoreRobuxIconConfig: baked presentation values for Robux product-card art and gradients.
 
 local StoreRobuxIconConfig = {
-	StarterPackItemId = "StarterCookiePack",
+	StarterPackItemId = "StarterPack",
 	StarterPackDisplayName = "Starter Pack",
 	StarterPackImage = "rbxassetid://108654949347513",
 	StarterPackWidth = 70,

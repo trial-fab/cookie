@@ -184,23 +184,23 @@ end
 local function getObjective(state, data, stepIndex)
 	local ledger = state.ObjectiveLedger
 	if stepIndex == 1 then
-		return "Watch the Goo's meteor crash-land.", nil, nil
+		return "Watch the cookie meteor crash-land.", nil, nil
 	elseif stepIndex == 2 then
-		return "Clear the meteor rubble.", nil, nil
+		return "Clear the rubble around the cookie.", nil, nil
 	elseif stepIndex == 3 then
 		local count = math.clamp(tonumber(ledger.HealingManualClicks) or 0, 0, StoryConfig.HEALING_CLICKS)
-		return ("Click the cookie 5 times to heal Goob. (%d/%d)"):format(count, StoryConfig.HEALING_CLICKS),
+		return ("Click the cookie 5 times to heal the goo. (%d/%d)"):format(count, StoryConfig.HEALING_CLICKS),
 			count,
 			StoryConfig.HEALING_CLICKS
 	elseif stepIndex == 4 then
-		return "Finish talking with the goo.", nil, nil
+		return "Finish talking with Goob.", nil, nil
 	end
 
 	-- The completed card remains visible while the Gem reward flies. Keep showing the
 	-- objective the player just completed instead of recomputing affordability from the
 	-- post-purchase balance and the next Noob Clicker price.
 	if ledger.NoobClickerPlaced == true then
-		return "Place a Noob Clicker from the Mixer.", nil, nil
+		return "Buy and place a Noob Clicker from the Mixer.", nil, nil
 	end
 
 	local noobConfig = UpgradeConfig[StoryConfig.FIRST_BUILDING_ID]
@@ -209,11 +209,15 @@ local function getObjective(state, data, stepIndex)
 	local run = type(data) == "table" and data.Run
 	local cookies = math.max(0, math.floor(tonumber(type(run) == "table" and run.Cookies) or 0))
 	if cookies < cost then
-		return ("Save %d cookies for a Noob Clicker. (%d/%d)"):format(cost, math.min(cookies, cost), cost),
+		return ("Click or tap the cookie until you have %d cookies. (%d/%d)"):format(
+			cost,
+			math.min(cookies, cost),
+			cost
+		),
 			math.min(cookies, cost),
 			cost
 	end
-	return "Place a Noob Clicker from the Mixer.", cost, cost
+	return "Buy and place a Noob Clicker from the Mixer.", cost, cost
 end
 
 local function buildSnapshot(player, state, data)

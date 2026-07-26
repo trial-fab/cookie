@@ -49,6 +49,12 @@ local DEFAULT_PERSISTENT_DATA = {
 	-- Boost-shop field charges the player is holding, itemId -> count (BoostShopService owns it).
 	-- Persistent like the gems that bought them: they survive run resets and rejoins.
 	BoostCharges = {},
+	-- Live boost fields on this player's plot, frozen as REMAINING SECONDS (never an absolute end
+	-- time) so a field is five minutes of play rather than five minutes of wall clock: production
+	-- only runs while the owner is here, so a timer burning during their absence would pay nothing.
+	-- Keyed by item id + floor id, positioned relative to the floor's placement origin like a
+	-- building. Legacy item-id-only entries are migrated when they are restored.
+	BoostFields = {},
 	OwnedSkins = {},
 	EquippedSkins = {},
 	OwnedGooSkins = {},
@@ -335,8 +341,7 @@ local function migrate(data)
 		return false, "profile has an invalid schema version"
 	end
 	if version > CURRENT_SCHEMA_VERSION then
-		return false,
-			("profile is schema v%d but this server only knows v%d"):format(version, CURRENT_SCHEMA_VERSION)
+		return false, ("profile is schema v%d but this server only knows v%d"):format(version, CURRENT_SCHEMA_VERSION)
 	end
 
 	while version < CURRENT_SCHEMA_VERSION do
@@ -447,8 +452,7 @@ local function snapshotPlayer(player, data)
 	-- Placement is the sole permanent projection-to-Data exception. Its readiness is purposely
 	-- independent of all non-placement Values: loaded placement Data is retained during setup,
 	-- and reset closes this gate before its potentially yielding world resynchronization.
-	local buildingPlacements = placementSerializationReadyByPlayer[player]
-		and serializeBuildingPlacements(player)
+	local buildingPlacements = placementSerializationReadyByPlayer[player] and serializeBuildingPlacements(player)
 		or nil
 	if buildingPlacements then
 		run.Placements = type(run.Placements) == "table" and run.Placements
@@ -563,10 +567,8 @@ function PlayerDataService.Load(player)
 	end)
 	profile.OnAfterSave:Connect(function()
 		if profile:IsActive() then
-			confirmedSaveGenerationByProfile[profile] = math.max(
-				confirmedSaveGenerationByProfile[profile] or 0,
-				readSavedGeneration(profile)
-			)
+			confirmedSaveGenerationByProfile[profile] =
+				math.max(confirmedSaveGenerationByProfile[profile] or 0, readSavedGeneration(profile))
 		end
 	end)
 

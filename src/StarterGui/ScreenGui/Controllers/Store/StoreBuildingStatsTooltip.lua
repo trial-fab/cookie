@@ -8,6 +8,9 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
+local BoostFieldEffects = require(Shared:WaitForChild("BoostFieldEffects"))
+local BoostShopConfig = require(Shared:WaitForChild("BoostShopConfig"))
+local BoostTooltipIcons = require(Shared:WaitForChild("BoostTooltipIcons"))
 local BuildingInspectionConfig = require(Shared:WaitForChild("BuildingInspectionConfig"))
 local CursorTooltipTuning = require(Shared:WaitForChild("CursorTooltipTuning"))
 local StoreBuildingTooltipPresenter = require(script.Parent:WaitForChild("StoreBuildingTooltipPresenter"))
@@ -56,8 +59,20 @@ function StoreBuildingStatsTooltip.new(ctx)
 	local selectionInput = nil
 	local selectedDestroyConnection = nil
 	local selectedFloorConnection = nil
+	-- Watches the selected building's plot for boost fields arriving or expiring, so an open
+	-- tooltip stops claiming a boost the moment it ends rather than at the next hover.
+	local selectedFieldConnections = {}
 	local destroyed = false
 	local refreshSelection
+
+	-- The boost icons chain off the end of the building name, which is auto-sized, so their X has to
+	-- follow it. Bound here rather than inside the presenters: this module is the one that knows
+	-- these panels carry boost state at all, and CursorTooltip stays a generic presenter.
+	local cursorTooltipRoot = ctx.screenGui:FindFirstChild("CursorTooltip")
+	-- Listed explicitly rather than in one table: a nil first entry would make ipairs stop there and
+	-- silently leave the second tooltip unbound.
+	BoostTooltipIcons.bind(cursorTooltipRoot and cursorTooltipRoot:FindFirstChild("BuildingStats"))
+	BoostTooltipIcons.bind(ctx.screenGui:FindFirstChild("BuildingTooltip"))
 
 	-- An enabled Highlight with no explicit Adornee falls back to its parent. Keep the
 	-- prewarmed effect under an empty client-only folder so idle state has no geometry to tint;
@@ -123,6 +138,10 @@ function StoreBuildingStatsTooltip.new(ctx)
 			selectedFloorConnection:Disconnect()
 			selectedFloorConnection = nil
 		end
+		for _, connection in ipairs(selectedFieldConnections) do
+			connection:Disconnect()
+		end
+		table.clear(selectedFieldConnections)
 		selectedBuilding = nil
 		selectedUpgradeId = nil
 		selectedConfig = nil
@@ -134,6 +153,7 @@ function StoreBuildingStatsTooltip.new(ctx)
 			ctx.screenGui:SetAttribute(ctx.Attrs.MultiplierContextMode, nil)
 			ctx.screenGui:SetAttribute(ctx.Attrs.MultiplierContextBuildingId, nil)
 			ctx.screenGui:SetAttribute(ctx.Attrs.MultiplierContextFloorId, nil)
+			ctx.screenGui:SetAttribute(ctx.Attrs.MultiplierContextPowerField, nil)
 		end
 	end
 
@@ -145,11 +165,20 @@ function StoreBuildingStatsTooltip.new(ctx)
 		end
 	end
 
+	-- A boost field is SPATIAL, so unlike every other contextual factor it cannot be derived from
+	-- (buildingId, floorId): two of the same building on the same floor differ when only one stands
+	-- inside the disc. Shared/BoostFieldEffects answers it from the instance, using the same rule the
+	-- server pays out on, so the tooltip cannot advertise a multiplier the player is not receiving.
+	local function getFieldContext(building)
+		local powerMultiplier, speedMultiplier = BoostFieldEffects.ForBuilding(building)
+		return { PowerFieldMultiplier = powerMultiplier }, powerMultiplier, speedMultiplier
+	end
+
 	local function getMultiplierText(building, upgradeId, config)
 		-- The compact three-column presentation shows the final contextual multiplier only.
 		-- ProductionFormula already folds upgrades, skins, boosts, and future formula factors
 		-- into this total, so the adjacent production value remains the live effective rate.
-		local total = ctx.ProductionFormula.GetMultiplier(player, upgradeId, config, building)
+		local total = ctx.ProductionFormula.GetMultiplier(player, upgradeId, config, building, getFieldContext(building))
 		return ctx.NumberFormat.multiplier(total)
 	end
 
@@ -217,7 +246,12 @@ function StoreBuildingStatsTooltip.new(ctx)
 			return nil
 		end
 
-		local productionPerMinute = ctx.ProductionFormula.GetCps(player, upgradeId, config, building) * 60
+		local productionPerMinute = ctx.ProductionFormula.GetCps(player, upgradeId, config, building, getFieldContext(building))
+			* 60
+		-- Which fields are covering this exact building. The Production and Multiplier figures above
+		-- already include them; these say WHY those numbers are higher than the player expected.
+		local _, powerMultiplier, speedMultiplier = getFieldContext(building)
+		local icons = BoostShopConfig.TooltipBoostIcons
 		local content = {
 			mode = "BuildingStats",
 			zIndex = BuildingInspectionConfig.TooltipZIndex,
@@ -226,6 +260,10 @@ function StoreBuildingStatsTooltip.new(ctx)
 				Owned = sections.showOwned and ("x" .. ctx.NumberFormat.abbreviate(ctx.getOwnedCount(upgradeId))) or "",
 				Production = sections.showProduction and ctx.NumberFormat.rate(productionPerMinute) or "",
 				Multiplier = sections.showMultiplier and getMultiplierText(building, upgradeId, config) or "",
+			},
+			icons = {
+				[icons.Power] = powerMultiplier > 1,
+				[icons.Speed] = speedMultiplier > 1,
 			},
 		}
 		if inputMode == "Touch" then
@@ -256,6 +294,8 @@ function StoreBuildingStatsTooltip.new(ctx)
 		ctx.screenGui:SetAttribute(ctx.Attrs.MultiplierContextMode, "Inspection")
 		ctx.screenGui:SetAttribute(ctx.Attrs.MultiplierContextBuildingId, upgradeId)
 		ctx.screenGui:SetAttribute(ctx.Attrs.MultiplierContextFloorId, building:GetAttribute(ctx.Attrs.FloorId))
+		local _, powerMultiplier = getFieldContext(building)
+		ctx.screenGui:SetAttribute(ctx.Attrs.MultiplierContextPowerField, powerMultiplier)
 		selectedDestroyConnection = building.Destroying:Once(clearSelection)
 		selectedFloorConnection = building:GetAttributeChangedSignal(ctx.Attrs.FloorId):Connect(function()
 			if selectedBuilding == building then
@@ -263,6 +303,23 @@ function StoreBuildingStatsTooltip.new(ctx)
 				refreshSelection()
 			end
 		end)
+
+		-- Fields are dropped and expire on their own schedule, so a tooltip left open would keep
+		-- showing a boost icon (and a boosted multiplier) after the field behind it was gone. The
+		-- plot is where fields live, so watching its children catches both a drop and an expiry.
+		local sheet = building.Parent
+		if sheet then
+			local function onFieldChanged(child)
+				if
+					selectedBuilding == building
+					and child.Name:sub(1, #BoostShopConfig.FieldNamePrefix) == BoostShopConfig.FieldNamePrefix
+				then
+					refreshSelection()
+				end
+			end
+			table.insert(selectedFieldConnections, sheet.ChildAdded:Connect(onFieldChanged))
+			table.insert(selectedFieldConnections, sheet.ChildRemoved:Connect(onFieldChanged))
+		end
 		local content = buildContent(building, upgradeId, config, inputMode)
 		if content then
 			if inputMode == "Touch" then
@@ -282,6 +339,10 @@ function StoreBuildingStatsTooltip.new(ctx)
 			clearSelection()
 			return
 		end
+		-- Re-published, not just set on selection: the multiplier HUD reads this, so a field
+		-- expiring under an open tooltip has to clear its Power Field row too, not only the icon.
+		local _, powerMultiplier = getFieldContext(selectedBuilding)
+		ctx.screenGui:SetAttribute(ctx.Attrs.MultiplierContextPowerField, powerMultiplier)
 		local content = buildContent(selectedBuilding, selectedUpgradeId, selectedConfig, selectionInput)
 		if selectionInput == "Touch" then
 			source:clear()

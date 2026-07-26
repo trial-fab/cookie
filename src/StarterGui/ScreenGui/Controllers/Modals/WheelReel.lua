@@ -121,13 +121,13 @@ function WheelReel.bind(ctx)
 		local text
 		local targetWidth
 		if awaitingRewardAck then
-			text = "Ok"
+			text = "Continue"
 			targetWidth = ctx.spinButton:GetAttribute("IdleWidth") or DEFAULT_IDLE_BUTTON_WIDTH
 		elseif not ctx.config.FeatureFlags.GooSkinsEnabled then
 			text = "Unavailable"
 			targetWidth = ctx.spinButton:GetAttribute("UnavailableWidth") or DEFAULT_SPINNING_BUTTON_WIDTH
 		elseif spinning then
-			text = "Spinning…"
+			text = "Spinning..."
 			targetWidth = ctx.spinButton:GetAttribute("SpinningWidth") or DEFAULT_SPINNING_BUTTON_WIDTH
 		elseif spinHovered then
 			text = "Spin"
@@ -396,7 +396,7 @@ function WheelReel.bind(ctx)
 		local multiplier = rewardCard:FindFirstChild("Multiplier", true)
 		local ownedLabel = rewardCard:FindFirstChild("OwnedLabel")
 		if name and name:IsA("TextLabel") then
-			name.Text = result.DisplayName or "?"
+			name.Text = result.DisplayName or "Goo Reward"
 		end
 		if tag and tag:IsA("TextLabel") then
 			tag.Text = rarity and rarity.DisplayName or (result.RarityId or "")
@@ -493,17 +493,15 @@ function WheelReel.bind(ctx)
 		if not result.Success then
 			spinning = false
 			if result.Reason == "NotEnoughGoldenCookies" then
-				setStatus(
-					"Not enough golden cookies — you need " .. ctx.numberFormat.abbreviate(ctx.config.SpinCost) .. "."
-				)
+				setStatus("You need " .. ctx.numberFormat.abbreviate(ctx.config.SpinCost) .. " golden cookies to spin.")
 			elseif result.Reason == "Disabled" then
 				setStatus("Goo skins are currently unavailable.")
 			elseif result.Reason == "ConfigurationUnavailable" then
 				setStatus("The wheel is temporarily unavailable.")
 			elseif result.Reason == "NotReady" then
-				setStatus("Not ready yet — try again in a moment.")
+				setStatus("The wheel is not ready yet. Try again in a moment.")
 			else
-				setStatus("Spin failed.")
+				setStatus("The spin failed. Try again.")
 			end
 			styleSpinButton()
 			startIdle()
@@ -518,12 +516,12 @@ function WheelReel.bind(ctx)
 			revealReward(result)
 			if result.IsDuplicate then
 				setStatus(
-					("Owned duplicate. Refunded %s GC."):format(
+					("You already own this goo. Refunded %s golden cookies."):format(
 						ctx.numberFormat.abbreviate(result.RefundGC or ctx.config.DuplicateRefundGC)
 					)
 				)
 			else
-				setStatus("New skin unlocked!")
+				setStatus("New goo unlocked!")
 			end
 			spinning = false
 			awaitingRewardAck = tinyResultModeEnabled
@@ -565,9 +563,9 @@ function WheelReel.bind(ctx)
 					setStatus("Goo skins are currently unavailable.")
 				elseif not spinning then
 					setStatus(
-						"Not enough golden cookies — you need "
+						"You need "
 							.. ctx.numberFormat.abbreviate(ctx.config.SpinCost)
-							.. "."
+							.. " golden cookies to spin."
 					)
 				end
 				return
