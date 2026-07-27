@@ -15,7 +15,6 @@ end
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local Net = require(shared:WaitForChild("Net"))
 local Attrs = require(shared:WaitForChild("Attrs"))
-local GuiNames = require(shared:WaitForChild("GuiNames"))
 local StoreShell = require(shared:WaitForChild("StoreShell"))
 local Names = Net.Names
 

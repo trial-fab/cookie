@@ -448,11 +448,11 @@ end
 task.defer(function()
 	local button = select(1, resolveButton())
 	if not button then
-		local deadline = tick() + 8
+		local deadline = os.clock() + 8
 		repeat
 			task.wait(0.1)
 			button = select(1, resolveButton())
-		until button or tick() > deadline
+		until button or os.clock() > deadline
 	end
 	if button then
 		button.Activated:Connect(function()

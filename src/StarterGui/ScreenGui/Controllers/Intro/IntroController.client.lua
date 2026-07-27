@@ -49,17 +49,17 @@ local UiMotion = require(shared:WaitForChild("UiMotion"))
 -- Tunables
 ----------------------------------------------------------------------
 
-local ORBIT_ALTITUDE = 80        -- studs the meteor orbits above Earth's surface
-local ORBIT_TILT = math.rad(12)  -- slight inclination so the orbit isn't a fixed vertical loop
-local ORBIT_SPEED = 0.35         -- radians/sec orbital angular speed
-local TITLE_SPIN_SPEED = 0.6     -- radians/sec meteor tumble
+local ORBIT_ALTITUDE = 80 -- studs the meteor orbits above Earth's surface
+local ORBIT_TILT = math.rad(12) -- slight inclination so the orbit isn't a fixed vertical loop
+local ORBIT_SPEED = 0.35 -- radians/sec orbital angular speed
+local TITLE_SPIN_SPEED = 0.6 -- radians/sec meteor tumble
 local SPIN_AXIS = Vector3.new(0.3, 1, 0.15).Unit
 local PLAY_BLACKOUT_FADE_TIME = 1
 local PLAY_REVEAL_FADE_TIME = 1
 local EARTH_HIGHLIGHT_OUTLINE_TRANSPARENCY = 0.5
-local FOLLOW_DIST = 160          -- camera follow distance to the side of the meteor
-local FOLLOW_UP = 15             -- camera follow height above the meteor
-local DESCENT_TIME = 4.0         -- seconds for the cinematic sky drop onto the plot
+local FOLLOW_DIST = 160 -- camera follow distance to the side of the meteor
+local FOLLOW_UP = 15 -- camera follow height above the meteor
+local DESCENT_TIME = 4.0 -- seconds for the cinematic sky drop onto the plot
 local DROP_LEAD_ANGLE = math.rad(22) -- title-orbit alignment point near the player's plot
 local ATMOSPHERE_ENTRY_LEAD_ANGLE = math.rad(24)
 local ATMOSPHERE_ENTRY_EXTRA_HEIGHT = 120
@@ -72,24 +72,22 @@ local EARTH_PHASE_FADE_START = 0.56
 local EARTH_PHASE_FADE_END = 0.72
 local PLAYER_DROP_CAMERA_CUT = 0.56
 local DROP_CONTROL_SIDE = -360
-local IMPACT_HEIGHT = 210       -- final control point height for a steep slam
+local IMPACT_HEIGHT = 210 -- final control point height for a steep slam
 local PLAYER_DROP_CAMERA_BACK = 20
 local PLAYER_DROP_CAMERA_SIDE = 0
 local PLAYER_DROP_CAMERA_UP = 0
-local MOMENTUM_START = 0.1       -- descent timing: slow atmosphere entry, then accelerate hard
+local MOMENTUM_START = 0.1 -- descent timing: slow atmosphere entry, then accelerate hard
 local LETTERBOX_BAR_HEIGHT = 0.16
 local LETTERBOX_TWEEN_TIME = 0.4
-local RETURN_CAM_TIME = 2      -- cinematic camera ease back to regular player view
-local TITLE_REVEAL_TIME = 1
-local TITLE_HOLD_TIME = 1
-local CLICKS_TO_CLEAR = 5        -- rubble clicks (= morph steps) before the swap to the real Cookie
-local MORPH_STEP_TIME = 0.3      -- per-click tween toward the Cookie
+local RETURN_CAM_TIME = 2 -- cinematic camera ease back to regular player view
+local CLICKS_TO_CLEAR = 5 -- rubble clicks (= morph steps) before the swap to the real Cookie
+local MORPH_STEP_TIME = 0.3 -- per-click tween toward the Cookie
 local SHAKE_TIME = 0.45
 local SHAKE_MAGNITUDE = 3.2
 local INTRO_DECISION_TIMEOUT = 20
 local INTRO_SHEET_SPAWN_TIMEOUT = 30
-local INTRO_CLOCKTIME = 0        -- midnight: dark + space-like during the orbit
-local GAMEPLAY_CLOCKTIME = 14    -- tweened to as the meteor drops, so it lands in daylight
+local INTRO_CLOCKTIME = 0 -- midnight: dark + space-like during the orbit
+local GAMEPLAY_CLOCKTIME = 14 -- tweened to as the meteor drops, so it lands in daylight
 local INTRO_REPLAY_EVENT_NAME = "ReplayIntroRequested"
 
 -- The authored CFrame of CookieSheet.Center that the crater template was built on top of.
@@ -460,6 +458,11 @@ local function playTitleReveal(playerGui)
 	-- The final game title is intentionally hidden until branding is approved.
 	return
 	--[[
+	-- These two live inside the commented block, not at file scope, so they travel with the only
+	-- code that reads them and un-commenting this body restores the reveal in one step.
+	local TITLE_REVEAL_TIME = 1
+	local TITLE_HOLD_TIME = 1
+
 	local gui = Instance.new("ScreenGui")
 	gui.Name = "IntroTitleRevealGui"
 	gui.ResetOnSpawn = false
@@ -587,6 +590,52 @@ local function getChapterReplayEvent(name)
 	return event
 end
 
+-- Names/attributes the intro leaves on shared world objects so a later run can tell its own
+-- leftovers apart from authored state.
+local INTRO_CLICK_TARGET_NAME = "IntroClickTarget"
+local AUTHORED_DISTANCE_ATTRIBUTE = "IntroAuthoredActivationDistance"
+
+-- The intro suppresses the Cookie's real ClickDetector and parents temporary ones of its
+-- own. A respawn destroys this controller before cleanup runs, and the cookie is left with
+-- a dead detector on top of a real one still pinned at distance 0: clicking it does nothing
+-- for the rest of the session. Worse, the next run would read that 0 as the authored value
+-- and "restore" it permanently. Stashing the authored distance on the detector itself makes
+-- the restore survive the script, and running it at startup heals a session already broken.
+local function restoreCookieInteraction(cookie)
+	if not cookie then
+		return
+	end
+	for _, child in ipairs(cookie:GetChildren()) do
+		if child:IsA("ClickDetector") and child.Name == INTRO_CLICK_TARGET_NAME then
+			child:Destroy()
+		end
+	end
+	local detector = cookie:FindFirstChildOfClass("ClickDetector")
+	if detector then
+		local authored = detector:GetAttribute(AUTHORED_DISTANCE_ATTRIBUTE)
+		if authored then
+			detector.MaxActivationDistance = authored
+			detector:SetAttribute(AUTHORED_DISTANCE_ATTRIBUTE, nil)
+		end
+	end
+	cookie.CanQuery = true
+	cookie.LocalTransparencyModifier = 0
+end
+
+-- The crater is cloned client-side and only by this controller, so any copy already
+-- sitting in Workspace is a leftover from a run this client lost to a respawn. Matching on
+-- the template's own name keeps authored world models (CraterTerraces) out of it.
+local function removeOrphanCraters(template)
+	if not template then
+		return
+	end
+	for _, child in ipairs(Workspace:GetChildren()) do
+		if child.Name == template.Name then
+			child:Destroy()
+		end
+	end
+end
+
 local function playIntro(options)
 	if running then
 		return
@@ -645,6 +694,13 @@ local function playIntro(options)
 	end
 
 	running = true
+
+	-- A respawn destroys this controller mid-run (ScreenGui.ResetOnSpawn), so cleanupIntro
+	-- never gets to run and the previous crater is left behind in Workspace. Its
+	-- ClickDetectors died with the script that connected them, and it sits exactly where
+	-- the next one goes: the player ends up walled in by two overlapping sets of solid
+	-- crater parts, clicking rubble that can no longer respond. Sweep the orphan first.
+	removeOrphanCraters(template)
 
 	-- Build the crater on the player's Center.
 	local craterClone = template:Clone()
@@ -905,11 +961,8 @@ local function playIntro(options)
 		+ entryDir * (earthRadius + ATMOSPHERE_CAMERA_BACK)
 		+ sideDir * ATMOSPHERE_CAMERA_SIDE
 		+ Vector3.new(0, ATMOSPHERE_CAMERA_UP, 0)
-	local playerToImpact = Vector3.new(
-		restingPos.X - humanoidRootPart.Position.X,
-		0,
-		restingPos.Z - humanoidRootPart.Position.Z
-	)
+	local playerToImpact =
+		Vector3.new(restingPos.X - humanoidRootPart.Position.X, 0, restingPos.Z - humanoidRootPart.Position.Z)
 	if playerToImpact.Magnitude < 0.001 then
 		playerToImpact = outwardDir
 	else
@@ -956,7 +1009,8 @@ local function playIntro(options)
 		end
 
 		if earth and playerViewStarted then
-			local earthFadeAlpha = smoothstep((t - EARTH_PHASE_FADE_START) / (EARTH_PHASE_FADE_END - EARTH_PHASE_FADE_START))
+			local earthFadeAlpha =
+				smoothstep((t - EARTH_PHASE_FADE_START) / (EARTH_PHASE_FADE_END - EARTH_PHASE_FADE_START))
 			earth.Transparency = earthFadeAlpha
 			local highlight = earth:FindFirstChild("IntroEarthAmbientFill")
 			if highlight and highlight:IsA("Highlight") then
@@ -1009,23 +1063,18 @@ local function playIntro(options)
 	local shakeStart = os.clock()
 	while os.clock() - shakeStart < SHAKE_TIME do
 		local decay = 1 - (os.clock() - shakeStart) / SHAKE_TIME
-		local jitter = Vector3.new(
-			(math.random() - 0.5) * 2,
-			(math.random() - 0.5) * 2,
-			(math.random() - 0.5) * 2
-		) * SHAKE_MAGNITUDE * decay
+		local jitter = Vector3.new((math.random() - 0.5) * 2, (math.random() - 0.5) * 2, (math.random() - 0.5) * 2)
+			* SHAKE_MAGNITUDE
+			* decay
 		camera.CFrame = CFrame.lookAt(impactCameraCFrame.Position + jitter, restingPos)
 		RunService.RenderStepped:Wait()
 	end
 
-	local returnTween = TweenService:Create(
-		camera,
-		TweenInfo.new(RETURN_CAM_TIME, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
-		{
+	local returnTween =
+		TweenService:Create(camera, TweenInfo.new(RETURN_CAM_TIME, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
 			CFrame = savedCameraCFrame,
 			FieldOfView = savedCameraFieldOfView,
-		}
-	)
+		})
 	returnTween:Play()
 	if letterboxGui and letterboxTop and letterboxBottom then
 		task.spawn(function()
@@ -1044,8 +1093,7 @@ local function playIntro(options)
 	end
 
 	-- Hand the camera, HUD and avatar back so the player walks up to the wreckage.
-	camera.CameraType = (savedCameraType ~= Enum.CameraType.Scriptable) and savedCameraType
-		or Enum.CameraType.Custom
+	camera.CameraType = (savedCameraType ~= Enum.CameraType.Scriptable) and savedCameraType or Enum.CameraType.Custom
 	camera.CameraSubject = savedCameraSubject
 	camera.FieldOfView = savedCameraFieldOfView
 	camera.CFrame = savedCameraCFrame
@@ -1080,8 +1128,13 @@ local function playIntro(options)
 	----------------------------------------------------------------
 	local clickDetectors = {}
 	local normalCookieDetector = cookie:FindFirstChildOfClass("ClickDetector")
-	local normalCookieActivationDistance = normalCookieDetector and normalCookieDetector.MaxActivationDistance
 	if normalCookieDetector then
+		-- Stash the authored distance on the detector before suppressing it, and only if it is
+		-- not already stashed: a previous run killed by a respawn will have left this at 0, and
+		-- capturing that would restore 0 as if it were the real value.
+		if normalCookieDetector:GetAttribute(AUTHORED_DISTANCE_ATTRIBUTE) == nil then
+			normalCookieDetector:SetAttribute(AUTHORED_DISTANCE_ATTRIBUTE, normalCookieDetector.MaxActivationDistance)
+		end
 		-- CanQuery does not suppress ClickDetector activation. Disable the normal cookie action
 		-- locally until rubble clearing is finished; a temporary detector below sends this same
 		-- surface through handleClearClick instead.
@@ -1090,6 +1143,7 @@ local function playIntro(options)
 
 	local function addClickTarget(part)
 		local detector = Instance.new("ClickDetector")
+		detector.Name = INTRO_CLICK_TARGET_NAME
 		detector.MaxActivationDistance = 32
 		detector.CursorIcon = ""
 		detector.Parent = part
@@ -1108,9 +1162,8 @@ local function playIntro(options)
 			detector:Destroy()
 		end
 		table.clear(clickDetectors)
-		if normalCookieDetector and normalCookieDetector.Parent then
-			normalCookieDetector.MaxActivationDistance = normalCookieActivationDistance
-		end
+		-- Shared with the startup heal so both paths restore from the same stashed value.
+		restoreCookieInteraction(cookie)
 	end
 
 	local prompt = Instance.new("BillboardGui")
@@ -1221,7 +1274,20 @@ local function shouldPlay()
 end
 
 task.spawn(function()
-	if shouldPlay() then
+	local play = shouldPlay()
+
+	-- Heal what a previous run left on shared world objects before deciding what to do here.
+	-- ScreenGui.ResetOnSpawn destroys this controller mid-run, so its own cleanup never gets
+	-- to happen; without this, one respawn during the intro leaves the cookie unclickable and
+	-- a solid orphan crater in the world for the rest of the session.
+	local sheet = waitForSheet()
+	if sheet then
+		restoreCookieInteraction(sheet:FindFirstChild("Cookie"))
+	end
+	local introAssets = ReplicatedStorage:FindFirstChild("IntroAssets")
+	removeOrphanCraters(introAssets and introAssets:FindFirstChild("crater"))
+
+	if play then
 		playIntro({ markSeen = false, allowSkip = false, completeStory = true })
 	end
 end)

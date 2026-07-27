@@ -48,7 +48,6 @@ local SPAWN_PROBE_HEIGHT = 200
 local SPAWN_TEMPLATE_NAME = "GoldenCookieTemplate"
 
 local random = Random.new()
-local clickEarnTimestamps = {}
 local cookieSheetsFolder
 local spawnFolder
 
@@ -144,14 +143,41 @@ end
 
 -- ── Clicking source ──────────────────────────────────────────────────────────
 
-local function pruneClickTimestamps(timestamps, now)
+-- The earn window is canonical Persistent data, not session state.
+--
+-- Held in memory it was cleared on leave, so rejoining handed the player a fresh hourly budget
+-- and turned the cap into a farm loop: at 20 clicks/second the full 25 GC drains in about five
+-- minutes, and a server hop reset it -- roughly ten times the intended rate for anyone willing
+-- to rejoin. Stamps therefore use os.time() (wall clock), not os.clock() (server uptime), which
+-- is meaningless across sessions and was the reason this could not persist before.
+--
+-- Returns the live array, already pruned and stored back on the profile, so the caller can
+-- append to it by reference.
+local function readClickEarnTimes(persistent, now)
+	local stored = persistent.GoldenCookieClickEarnTimes
 	local cutoff = now - ROLLING_WINDOW_SECONDS
 	local kept = {}
-	for _, timestamp in ipairs(timestamps) do
-		if timestamp >= cutoff then
-			table.insert(kept, timestamp)
+
+	if type(stored) == "table" then
+		for _, value in ipairs(stored) do
+			local timestamp = tonumber(value)
+			if timestamp then
+				-- A stamp from the future (clock skew) would sit in the window forever and
+				-- permanently block earning. Clamp instead of dropping: it still counts against
+				-- the cap, but it ages out normally.
+				timestamp = math.min(math.floor(timestamp), now)
+				if timestamp >= cutoff then
+					table.insert(kept, timestamp)
+					-- Bounded on read, so a corrupt or oversized array cannot grow the save.
+					if #kept >= CLICK_HOURLY_CAP then
+						break
+					end
+				end
+			end
 		end
 	end
+
+	persistent.GoldenCookieClickEarnTimes = kept
 	return kept
 end
 
@@ -159,11 +185,15 @@ end
 -- and enforces the rolling 25 GC/hour cap so autoclicker-style spam earns nothing
 -- extra. Returns the GC granted (0 or 1).
 function GoldenCookieService.RollClickDrop(player, worldSource)
-	local now = os.clock()
-	local timestamps = pruneClickTimestamps(clickEarnTimestamps[player] or {}, now)
-	clickEarnTimestamps[player] = timestamps
+	local persistent = getPersistent(player)
+	if not persistent then
+		return 0
+	end
 
-	if #timestamps >= CLICK_HOURLY_CAP then
+	local now = os.time()
+	local earnTimes = readClickEarnTimes(persistent, now)
+
+	if #earnTimes >= CLICK_HOURLY_CAP then
 		return 0
 	end
 
@@ -185,10 +215,13 @@ function GoldenCookieService.RollClickDrop(player, worldSource)
 	elseif typeof(worldSource) == "Vector3" then
 		sourceAnchor = { Kind = "World", Position = worldSource }
 	end
+	-- AddGoldenCookies is yield-free, so the cap check above and this stamp commit together and
+	-- two clicks in the same frame cannot both slip past a full window. `earnTimes` is the array
+	-- now held by the profile, so appending here is the persisted write.
 	if GoldenCookieService.AddGoldenCookies(player, 1, "click", sourceAnchor) == nil then
 		return 0
 	end
-	table.insert(timestamps, now)
+	table.insert(earnTimes, now)
 	return 1
 end
 
@@ -387,12 +420,6 @@ local function startSpawnLoop()
 	end)
 end
 
--- ── Player teardown ──────────────────────────────────────────────────────────
-
-local function forgetPlayer(player)
-	clickEarnTimestamps[player] = nil
-end
-
 function GoldenCookieService.Init()
 	cookieSheetsFolder = Workspace:WaitForChild("CookieSheets")
 	spawnFolder = getOrCreateFolder(Workspace, "GoldenCookieSpawns")
@@ -400,8 +427,6 @@ function GoldenCookieService.Init()
 	-- Pre-create the server->client push channel so a client that boots first finds it
 	-- immediately instead of hanging at WaitForChild until the first golden cookie earn.
 	Net.event(Net.Names.GoldenCookieEarned)
-
-	Players.PlayerRemoving:Connect(forgetPlayer)
 
 	startSpawnLoop()
 	print("GoldenCookieService initialized")

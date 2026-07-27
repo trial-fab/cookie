@@ -4,7 +4,6 @@
 -- server-side (OfflineEarningsService); this just fills the text, shows the card and
 -- dismisses it.
 
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
 

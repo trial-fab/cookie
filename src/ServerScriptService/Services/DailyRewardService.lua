@@ -2,7 +2,11 @@
 --
 -- Replaces the old silent login bonus that lived in GoldenCookieService.OnPlayerSetup: the
 -- player now claims their reward in the Daily tab instead of it being auto-granted at join.
--- Gating is once per UTC day; consecutive days grow the streak, a missed day resets it.
+-- Gating is once per UTC day. The counter advances on every claimed day and never resets: it is
+-- "days you came back", presented as a streak. A strict consecutive-day rule punished the UTC
+-- boundary itself -- reset lands mid-afternoon in the Americas, so two consecutive *local* days
+-- can skip a UTC day and wipe real progress -- and returning after a break should pick up where
+-- you left off rather than restart the cycle.
 -- Rewards (GC per day, plus the Mythical Celestial goo skin on the final cycle day) come from the
 -- shared DailyRewardConfig so client and server agree.
 --
@@ -54,14 +58,13 @@ function DailyRewardService.GetState(player)
 	local today = currentUtcDay()
 	local lastDay = readInt(persistent, "LastLoginDay")
 	local streak = readInt(persistent, "LoginStreak")
-	-- The day they'd be ON if they claimed right now (drives the highlighted card).
+	-- The day they'd be ON if they claimed right now (drives the highlighted card). Any unclaimed
+	-- day advances the counter, however long the gap was.
 	local pendingStreak
 	if lastDay == today then
 		pendingStreak = math.max(1, streak)
-	elseif lastDay == today - 1 then
-		pendingStreak = streak + 1
 	else
-		pendingStreak = 1
+		pendingStreak = streak + 1
 	end
 
 	return {
@@ -98,12 +101,9 @@ function DailyRewardService.Claim(player)
 		}
 	end
 
-	local newStreak
-	if lastDay == today - 1 then
-		newStreak = streak + 1
-	else
-		newStreak = 1
-	end
+	-- Never resets. A gap of one day or one month both advance by one, so the cycle resumes where
+	-- the player left it instead of throwing away everything they had already earned.
+	local newStreak = math.max(0, streak) + 1
 
 	local reward = DailyRewardConfig.GetReward(newStreak)
 	if type(reward) ~= "table" then

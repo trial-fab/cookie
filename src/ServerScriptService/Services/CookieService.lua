@@ -7,6 +7,7 @@ local CookieService = {}
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
 local Net = require(ReplicatedStorage.Shared.Net)
 local NumberFormat = require(ReplicatedStorage.Shared.NumberFormat)
+local PvpConfig = require(ReplicatedStorage.Shared.PvpConfig)
 local StoryConfig = require(ReplicatedStorage.Shared.StoryConfig)
 local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
 local GoldenCookieService = require(ServerScriptService.Services.GoldenCookieService)
@@ -27,19 +28,32 @@ local CLICKING_POWER_UPGRADE_ID = "Clicking Power"
 local MAX_CLICKS_PER_SECOND = 20
 
 local sheetState = {}
-local clickWindowByPlayer = {}
+local clickBucketByPlayer = {}
 local stealProtectionGenerationByPlayer = setmetatable({}, { __mode = "k" })
 
+-- Token bucket rather than a fixed window. A window that resets on a hard one-second boundary
+-- lets an exploiter spend a full allowance just before the reset and another immediately after,
+-- landing 2x MAX_CLICKS_PER_SECOND inside a few milliseconds. Tokens refill continuously, so the
+-- rate holds across every interval, not just the ones that happen to align with the boundary.
+-- Capacity equals the per-second rate, which keeps a burst of genuine fast clicking intact.
 local function isClickRateAllowed(player)
 	local now = os.clock()
-	local window = clickWindowByPlayer[player]
-	if not window or now - window.startedAt >= 1 then
-		clickWindowByPlayer[player] = { startedAt = now, count = 1 }
-		return true
+	local bucket = clickBucketByPlayer[player]
+	if not bucket then
+		bucket = { tokens = MAX_CLICKS_PER_SECOND, refilledAt = now }
+		clickBucketByPlayer[player] = bucket
+	else
+		local elapsed = math.max(0, now - bucket.refilledAt)
+		bucket.tokens = math.min(MAX_CLICKS_PER_SECOND, bucket.tokens + elapsed * MAX_CLICKS_PER_SECOND)
+		bucket.refilledAt = now
 	end
 
-	window.count += 1
-	return window.count <= MAX_CLICKS_PER_SECOND
+	if bucket.tokens < 1 then
+		return false
+	end
+
+	bucket.tokens -= 1
+	return true
 end
 
 local function getCookiesValue(player)
@@ -256,7 +270,12 @@ function CookieService.StartStealProtectionTimer(player)
 	return true
 end
 
-local function displayIncrease(cookiePart, text, textColor)
+-- `target` narrows the popup to a single client; omitting it broadcasts. Player-driven popups
+-- (manual clicks, theft) stay broadcast because seeing a neighbour's numbers is part of sharing
+-- the plot ring. Autoclick income passes a target: it fires twice a second per owner forever, so
+-- broadcasting it puts a permanent stream on the wire and costs every client a BillboardGui clone
+-- plus two tweens for a number only its owner is watching.
+local function displayIncrease(cookiePart, text, textColor, target)
 	if not cookiePart or not cookiePart:IsA("BasePart") then
 		return
 	end
@@ -266,12 +285,18 @@ local function displayIncrease(cookiePart, text, textColor)
 		return
 	end
 
-	Net.fireAll(Net.Names.CookieIncrease, {
+	local payload = {
 		CookiePart = cookiePart,
 		Text = tostring(text),
 		TextColor = typeof(textColor) == "Color3" and textColor or nil,
 		StartOffset = Vector3.new(math.random(-5, 5), 0, math.random(-5, 5)),
-	})
+	}
+
+	if target then
+		Net.fireClient(Net.Names.CookieIncrease, target, payload)
+	else
+		Net.fireAll(Net.Names.CookieIncrease, payload)
+	end
 end
 CookieService.DisplayIncrease = displayIncrease
 
@@ -294,14 +319,20 @@ local function isCharacterAlive(player)
 	return humanoid ~= nil and humanoid.Health > 0
 end
 
-local function getSheetState(sheet)
+-- Seeded from the owner's balance at creation. Seeding it to infinity (as this once did) left
+-- markStealAmount's cap permanently unreachable until the first window rolled over, so the 30%
+-- limit did nothing at all for the first STEAL_RESET_SECONDS of a sheet's life -- long enough to
+-- drain the owner outright. Infinity survives only as the fallback for an unreadable balance,
+-- which handleStealClick has already ruled out before it gets here.
+local function getSheetState(sheet, owner)
 	if sheetState[sheet] then
 		return sheetState[sheet]
 	end
 
+	local ownerBalance = owner and CookieService.GetCookies(owner)
 	sheetState[sheet] = {
 		stolenThisWindow = 0,
-		ownerCookiesAtWindowStart = math.huge,
+		ownerCookiesAtWindowStart = ownerBalance or math.huge,
 		canSteal = true,
 		lastReset = os.clock(),
 	}
@@ -310,7 +341,7 @@ local function getSheetState(sheet)
 end
 
 local function resetStealWindowIfNeeded(sheet, owner)
-	local state = getSheetState(sheet)
+	local state = getSheetState(sheet, owner)
 	local now = os.clock()
 
 	if now - state.lastReset < STEAL_RESET_SECONDS then
@@ -327,8 +358,9 @@ local function resetStealWindowIfNeeded(sheet, owner)
 	return state
 end
 
-local function markStealAmount(sheet, amount)
-	local state = getSheetState(sheet)
+-- Takes the state the caller already resolved rather than re-deriving it from the sheet: the
+-- window it must charge against is the exact one the cap was just checked on.
+local function markStealAmount(state, amount)
 	state.stolenThisWindow += amount
 
 	if state.ownerCookiesAtWindowStart == math.huge then
@@ -385,6 +417,14 @@ local function handleOwnerClick(cookiePart, owner)
 end
 
 local function handleStealClick(cookiePart, sheet, attacker, owner)
+	-- PVP paused (Shared.PvpConfig): theft is a PVP mechanic, and the plot shield that is its
+	-- only counter-play is unwired while paused (ShieldService.Init returns early). Running theft
+	-- without it would leave every player permanently stealable with no defence, so the pause
+	-- has to cover this path too. Flipping PvpConfig.Enabled restores it with the rest of PVP.
+	if not PvpConfig.IsActive() then
+		return
+	end
+
 	if not isCharacterAlive(attacker) then
 		return
 	end
@@ -396,6 +436,15 @@ local function handleStealClick(cookiePart, sheet, attacker, owner)
 		or CookieService.GetCanBeStolenFrom(attacker) == nil
 		or CookieService.GetCanBeStolenFrom(owner) == nil
 	then
+		return
+	end
+
+	-- Charged against the same per-player budget the owner path uses, and deliberately after the
+	-- readiness checks above so a pre-setup click cannot consume window state. ClickDetector
+	-- activation is client-driven: without this an exploiter fires steals as fast as they like,
+	-- and while the theft window bounds the cookies taken, it does not bound the server work
+	-- (two AddCookies, a metric write, and a quest re-evaluation) each attempt costs.
+	if not isClickRateAllowed(attacker) then
 		return
 	end
 
@@ -425,7 +474,7 @@ local function handleStealClick(cookiePart, sheet, attacker, owner)
 
 	CookieService.AddCookies(attacker, gainedAmount, PlayerMetricsService.CookieSources.Theft)
 	CookieService.AddCookies(owner, -stealAmount, PlayerMetricsService.CookieSources.TheftLoss)
-	markStealAmount(sheet, stealAmount)
+	markStealAmount(state, stealAmount)
 
 	displayIncrease(cookiePart, "*stolen* " .. NumberFormat.abbreviate(stealAmount))
 end
@@ -462,7 +511,7 @@ function CookieService.Init()
 	Net.event(Net.Names.CookieIncrease)
 
 	Players.PlayerRemoving:Connect(function(player)
-		clickWindowByPlayer[player] = nil
+		clickBucketByPlayer[player] = nil
 		stealProtectionGenerationByPlayer[player] = nil
 	end)
 

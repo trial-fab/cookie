@@ -114,6 +114,22 @@ local function isOccluded(camera, worldPoint)
 	return false
 end
 
+-- GetPartsObscuringTarget is a spatial query and is by far the most expensive thing in the
+-- per-frame loop below, so it runs on its own cadence and the last answer is reused in between.
+-- The cache lives on the label's `info` table, so untrack() disposes of it with the label.
+-- ~12Hz is imperceptible here: a label crossing behind geometry is already fading rather than
+-- cutting, and every cheaper visibility test (distance, viewport, Z) still runs every frame.
+local OCCLUSION_INTERVAL_SECONDS = 1 / 12
+
+local function isOccludedThrottled(info, camera, worldPoint, now)
+	if info.occludedCheckedAt and now - info.occludedCheckedAt < OCCLUSION_INTERVAL_SECONDS then
+		return info.occluded
+	end
+	info.occludedCheckedAt = now
+	info.occluded = isOccluded(camera, worldPoint)
+	return info.occluded
+end
+
 RunService.RenderStepped:Connect(function()
 	local camera = Workspace.CurrentCamera
 	if not camera then
@@ -121,6 +137,7 @@ RunService.RenderStepped:Connect(function()
 	end
 	local camPos = camera.CFrame.Position
 	local viewport = camera.ViewportSize
+	local now = os.clock()
 	for frame, info in pairs(labels) do
 		local anchor = info.anchorValue and info.anchorValue.Value
 		if not (anchor and anchor:IsA("BasePart") and frame.Parent) then
@@ -139,7 +156,10 @@ RunService.RenderStepped:Connect(function()
 			local visible = screenPoint.Z > 0
 				and distance <= value(frame, info, "MaxDistance")
 				and (allowOffscreen or withinViewport)
-				and (value(frame, info, "OcclusionEnabled") ~= true or not isOccluded(camera, worldPoint))
+				and (
+					value(frame, info, "OcclusionEnabled") ~= true
+					or not isOccludedThrottled(info, camera, worldPoint, now)
+				)
 			if not visible then
 				frame.Visible = false
 			else

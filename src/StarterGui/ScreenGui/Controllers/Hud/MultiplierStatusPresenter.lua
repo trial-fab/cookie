@@ -1,6 +1,7 @@
--- MultiplierStatusPresenter: binds the fixed Studio-authored multiplier source slots.
+-- MultiplierStatusPresenter: binds complete multiplier sources to fixed Studio-authored slots.
 -- It never creates or clones player-facing UI.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -23,6 +24,19 @@ local function formatCountdown(remaining)
 	return string.format("%d:%02d", minutes, remainder)
 end
 
+local function getRemaining(source, now)
+	if typeof(source.RemainingInstance) == "Instance" then
+		return math.max(0, tonumber(source.RemainingInstance:GetAttribute("RemainingSeconds")) or 0)
+	end
+	if type(source.RemainingSeconds) == "number" then
+		return math.max(0, source.RemainingSeconds)
+	end
+	if type(source.ExpiresAt) == "number" then
+		return math.max(0, source.ExpiresAt - now)
+	end
+	return nil
+end
+
 local function getSlots(container)
 	local slots = {}
 	for _, child in ipairs(container:GetChildren()) do
@@ -34,6 +48,63 @@ local function getSlots(container)
 		return left.LayoutOrder < right.LayoutOrder
 	end)
 	return slots
+end
+
+local function formatProduction(source)
+	if type(source.BeforeProduction) ~= "number" or type(source.AfterProduction) ~= "number" then
+		return nil
+	end
+	local delta = source.AfterProduction - source.BeforeProduction
+	local sign = delta >= 0 and "+" or ""
+	return ("Affected production: %s CpS to %s CpS (%s%s CpS)."):format(
+		NumberFormat.rate(source.BeforeProduction),
+		NumberFormat.rate(source.AfterProduction),
+		sign,
+		NumberFormat.rate(delta)
+	)
+end
+
+local function getDescription(source)
+	local lines = { source.Scope or "Active multiplier source." }
+	if type(source.AffectedNames) == "table" and #source.AffectedNames > 0 then
+		table.insert(lines, "Buildings: " .. table.concat(source.AffectedNames, ", ") .. ".")
+	end
+	if type(source.AffectedCount) == "number" and source.Kind == "BoostField" then
+		table.insert(lines, ("Affected placed buildings: %d."):format(source.AffectedCount))
+	end
+	local production = formatProduction(source)
+	if production then
+		table.insert(lines, production)
+	end
+	return table.concat(lines, "\n")
+end
+
+local function getGooColor(multiplier)
+	local bestColor = Color3.new(1, 1, 1)
+	local bestDistance = math.huge
+	for _, entry in ipairs(MultiplierHudConfig.GooColors) do
+		local distance = math.abs(entry.Multiplier - multiplier)
+		if distance < bestDistance then
+			bestDistance = distance
+			bestColor = entry.Color
+		end
+	end
+	return bestColor
+end
+
+local function applyIcon(slot, source)
+	local icon = slot:FindFirstChild("Icon")
+	if not (icon and icon:IsA("ImageLabel")) then
+		return
+	end
+	local definition = MultiplierHudConfig.Icons[source.IconKey]
+	icon.Image = definition and definition.Image or MultiplierHudConfig.PlaceholderIcon
+	if source.IconKey == "Goo" then
+		icon.ImageColor3 = getGooColor(source.Multiplier)
+	else
+		icon.ImageColor3 = definition and definition.Color or Color3.new(1, 1, 1)
+	end
+	icon.ImageTransparency = 0
 end
 
 function MultiplierStatusPresenter.new(screenGui)
@@ -49,16 +120,219 @@ function MultiplierStatusPresenter.new(screenGui)
 	end
 
 	local slots = getSlots(slotsContainer)
-	local scale = root:FindFirstChild("ResponsiveScale")
+	local responsiveScale = root:FindFirstChild("ResponsiveScale")
 	local layout = slotsContainer:FindFirstChild("Layout")
 	local tooltip = CursorTooltip.get(screenGui)
 	local assigned = {}
+	local slotBySourceId = {}
 	local registrations = {}
+	local states = {}
 	local tuningHandles = {}
 	local viewportHandle
 	local suppressed = false
 	local destroyed = false
 	local overflowWarned = false
+
+	local function updateRootVisibility()
+		root.Visible = not suppressed and next(assigned) ~= nil
+	end
+
+	local function getState(slot)
+		local state = states[slot]
+		if not state then
+			state = {
+				generation = 0,
+				scale = slot:FindFirstChild("UIScale"),
+				pulseScale = slot:FindFirstChild("Icon") and slot.Icon:FindFirstChild("PulseScale"),
+			}
+			states[slot] = state
+		end
+		return state
+	end
+
+	local function cancelTween(tween)
+		if tween then
+			tween:Cancel()
+		end
+	end
+
+	local function cancelFadeTweens(state)
+		for _, tween in ipairs(state.fadeTweens or {}) do
+			tween:Cancel()
+		end
+		state.fadeTweens = nil
+	end
+
+	local function setTransparency(slot, transparency)
+		local icon = slot:FindFirstChild("Icon")
+		if icon and icon:IsA("ImageLabel") then
+			icon.ImageTransparency = transparency
+		end
+		local timer = slot:FindFirstChild("Timer")
+		if timer and timer:IsA("TextLabel") then
+			timer.TextTransparency = transparency
+		end
+	end
+
+	local function stopPulse(slot)
+		local state = getState(slot)
+		cancelTween(state.pulseTween)
+		state.pulseTween = nil
+		if state.pulseScale then
+			state.pulseScale.Scale = 1
+		end
+	end
+
+	local function startPulse(slot)
+		local state = getState(slot)
+		if state.pulseTween or state.removing or not state.pulseScale then
+			return
+		end
+		state.pulseScale.Scale = 1
+		state.pulseTween = TweenService:Create(
+			state.pulseScale,
+			TweenInfo.new(
+				DevTuning.get("MultiplierHud.WarningPulseSeconds"),
+				Enum.EasingStyle.Sine,
+				Enum.EasingDirection.InOut,
+				-1,
+				true
+			),
+			{ Scale = DevTuning.get("MultiplierHud.WarningPulseScale") }
+		)
+		state.pulseTween:Play()
+	end
+
+	local function activate(slot)
+		local state = getState(slot)
+		state.generation += 1
+		local generation = state.generation
+		state.removing = false
+		cancelTween(state.motionTween)
+		state.motionTween = nil
+		cancelFadeTweens(state)
+		stopPulse(slot)
+		setTransparency(slot, 0)
+		slot.Visible = true
+		if not state.scale then
+			return
+		end
+		state.scale.Scale = DevTuning.get("MultiplierHud.ActivationStartScale")
+		local pop = TweenService:Create(
+			state.scale,
+			TweenInfo.new(
+				DevTuning.get("MultiplierHud.ActivationPopSeconds"),
+				Enum.EasingStyle.Back,
+				Enum.EasingDirection.Out
+			),
+			{ Scale = DevTuning.get("MultiplierHud.ActivationPopScale") }
+		)
+		state.motionTween = pop
+		pop.Completed:Once(function(playbackState)
+			if destroyed or state.generation ~= generation or playbackState ~= Enum.PlaybackState.Completed then
+				return
+			end
+			local settle = TweenService:Create(
+				state.scale,
+				TweenInfo.new(
+					DevTuning.get("MultiplierHud.ActivationSettleSeconds"),
+					Enum.EasingStyle.Quad,
+					Enum.EasingDirection.Out
+				),
+				{ Scale = 1 }
+			)
+			state.motionTween = settle
+			settle.Completed:Once(function()
+				if destroyed or state.generation ~= generation then
+					return
+				end
+				state.motionTween = nil
+				if state.warning then
+					startPulse(slot)
+				end
+			end)
+			settle:Play()
+		end)
+		pop:Play()
+	end
+
+	local function remove(slot)
+		local source = assigned[slot]
+		if not source then
+			return
+		end
+		local removedId = source.Id
+		local state = getState(slot)
+		state.generation += 1
+		local generation = state.generation
+		state.removing = true
+		state.warning = false
+		cancelTween(state.motionTween)
+		state.motionTween = nil
+		cancelFadeTweens(state)
+		stopPulse(slot)
+		local registration = registrations[slot]
+		if registration then
+			registration:clear()
+		end
+		slotBySourceId[removedId] = nil
+		if not state.scale then
+			assigned[slot] = nil
+			slot.Visible = false
+			updateRootVisibility()
+			return
+		end
+		local shrink = TweenService:Create(
+			state.scale,
+			TweenInfo.new(DevTuning.get("MultiplierHud.RemovalSeconds"), Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			{ Scale = DevTuning.get("MultiplierHud.RemovalScale") }
+		)
+		local icon = slot:FindFirstChild("Icon")
+		local timer = slot:FindFirstChild("Timer")
+		local fadeTargets = {}
+		if icon and icon:IsA("ImageLabel") then
+			table.insert(
+				fadeTargets,
+				TweenService:Create(
+					icon,
+					TweenInfo.new(DevTuning.get("MultiplierHud.RemovalSeconds")),
+					{ ImageTransparency = 1 }
+				)
+			)
+		end
+		if timer and timer:IsA("TextLabel") then
+			table.insert(
+				fadeTargets,
+				TweenService:Create(
+					timer,
+					TweenInfo.new(DevTuning.get("MultiplierHud.RemovalSeconds")),
+					{ TextTransparency = 1 }
+				)
+			)
+		end
+		state.motionTween = shrink
+		state.fadeTweens = fadeTargets
+		for _, tween in ipairs(fadeTargets) do
+			tween:Play()
+		end
+		shrink.Completed:Once(function()
+			if destroyed or state.generation ~= generation then
+				return
+			end
+			state.motionTween = nil
+			state.fadeTweens = nil
+			state.removing = false
+			if assigned[slot] and assigned[slot].Id == removedId then
+				assigned[slot] = nil
+				slot:SetAttribute("SourceId", "")
+				slot.Visible = false
+			end
+			state.scale.Scale = 1
+			setTransparency(slot, 0)
+			updateRootVisibility()
+		end)
+		shrink:Play()
+	end
 
 	root.Visible = false
 	for _, slot in ipairs(slots) do
@@ -69,19 +343,13 @@ function MultiplierStatusPresenter.new(screenGui)
 				trigger = tooltip.Trigger.HoverAndClick,
 				getContent = function()
 					local source = assigned[slot]
-					if not source then
+					if not source or getState(slot).removing then
 						return nil
-					end
-					local description = source.Scope or "Active multiplier source."
-					if type(source.ExpiresAt) == "number" then
-						description ..= " Remaining " .. formatCountdown(
-							source.ExpiresAt - Workspace:GetServerTimeNow()
-						) .. "."
 					end
 					return {
 						mode = "Hint",
 						title = tostring(source.DisplayName) .. " " .. NumberFormat.multiplier(source.Multiplier),
-						description = description,
+						description = getDescription(source),
 					}
 				end,
 			})
@@ -92,11 +360,19 @@ function MultiplierStatusPresenter.new(screenGui)
 		if destroyed then
 			return
 		end
+		local gap = DevTuning.get("MultiplierHud.SlotGap")
 		if layout and layout:IsA("UIListLayout") then
-			layout.Padding = UDim.new(0, DevTuning.get("MultiplierHud.SlotGap"))
+			layout.Padding = UDim.new(0, gap)
 		end
-		if scale and scale:IsA("UIScale") then
-			scale.Scale = MobileScale.shouldUseMobile(root) and DevTuning.get("MultiplierHud.CompactScale")
+		local firstSlot = slots[1]
+		local slotWidth = firstSlot and firstSlot.Size.X.Offset or 32
+		slotsContainer.AutomaticSize = Enum.AutomaticSize.Y
+		slotsContainer.Size = UDim2.fromOffset(
+			slotWidth * MultiplierHudConfig.SlotsPerRow + gap * (MultiplierHudConfig.SlotsPerRow - 1),
+			0
+		)
+		if responsiveScale and responsiveScale:IsA("UIScale") then
+			responsiveScale.Scale = MobileScale.shouldUseMobile(root) and DevTuning.get("MultiplierHud.CompactScale")
 				or DevTuning.get("MultiplierHud.DesktopScale")
 		end
 
@@ -124,7 +400,7 @@ function MultiplierStatusPresenter.new(screenGui)
 
 	function presenter:setSuppressed(value)
 		suppressed = value == true
-		root.Visible = not suppressed and next(assigned) ~= nil
+		updateRootVisibility()
 	end
 
 	function presenter:applySources(sources)
@@ -135,17 +411,75 @@ function MultiplierStatusPresenter.new(screenGui)
 			overflowWarned = true
 			warn(("Multiplier status HUD has %d authored slots for %d active sources"):format(#slots, #sources))
 		end
-		for index, slot in ipairs(slots) do
-			local registration = registrations[slot]
-			if registration then
-				registration:clear()
+
+		local wanted = {}
+		local visibleCount = math.min(#sources, #slots)
+		local overflowCount = math.max(0, visibleCount - MultiplierHudConfig.SlotsPerRow)
+		for index, source in ipairs(sources) do
+			if index <= #slots then
+				wanted[source.Id] = true
 			end
-			local source = sources[index]
-			assigned[slot] = source
-			slot:SetAttribute("SourceId", source and source.Id or "")
-			slot.Visible = source ~= nil
 		end
-		root.Visible = not suppressed and #sources > 0
+		for slot, source in pairs(assigned) do
+			if not wanted[source.Id] and not getState(slot).removing then
+				remove(slot)
+			end
+		end
+
+		for index, source in ipairs(sources) do
+			if index > #slots then
+				break
+			end
+			local slot = slotBySourceId[source.Id]
+			local isNew = slot == nil
+			if not slot then
+				for _, candidate in ipairs(slots) do
+					if assigned[candidate] == nil then
+						slot = candidate
+						break
+					end
+				end
+			end
+			if not slot then
+				for _, candidate in ipairs(slots) do
+					if getState(candidate).removing then
+						slot = candidate
+						break
+					end
+				end
+			end
+			if not slot then
+				break
+			end
+
+			local state = getState(slot)
+			if state.removing then
+				state.generation += 1
+				state.removing = false
+				cancelTween(state.motionTween)
+				state.motionTween = nil
+				stopPulse(slot)
+			end
+			local previous = assigned[slot]
+			if previous and previous.Id ~= source.Id then
+				slotBySourceId[previous.Id] = nil
+				isNew = true
+			end
+			assigned[slot] = source
+			slotBySourceId[source.Id] = slot
+			slot.LayoutOrder = overflowCount > 0
+					and (index <= MultiplierHudConfig.SlotsPerRow and overflowCount + index or index - MultiplierHudConfig.SlotsPerRow)
+				or index
+			slot:SetAttribute("SourceId", source.Id)
+			applyIcon(slot, source)
+			setTransparency(slot, 0)
+			slot.Visible = true
+			if isNew then
+				activate(slot)
+			end
+		end
+
+		updateRootVisibility()
 		presenter:refreshCountdowns()
 	end
 
@@ -158,22 +492,32 @@ function MultiplierStatusPresenter.new(screenGui)
 		local normalColor = DevTuning.get("MultiplierHud.NormalTextColor")
 		local warningColor = DevTuning.get("MultiplierHud.WarningTextColor")
 		for slot, source in pairs(assigned) do
-			local timer = slot:FindFirstChild("Timer")
-			if timer and timer:IsA("TextLabel") then
-				if type(source.ExpiresAt) == "number" then
-					local remaining = math.max(0, source.ExpiresAt - now)
-					timer.Text = formatCountdown(remaining)
-					timer.TextSize = DevTuning.get("MultiplierHud.CountdownTextSize")
-					timer.TextColor3 = remaining <= warningThreshold and warningColor or normalColor
-				else
-					timer.Text = MultiplierHudConfig.InfinityText
-					timer.TextSize = DevTuning.get("MultiplierHud.InfinityTextSize")
-					timer.TextColor3 = normalColor
+			local state = getState(slot)
+			if not state.removing then
+				local timer = slot:FindFirstChild("Timer")
+				local remaining = getRemaining(source, now)
+				local warning = remaining ~= nil and remaining <= warningThreshold
+				state.warning = warning
+				if timer and timer:IsA("TextLabel") then
+					if remaining ~= nil then
+						timer.Text = formatCountdown(remaining)
+						timer.TextSize = DevTuning.get("MultiplierHud.CountdownTextSize")
+						timer.TextColor3 = warning and warningColor or normalColor
+					else
+						timer.Text = MultiplierHudConfig.InfinityText
+						timer.TextSize = DevTuning.get("MultiplierHud.InfinityTextSize")
+						timer.TextColor3 = normalColor
+					end
 				end
-			end
-			local registration = registrations[slot]
-			if registration and type(source.ExpiresAt) == "number" then
-				registration:refresh()
+				if warning then
+					startPulse(slot)
+				else
+					stopPulse(slot)
+				end
+				local registration = registrations[slot]
+				if registration then
+					registration:refresh()
+				end
 			end
 		end
 	end
@@ -186,6 +530,11 @@ function MultiplierStatusPresenter.new(screenGui)
 		for _, registration in pairs(registrations) do
 			registration:disconnect()
 		end
+		for _, state in pairs(states) do
+			cancelTween(state.motionTween)
+			cancelTween(state.pulseTween)
+			cancelFadeTweens(state)
+		end
 		for _, handle in ipairs(tuningHandles) do
 			handle:Disconnect()
 		end
@@ -193,6 +542,7 @@ function MultiplierStatusPresenter.new(screenGui)
 			viewportHandle:destroy()
 		end
 		table.clear(assigned)
+		table.clear(slotBySourceId)
 		root.Visible = false
 	end
 

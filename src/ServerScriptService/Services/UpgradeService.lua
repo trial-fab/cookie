@@ -1312,6 +1312,9 @@ function UpgradeService.Sell(player, upgradeId)
 		removeBuilding(player, upgradeId)
 	end
 	CookieService.AddCookies(player, refund, PlayerMetricsService.CookieSources.Refund)
+	if config.TemplateKind == "Building" then
+		QuestService.OnBuildingSold(player, upgradeId)
+	end
 
 	return true,
 		"Sold "
@@ -1357,6 +1360,7 @@ function UpgradeService.SellBuilding(player, building)
 	markBuildingCountAdjusted(building)
 	building:Destroy()
 	CookieService.AddCookies(player, refund, PlayerMetricsService.CookieSources.Refund)
+	QuestService.OnBuildingSold(player, upgradeId)
 
 	return true,
 		"Sold "
@@ -1402,6 +1406,7 @@ function UpgradeService.SellAllBuildings(player, upgradeId)
 	end
 	removeAllBuildings(player, upgradeId)
 	CookieService.AddCookies(player, refund, PlayerMetricsService.CookieSources.Refund)
+	QuestService.OnBuildingSold(player, upgradeId)
 
 	return true,
 		"Sold "

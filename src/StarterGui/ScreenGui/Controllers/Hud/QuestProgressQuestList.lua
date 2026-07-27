@@ -1,5 +1,6 @@
 -- Projects server snapshots into the Studio-authored tracked card and grouped selector.
--- Stage 1 has one authored row; future arcs add authored groups only after exemplar approval.
+-- One tracked row and one selector row are authored; the selector renders the tracked
+-- quest until the grouped multi-row composition is authored in Studio.
 
 local GuiService = game:GetService("GuiService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -7,6 +8,7 @@ local UserInputService = game:GetService("UserInputService")
 
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
 local CurrencyRewardFlightConfig = require(ReplicatedStorage.Shared.CurrencyRewardFlightConfig)
+local QuestSnapshot = require(ReplicatedStorage.Shared.QuestSnapshot)
 local UiMotion = require(ReplicatedStorage.Shared.UiMotion)
 local QuestProgressCompletionStrike = require(script.Parent:WaitForChild("QuestProgressCompletionStrike"))
 
@@ -152,9 +154,7 @@ function QuestProgressQuestList.bind(root, callbacks)
 	end
 
 	local function currentArcAndQuest()
-		local arc = snapshot and snapshot.Arcs and snapshot.Arcs[1]
-		local quest = arc and arc.Quests and arc.Quests[1]
-		return arc, quest
+		return QuestSnapshot.getTracked(snapshot)
 	end
 
 	local function updateToggleVerticalPosition()
@@ -389,7 +389,15 @@ function QuestProgressQuestList.bind(root, callbacks)
 		trackedRow.Visible = replayActive or not completedNow or completionHold
 		activeQuestVisible = trackedRow.Visible
 		setText(trackedTitle, shownQuest.Title)
+		-- A keyboard variant exists only for steps that may name a keybind. Touch and
+		-- gamepad players must never be shown one.
 		local shownDescription = shownQuest.Description
+		if
+			shownQuest.DescriptionKeyboard
+			and UserInputService.PreferredInput == Enum.PreferredInput.KeyboardAndMouse
+		then
+			shownDescription = shownQuest.DescriptionKeyboard
+		end
 		local shownProgress = replayActive and shownQuest.Progress or quest.Progress
 		local completionCueKey
 		if
@@ -532,6 +540,12 @@ function QuestProgressQuestList.bind(root, callbacks)
 			render()
 		end
 	end)
+	-- Picking up a controller mid-step must drop the keyboard wording on the next frame.
+	connect(UserInputService:GetPropertyChangedSignal("PreferredInput"), function()
+		if snapshot then
+			render()
+		end
+	end)
 	if arcHeaderButton then
 		connect(arcHeaderButton.Activated, function()
 			setSelectorOpen(not selectorOpen)
@@ -565,8 +579,7 @@ function QuestProgressQuestList.bind(root, callbacks)
 	return {
 		renderSnapshot = function(nextSnapshot)
 			local _, previousQuest = currentArcAndQuest()
-			local nextArc = nextSnapshot and nextSnapshot.Arcs and nextSnapshot.Arcs[1]
-			local nextQuest = nextArc and nextArc.Quests and nextArc.Quests[1]
+			local _, nextQuest = QuestSnapshot.getTracked(nextSnapshot)
 			if previousQuest and nextQuest then
 				local previousCurrent = tonumber(previousQuest.SubProgress)
 				local nextCurrent = tonumber(nextQuest.SubProgress)

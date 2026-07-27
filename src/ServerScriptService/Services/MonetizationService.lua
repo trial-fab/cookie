@@ -67,7 +67,13 @@ local function acquireProcessing(userId)
 			processingByUserId[userId] = nil
 			released:Fire()
 		end
-		released:Destroy()
+		-- Deferred, never synchronous. Under SignalBehavior.Deferred a Fire only queues the
+		-- waiting thread's resumption to the end of the frame, and destroying the event first
+		-- severs that waiter -- stranding a receipt thread inside acquireProcessing forever.
+		-- Deferring puts the teardown behind the resumption it has to outlive.
+		task.defer(function()
+			released:Destroy()
+		end)
 	end
 end
 

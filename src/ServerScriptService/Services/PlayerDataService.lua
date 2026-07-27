@@ -61,6 +61,10 @@ local DEFAULT_PERSISTENT_DATA = {
 	SelectedGooSkin = "Goo::Default",
 	LoginStreak = 0,
 	LastLoginDay = 0,
+	-- os.time() stamps of golden cookies earned from clicking, one per earn, bounded by the
+	-- hourly cap. Persisted rather than session-held so the rolling window survives a rejoin
+	-- (GoldenCookieService owns it; see the note there).
+	GoldenCookieClickEarnTimes = {},
 	Achievements = {},
 	LastSeenTimestamp = 0,
 	UnlockedBuildings = {},

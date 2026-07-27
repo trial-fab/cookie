@@ -69,12 +69,8 @@ function StoreLayout.new(ctx)
 	end
 	M.getStoreScale = getStoreScale
 
-	-- Viewport read + the touch/short-side mobile predicate are shared (Shared/MobileScale)
-	-- so there is one source of that logic; this sidebar keeps its own 0.74/1 scale constants.
-	local function getViewportSize()
-		return MobileScale.getViewportSize(store)
-	end
-
+	-- The touch/short-side mobile predicate is shared (Shared/MobileScale) so there is one
+	-- source of that logic; this sidebar keeps its own 0.74/1 scale constants.
 	local function shouldUseMobileStoreScale()
 		return MobileScale.shouldUseMobile(store)
 	end

@@ -136,6 +136,10 @@ local function rebuild(state)
 		state.clickStates[clone] = {
 			phase = "idle",
 			startedAt = 0,
+			-- Resolved once here instead of re-walking the clone's descendants on every frame of
+			-- the orbit loop. destroyGeneratedClones clears clickStates alongside clones, so this
+			-- reference is torn down with the instance it points at and never outlives it.
+			icon = icon,
 		}
 	end
 	state.nextClickIndex = 1
@@ -376,7 +380,7 @@ local function applyStaticLayout()
 				clickState.phase = "idle"
 				clickState.startedAt = 0
 			end
-			local icon = surfaceGui:FindFirstChild(ICON_NAME, true)
+			local icon = clickState and clickState.icon
 			if icon and icon:IsA("GuiObject") then
 				local angle = startAngle + ((index - 1) / math.max(1, count)) * 2 * math.pi
 				icon.Position = UDim2.fromScale(0.5 + math.cos(angle) * radius, 0.5 + math.sin(angle) * radius)
@@ -414,17 +418,16 @@ RunService.RenderStepped:Connect(function(dt)
 		startNextClockwiseClick(state, elapsed)
 
 		for index, surfaceGui in ipairs(state.clones) do
-			if surfaceGui.Parent then
-				local icon = surfaceGui:FindFirstChild(ICON_NAME, true)
-				if icon and icon:IsA("GuiObject") then
-					local angle = orbitAngle + ((index - 1) / math.max(1, count)) * 2 * math.pi
-					local radius = getClickRadius(state.clickStates[surfaceGui], elapsed, state.speedFactor)
-					icon.Position = UDim2.fromScale(
-						0.5 + math.cos(angle) * radius,
-						0.5 + math.sin(angle) * radius
-					)
-					icon.Rotation = math.deg(angle) + VisualConfig.RotationOffsetDegrees
-				end
+			local clickState = state.clickStates[surfaceGui]
+			local icon = clickState and clickState.icon
+			if surfaceGui.Parent and icon and icon:IsA("GuiObject") then
+				local angle = orbitAngle + ((index - 1) / math.max(1, count)) * 2 * math.pi
+				local radius = getClickRadius(clickState, elapsed, state.speedFactor)
+				icon.Position = UDim2.fromScale(
+					0.5 + math.cos(angle) * radius,
+					0.5 + math.sin(angle) * radius
+				)
+				icon.Rotation = math.deg(angle) + VisualConfig.RotationOffsetDegrees
 			end
 		end
 	end

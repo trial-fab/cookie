@@ -13,13 +13,11 @@ local PANEL_COLOR = Color3.fromRGB(16, 18, 26)
 local PANEL_ALT_COLOR = Color3.fromRGB(28, 32, 42)
 local PANEL_SOFT_COLOR = Color3.fromRGB(36, 42, 54)
 local TEXT_COLOR = Color3.fromRGB(244, 247, 252)
-local MUTED_TEXT_COLOR = Color3.fromRGB(170, 178, 192)
 local ACCENT_COLOR = Color3.fromRGB(0, 170, 255)
 local ICON_BG = Color3.fromRGB(30, 32, 40)
 local DANGER_COLOR = Color3.fromRGB(185, 54, 55)
 local SHIELD_ON_COLOR = Color3.fromRGB(92, 200, 72)
 local SHIELD_OFF_COLOR = Color3.fromRGB(118, 126, 142)
-local WARNING_COLOR = Color3.fromRGB(236, 190, 96)
 
 -- Studio-authored UI is the source of truth by default. Set RuntimeStyle=true
 -- on ScreenGui only if you intentionally want this script to regenerate visual

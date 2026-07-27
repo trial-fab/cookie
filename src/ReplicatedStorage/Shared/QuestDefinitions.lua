@@ -1,14 +1,33 @@
 -- Canonical definitions for the staged tutorial-quest rollout.
--- Only A Gooey Beginning ships in Stage 1. DisplayQuestCount keeps the approved
--- five-quest arc presentation without exposing or inventing the later quests.
+-- Content spec: docs/quest-getting-started-arc.md. DisplayQuestCount keeps the approved
+-- five-quest arc presentation while later quests are still being built, so the arc header
+-- reads x/5 without exposing or inventing quests that do not exist yet.
+--
+-- Steps declare WHAT proves them (ObjectiveKind + ObjectiveTarget) and QuestService owns
+-- one resolver per kind. Static copy lives here; only steps that need a live number carry
+-- a DynamicCopy id. Sub-progress "(x/y)" is appended generically from the resolved
+-- current/target, so no step string hardcodes a count.
 
 local QuestDefinitions = {}
 
-QuestDefinitions.SchemaVersion = 2
+QuestDefinitions.SchemaVersion = 3
+
 QuestDefinitions.ObjectiveKinds = table.freeze({
 	StoryTransition = true,
 	ManualOwnerClickCount = true,
 	BuildingPlaced = true,
+	BuildingCountAtLeast = true,
+	BuildingSold = true,
+	ClientUiObservation = true,
+})
+
+-- The closed allowlist of UI-only facts the client may report. None of these authorize
+-- anything economic; the worst a forged one achieves is skipping a tutorial step the
+-- player could have completed in two seconds. Anything with a canonical server trace
+-- must use that trace instead of appearing here.
+QuestDefinitions.Observations = table.freeze({
+	StatsEyeEnabled = true,
+	BuildViewOpened = true,
 })
 
 QuestDefinitions.Arcs = table.freeze({
@@ -17,10 +36,12 @@ QuestDefinitions.Arcs = table.freeze({
 		Order = 1,
 		Title = "Getting Started",
 		UnlockCondition = table.freeze({ Kind = "Always" }),
-		QuestIds = table.freeze({ "gooey_beginning" }),
+		QuestIds = table.freeze({ "gooey_beginning", "mixer_training" }),
 		DisplayQuestCount = 5,
 		CapstoneReward = table.freeze({
 			ReceiptId = "opening_tutorial_capstone",
+			-- Chosen 2026-07-26: Meteor Goo, 1.05x, non-rollable. Resolved flips to true
+			-- when the art lands, which is what retires the locked-silhouette header.
 			DisplayName = "Mystery Goo",
 			Resolved = false,
 		}),
@@ -78,6 +99,60 @@ QuestDefinitions.Quests = table.freeze({
 				CompactObjective = "Buy and place a Noob Clicker from the Mixer.",
 				ObjectiveKind = "BuildingPlaced",
 				ObjectiveTarget = "Noob Clicker",
+				-- Reads the live configured price; never restates it here.
+				DynamicCopy = "FirstHelperAffordability",
+				GuideCapability = true,
+			}),
+		}),
+	}),
+
+	mixer_training = table.freeze({
+		Id = "mixer_training",
+		ArcId = "opening_tutorial",
+		Order = 2,
+		Title = "Mixer Training",
+		RequiresQuestIds = table.freeze({ "gooey_beginning" }),
+		Reward = table.freeze({
+			Kind = "Gems",
+			Amount = 10,
+			ReceiptId = "quest_reward_mixer_training_v1",
+		}),
+		Steps = table.freeze({
+			table.freeze({
+				Id = "see_the_numbers",
+				Title = "See the Numbers",
+				CompactObjective = "Turn on Building Stats in the Mixer.",
+				ObjectiveKind = "ClientUiObservation",
+				ObjectiveTarget = "StatsEyeEnabled",
+				GuideCapability = true,
+			}),
+			table.freeze({
+				Id = "hire_another_noob",
+				Title = "Hire Another Noob",
+				CompactObjective = "Buy a second Noob Clicker.",
+				ObjectiveKind = "BuildingCountAtLeast",
+				ObjectiveTarget = table.freeze({ UpgradeId = "Noob Clicker", Count = 2 }),
+				GuideCapability = true,
+			}),
+			table.freeze({
+				Id = "look_from_above",
+				Title = "Look From Above",
+				CompactObjective = "Open Build View to see your plot from above.",
+				-- V is already surfaced to keyboard users through the cursor tooltip, so it
+				-- is the one keybind the arc names. Touch and gamepad get the plain line.
+				CompactObjectiveKeyboard = "Open Build View (V) to see your plot from above.",
+				ObjectiveKind = "ClientUiObservation",
+				ObjectiveTarget = "BuildViewOpened",
+				GuideCapability = true,
+			}),
+			table.freeze({
+				Id = "undo_a_purchase",
+				Title = "Undo a Purchase",
+				-- "Placed" is load-bearing: the store card sells ALL of a building through
+				-- SellAll, only the world object sells one.
+				CompactObjective = "Switch the Mixer to Sell, then sell one placed Noob Clicker.",
+				ObjectiveKind = "BuildingSold",
+				ObjectiveTarget = "Any",
 				GuideCapability = true,
 			}),
 		}),
@@ -93,6 +168,34 @@ local function validId(value)
 		and value ~= ""
 		and not string.find(string.lower(value), "preview", 1, true)
 		and not string.find(string.lower(value), "example", 1, true)
+end
+
+local function validateObjective(step)
+	local kind = step.ObjectiveKind
+	local target = step.ObjectiveTarget
+
+	if kind == "ManualOwnerClickCount" then
+		if type(target) ~= "number" or target < 1 or target % 1 ~= 0 then
+			fail(("step %s needs a positive integer click target"):format(step.Id))
+		end
+	elseif kind == "BuildingCountAtLeast" then
+		if
+			type(target) ~= "table"
+			or type(target.UpgradeId) ~= "string"
+			or target.UpgradeId == ""
+			or type(target.Count) ~= "number"
+			or target.Count < 1
+			or target.Count % 1 ~= 0
+		then
+			fail(("step %s needs an UpgradeId and a positive integer Count"):format(step.Id))
+		end
+	elseif kind == "ClientUiObservation" then
+		if not QuestDefinitions.Observations[target] then
+			fail(("step %s observes %s, which is not on the allowlist"):format(step.Id, tostring(target)))
+		end
+	elseif type(target) ~= "string" or target == "" then
+		fail(("step %s needs a non-empty objective target"):format(step.Id))
+	end
 end
 
 function QuestDefinitions.Validate()
@@ -178,6 +281,10 @@ function QuestDefinitions.Validate()
 			if not QuestDefinitions.ObjectiveKinds[step.ObjectiveKind] then
 				fail(("step %s uses unsupported objective kind %s"):format(step.Id, tostring(step.ObjectiveKind)))
 			end
+			validateObjective(step)
+			if step.CompactObjectiveKeyboard ~= nil and type(step.CompactObjectiveKeyboard) ~= "string" then
+				fail(("step %s has an invalid keyboard copy variant"):format(step.Id))
+			end
 		end
 	end
 
@@ -208,6 +315,33 @@ function QuestDefinitions.Validate()
 	end
 
 	return true
+end
+
+-- Quests of an arc in authored order, so callers never depend on pairs() ordering.
+function QuestDefinitions.GetArcQuests(arcId)
+	local arc = QuestDefinitions.Arcs[arcId]
+	local quests = {}
+	if not arc then
+		return quests
+	end
+	for _, questId in ipairs(arc.QuestIds) do
+		local quest = QuestDefinitions.Quests[questId]
+		if quest then
+			table.insert(quests, quest)
+		end
+	end
+	return quests
+end
+
+function QuestDefinitions.GetArcsInOrder()
+	local arcs = {}
+	for _, arc in pairs(QuestDefinitions.Arcs) do
+		table.insert(arcs, arc)
+	end
+	table.sort(arcs, function(a, b)
+		return a.Order < b.Order
+	end)
+	return arcs
 end
 
 QuestDefinitions.Validate()

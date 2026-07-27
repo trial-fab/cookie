@@ -68,7 +68,9 @@ function AutoclickService.StepPlayer(player)
 		local sheet = SheetService.GetPlayerSheet(player)
 		local cookie = sheet and sheet:FindFirstChild("Cookie")
 		if cookie and cookie:IsA("BasePart") then
-			CookieService.DisplayIncrease(cookie, "+" .. NumberFormat.abbreviate(payout), POPUP_COLOR)
+			-- Owner-targeted: idle income ticks twice a second forever and nobody else needs to
+			-- render it. CookieService.displayIncrease explains why manual clicks still broadcast.
+			CookieService.DisplayIncrease(cookie, "+" .. NumberFormat.abbreviate(payout), POPUP_COLOR, player)
 		end
 	end
 

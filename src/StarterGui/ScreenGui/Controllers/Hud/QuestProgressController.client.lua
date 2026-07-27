@@ -5,7 +5,9 @@ local Attrs = require(Shared:WaitForChild("Attrs"))
 local GuiNames = require(Shared:WaitForChild("GuiNames"))
 local Net = require(Shared:WaitForChild("Net"))
 local QuestReplayConfig = require(Shared:WaitForChild("QuestReplayConfig"))
+local QuestSnapshot = require(Shared:WaitForChild("QuestSnapshot"))
 local QuestProgressGuidance = require(script.Parent:WaitForChild("QuestProgressGuidance"))
+local QuestProgressObservations = require(script.Parent:WaitForChild("QuestProgressObservations"))
 local QuestProgressPosition = require(script.Parent:WaitForChild("QuestProgressPosition"))
 local QuestProgressPresenter = require(script.Parent:WaitForChild("QuestProgressPresenter"))
 local QuestProgressQuestList = require(script.Parent:WaitForChild("QuestProgressQuestList"))
@@ -45,6 +47,10 @@ if not list then
 	return
 end
 
+local observations = QuestProgressObservations.bind(screenGui, function(key)
+	Net.fireServer(Net.Names.QuestAction, "Observe", key)
+end)
+
 local rubbleProgressEvent = screenGui:FindFirstChild(QuestReplayConfig.RubbleProgressEvent)
 if not rubbleProgressEvent then
 	rubbleProgressEvent = Instance.new("BindableEvent")
@@ -71,6 +77,8 @@ Net.on(Net.Names.QuestSnapshot, function(snapshot)
 	end
 	latestSnapshot = snapshot
 	list.renderSnapshot(snapshot)
+	local _, trackedQuest = QuestSnapshot.getTracked(snapshot)
+	observations.setAwaiting(trackedQuest and trackedQuest.AwaitingObservation or nil)
 	screenGui:SetAttribute(Attrs.QuestSnapshotReady, true)
 	if replayActive then
 		guidance.stop()

@@ -1,6 +1,7 @@
 -- Optional, client-only guidance for the currently selected authoritative quest.
 -- It moves only Studio-authored cue instances and never reports objective completion.
 
+local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -9,9 +10,10 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
+local GuiNames = require(ReplicatedStorage.Shared.GuiNames)
+local QuestSnapshot = require(ReplicatedStorage.Shared.QuestSnapshot)
 
 local QuestProgressGuidance = {}
-local GUIDE_BLUE = Color3.fromRGB(0, 170, 255)
 local CATCH_REST_TRANSPARENCY = 0.88
 local CATCH_PULSE_TRANSPARENCY = 0.58
 local MIXER_FLIGHT_SECONDS = 2
@@ -39,6 +41,55 @@ local function centerOfGui(instance)
 		return instance.AbsolutePosition + instance.AbsoluteSize / 2
 	end
 	return nil
+end
+
+-- AbsolutePosition is measured inside each ScreenGui's own inset frame, so a target that
+-- lives in a ScreenGui with a different IgnoreGuiInset (Build View sits in the topbar GUI)
+-- has to gain or lose the topbar inset before it can be compared with our root.
+local function screenPointOfGui(instance, screenGui)
+	local point = centerOfGui(instance)
+	if not point then
+		return nil
+	end
+	local owner = instance:FindFirstAncestorOfClass("ScreenGui")
+	if owner and owner ~= screenGui and owner.IgnoreGuiInset ~= screenGui.IgnoreGuiInset then
+		local inset = GuiService:GetGuiInset()
+		point = owner.IgnoreGuiInset and point - inset or point + inset
+	end
+	return point
+end
+
+local function screenPointOfWorldPosition(position, screenGui)
+	local camera = Workspace.CurrentCamera
+	if not camera then
+		return nil
+	end
+	local projected, visible
+	if screenGui.IgnoreGuiInset then
+		projected, visible = camera:WorldToScreenPoint(position)
+	else
+		projected, visible = camera:WorldToViewportPoint(position)
+	end
+	if visible and projected.Z > 0 then
+		return Vector2.new(projected.X, projected.Y)
+	end
+	return nil
+end
+
+-- The most recently placed building of a type on the player's own sheet. Sell guidance
+-- must point at the world object: the store card sells every one of them.
+local function findPlacedBuilding(player, upgradeId)
+	local sheet = findPlayerSheet(player)
+	if not sheet then
+		return nil
+	end
+	local found
+	for _, child in ipairs(sheet:GetChildren()) do
+		if child:IsA("Model") and child:GetAttribute(Attrs.UpgradeId) == upgradeId then
+			found = child
+		end
+	end
+	return found
 end
 
 local function findUpgradeRow(screenGui, upgradeId)
@@ -77,6 +128,7 @@ function QuestProgressGuidance.new(screenGui, root)
 	local mixerFlightPending = false
 	local mixerFlightGeneration = 0
 	local connections = {}
+	local authoredRootZIndex = root.ZIndex
 
 	if pointer and pointer:IsA("GuiObject") then
 		pointer.Visible = false
@@ -101,7 +153,10 @@ function QuestProgressGuidance.new(screenGui, root)
 			local cookie = sheet and sheet:FindFirstChild("Cookie", true)
 			if cookie and (cookie:IsA("BasePart") or cookie:IsA("Model")) then
 				cookieHighlight.Adornee = cookie
-				cookieHighlight.FillColor = GUIDE_BLUE
+				-- Outline only. A filled highlight repaints the cookie and hides the art the
+				-- player is being asked to click.
+				cookieHighlight.FillTransparency = 1
+				cookieHighlight.OutlineTransparency = 0
 				cookieHighlight.OutlineColor = Color3.new(1, 1, 1)
 				cookieHighlight.DepthMode = Enum.HighlightDepthMode.Occluded
 				cookieHighlight.Enabled = true
@@ -159,6 +214,28 @@ function QuestProgressGuidance.new(screenGui, root)
 		return true
 	end
 
+	-- ZIndexBehavior is Sibling, so the pointer's stacking is decided by the ZIndex of the
+	-- whole QuestProgress subtree against the target's own top-level frame, not by the
+	-- pointer's own ZIndex. Raise the root over that frame while a cue is live and put the
+	-- authored value straight back afterwards, the way MenuBehaviorController raises the
+	-- pill for a modal. Targets in another ScreenGui are ordered by DisplayOrder instead,
+	-- so they pass no instance and this is a no-op for them.
+	local function liftRootAbove(target)
+		local desired = authoredRootZIndex
+		if target and target:IsA("GuiObject") then
+			local top = target
+			while top.Parent and top.Parent ~= screenGui do
+				top = top.Parent
+			end
+			if top.Parent == screenGui and top ~= root and top:IsA("GuiObject") and top.ZIndex >= desired then
+				desired = top.ZIndex + 1
+			end
+		end
+		if root.ZIndex ~= desired then
+			root.ZIndex = desired
+		end
+	end
+
 	local function hideCues()
 		if pulseTween then
 			pulseTween:Cancel()
@@ -172,6 +249,7 @@ function QuestProgressGuidance.new(screenGui, root)
 		if pointerScale and pointerScale:IsA("UIScale") then
 			pointerScale.Scale = 1
 		end
+		liftRootAbove(nil)
 	end
 
 	local function stop()
@@ -179,38 +257,77 @@ function QuestProgressGuidance.new(screenGui, root)
 		hideCues()
 	end
 
+	-- Every target resolver returns the screen point AND the instance it came from, so the
+	-- pointer can guarantee it draws above whatever it is pointing at.
+	local function pointAt(instance)
+		return centerOfGui(instance), instance
+	end
+
+	-- Reaching a surface is guidance's job, not a step's, so every in-Mixer step falls back
+	-- to pointing at the Mixer itself while the store is closed.
+	local function mixerSlotTarget()
+		local hotbar = screenGui:FindFirstChild("Hotbar")
+		return pointAt(hotbar and hotbar:FindFirstChild("SlotCenter"))
+	end
+
+	local function buyNoobClickerTarget()
+		local hotbar = screenGui:FindFirstChild("Hotbar")
+		if screenGui:GetAttribute(Attrs.PlacementActive) == true then
+			return pointAt(hotbar and hotbar:FindFirstChild("SlotRight"))
+		end
+		if screenGui:GetAttribute(Attrs.StoreOpen) == true then
+			return pointAt(findUpgradeRow(screenGui, "Noob Clicker"))
+		end
+		return mixerSlotTarget()
+	end
+
 	local function resolveTarget(stepId)
 		if stepId == "help_goo_recover" then
 			local sheet = findPlayerSheet(player)
 			local cookie = sheet and sheet:FindFirstChild("Cookie")
-			local camera = Workspace.CurrentCamera
-			if cookie and cookie:IsA("BasePart") and camera then
-				local projected, visible
-				if screenGui.IgnoreGuiInset then
-					projected, visible = camera:WorldToScreenPoint(cookie.Position)
-				else
-					projected, visible = camera:WorldToViewportPoint(cookie.Position)
-				end
-				if visible and projected.Z > 0 then
-					return Vector2.new(projected.X, projected.Y)
-				end
+			if cookie and cookie:IsA("BasePart") then
+				return screenPointOfWorldPosition(cookie.Position, screenGui)
 			end
 		elseif stepId == "unlock_mixer" then
 			local dialogue = screenGui:FindFirstChild("StoryDialogue")
 			if not (dialogue and dialogue:IsA("GuiObject") and dialogue.Visible) then
 				return nil
 			end
-			local continueButton = dialogue and dialogue:FindFirstChild("Continue", true)
-			return centerOfGui(continueButton) or centerOfGui(dialogue)
-		elseif stepId == "build_first_helper" then
-			local hotbar = screenGui:FindFirstChild("Hotbar")
-			if screenGui:GetAttribute(Attrs.PlacementActive) == true then
-				return centerOfGui(hotbar and hotbar:FindFirstChild("SlotRight"))
+			local continueButton = dialogue:FindFirstChild("Continue", true)
+			if centerOfGui(continueButton) then
+				return pointAt(continueButton)
 			end
-			if screenGui:GetAttribute(Attrs.StoreOpen) == true then
-				return centerOfGui(findUpgradeRow(screenGui, "Noob Clicker"))
+			return pointAt(dialogue)
+		elseif stepId == "build_first_helper" or stepId == "hire_another_noob" then
+			return buyNoobClickerTarget()
+		elseif stepId == "see_the_numbers" then
+			if screenGui:GetAttribute(Attrs.StoreOpen) ~= true then
+				return mixerSlotTarget()
 			end
-			return centerOfGui(hotbar and hotbar:FindFirstChild("SlotCenter"))
+			return pointAt(screenGui:FindFirstChild("StatsEyeToggle", true))
+		elseif stepId == "look_from_above" then
+			if screenGui:GetAttribute(Attrs.BuildModeActive) == true then
+				return nil
+			end
+			local playerGui = screenGui:FindFirstAncestorOfClass("PlayerGui")
+			local topbar = playerGui and playerGui:FindFirstChild(GuiNames.TopbarHudGui)
+			local frame = topbar and topbar:FindFirstChild(GuiNames.BuildModeFrame, true)
+			local target = frame and frame:FindFirstChild("Hitbox", true) or frame
+			-- A different ScreenGui, so ordering is DisplayOrder's job, not ZIndex's.
+			return screenPointOfGui(target, screenGui), nil
+		elseif stepId == "undo_a_purchase" then
+			if screenGui:GetAttribute(Attrs.StoreOpen) ~= true then
+				return mixerSlotTarget()
+			end
+			if screenGui:GetAttribute(Attrs.SellMode) ~= true then
+				return pointAt(screenGui:FindFirstChild("SellButton", true))
+			end
+			-- Sell mode is on: point at the placed building, never the card. Clicking the
+			-- card routes to SellAll and would take every Noob Clicker the player owns.
+			local building = findPlacedBuilding(player, "Noob Clicker")
+			if building then
+				return screenPointOfWorldPosition(building:GetPivot().Position, screenGui)
+			end
 		end
 		return nil
 	end
@@ -231,7 +348,7 @@ function QuestProgressGuidance.new(screenGui, root)
 		end
 		setCookieHighlight(activeStepId == "help_goo_recover")
 		if
-			activeStepId == "build_first_helper"
+			(activeStepId == "build_first_helper" or activeStepId == "hire_another_noob")
 			and screenGui:GetAttribute(Attrs.StoreOpen) == true
 			and screenGui:GetAttribute(Attrs.PlacementActive) ~= true
 		then
@@ -242,11 +359,12 @@ function QuestProgressGuidance.new(screenGui, root)
 			end
 		end
 		stopCatchPulse()
-		local screenPoint = resolveTarget(activeStepId)
+		local screenPoint, targetInstance = resolveTarget(activeStepId)
 		if not screenPoint then
 			hideCues()
 			return
 		end
+		liftRootAbove(targetInstance)
 		local localPoint = screenPoint - root.AbsolutePosition
 		pointer.Position = UDim2.fromOffset(localPoint.X, localPoint.Y)
 		local wasVisible = pointer.Visible
@@ -401,17 +519,10 @@ function QuestProgressGuidance.new(screenGui, root)
 	end
 
 	local function setSnapshot(snapshot)
-		local previousStepId = currentSnapshot
-			and currentSnapshot.Arcs
-			and currentSnapshot.Arcs[1]
-			and currentSnapshot.Arcs[1].Quests[1]
-			and currentSnapshot.Arcs[1].Quests[1].StepId
+		local _, previousQuest = QuestSnapshot.getTracked(currentSnapshot)
+		local previousStepId = previousQuest and previousQuest.StepId
 		currentSnapshot = snapshot
-		local quest = snapshot
-			and snapshot.Arcs
-			and snapshot.Arcs[1]
-			and snapshot.Arcs[1].Quests
-			and snapshot.Arcs[1].Quests[1]
+		local _, quest = QuestSnapshot.getTracked(snapshot)
 		local nextStepId = quest and quest.StepId
 		if activeStepId and activeStepId ~= nextStepId then
 			stop()

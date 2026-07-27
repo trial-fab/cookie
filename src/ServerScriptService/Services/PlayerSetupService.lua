@@ -126,24 +126,42 @@ local function startPlaytimeClock(player)
 	end)
 end
 
+-- Setup is a staged pipeline and any stage can fail closed. Bailing silently used to leave the
+-- player standing in the world with leaderstats but no plot, no buildings, no quests and no
+-- character teleport, with nothing in the log saying why. Name the stage, then end the session:
+-- their canonical Data is untouched (placement and metric snapshots are both gated on readiness
+-- flags this path never sets), so a rejoin is strictly better than an unplayable session.
+local function abortSetup(player, stage)
+	warn(("PlayerSetupService: %s failed at stage %q; ending the session so they can rejoin.")
+		:format(player.Name, stage))
+	if player.Parent == Players then
+		player:Kick("Your session could not finish loading. Please rejoin.")
+	end
+end
+
 local function setupPlayer(player)
 	print("Setting up player:", player.Name)
 
+	-- A nil `data` means PlayerDataService.Load already warned and kicked, and a missing parent
+	-- means they left mid-load. Both are handled elsewhere, so neither is an abort case.
 	local data = PlayerDataService.Load(player)
 	if not data or player.Parent ~= Players then
 		return
 	end
 	local projectionsPrepared = createPlayerValues(player, data)
 	if not projectionsPrepared then
+		abortSetup(player, "player value projections")
 		return
 	end
 	local unlockedBuildingsReady = UpgradeService.SetupUnlockedBuildings(player)
 	local metricsReady = PlayerMetricsService.SetupPlayer(player)
 	if not metricsReady then
+		abortSetup(player, "player metrics")
 		return
 	end
 	PlayerDataProjectionAudit.MarkDomain6ProjectionReady(player)
 	if not PlayerDataService.CompleteDomain7Setup(player) then
+		abortSetup(player, "domain 7 projections")
 		return
 	end
 	CookieService.RefreshCookiesPerClickDisplay(player)
@@ -154,7 +172,12 @@ local function setupPlayer(player)
 	-- reward in the Lucky Spin → Daily tab (DailyRewardService), gated on canonical
 	-- LoginStreak/LastLoginDay Data projected by createPersistentAttributes.
 	local skinsReady = WheelService.SetupPlayer(player)
-	if not unlockedBuildingsReady or not skinsReady then
+	if not unlockedBuildingsReady then
+		abortSetup(player, "unlocked buildings")
+		return
+	end
+	if not skinsReady then
+		abortSetup(player, "skin inventory")
 		return
 	end
 	PlayerDataProjectionAudit.MarkDomain5ProjectionReady(player)
@@ -172,14 +195,21 @@ local function setupPlayer(player)
 		type(liveRun.Placements) == "table" and liveRun.Placements or { [DEFAULT_DIMENSION] = {} }
 	)
 	-- Owned gear restoration can yield. Do not continue setup or record CpS against an ended
-	-- profile after that wait; later-domain projections remain otherwise unchanged.
-	if not upgradesReady or player.Parent ~= Players or not PlayerDataService.GetDomain7Data(player) then
+	-- profile after that wait; later-domain projections remain otherwise unchanged. Leaving
+	-- during that yield is ordinary, so it stays a silent return rather than an abort.
+	if player.Parent ~= Players then
+		return
+	end
+	if not upgradesReady or not PlayerDataService.GetDomain7Data(player) then
+		abortSetup(player, "upgrade restore")
 		return
 	end
 	if not PlayerDataService.MarkPlacementSerializationReady(player) then
+		abortSetup(player, "placement serialization")
 		return
 	end
 	if not QuestService.SetupPlayer(player) then
+		abortSetup(player, "quests")
 		return
 	end
 	ShieldService.SetupPlayer(player)
@@ -242,7 +272,11 @@ function PlayerSetupService.Init()
 	Players.PlayerAdded:Connect(setupPlayer)
 
 	for _, player in ipairs(Players:GetPlayers()) do
-		setupPlayer(player)
+		-- Spawned, not called: setupPlayer yields on the profile load, and every service Init
+		-- after this one in Server.server.lua -- MonetizationService, which installs
+		-- MarketplaceService.ProcessReceipt, among them -- would otherwise sit behind a
+		-- DataStore round-trip for a player who was already in the server.
+		task.spawn(setupPlayer, player)
 	end
 
 	print("PlayerSetupService initialized")

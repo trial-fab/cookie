@@ -301,7 +301,8 @@ local function dailyState()
 	local today = currentUtcDay()
 	local lastDay = readDailyInt(Attrs.LastLoginDay)
 	local streak = readDailyInt(Attrs.LoginStreak)
-	local pending = if lastDay == today then math.max(1, streak) elseif lastDay == today - 1 then streak + 1 else 1
+	-- Mirrors DailyRewardService: the counter advances on any unclaimed day and never resets.
+	local pending = if lastDay == today then math.max(1, streak) else streak + 1
 	return {
 		canClaim = lastDay ~= today,
 		streak = streak,

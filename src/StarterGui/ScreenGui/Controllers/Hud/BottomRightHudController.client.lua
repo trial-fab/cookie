@@ -79,7 +79,8 @@ if titleEffects then
 	titleEffects.setActive(true)
 end
 
-local xpShimmerPresenter = XpBarShimmerPresenter.bind(xpFill)
+-- Called for the binding side effect; the returned handle has no caller.
+XpBarShimmerPresenter.bind(xpFill)
 
 if xpText and (xpText:IsA("TextLabel") or xpText:IsA("TextButton")) then
 	local shownTransparency = xpText.TextTransparency

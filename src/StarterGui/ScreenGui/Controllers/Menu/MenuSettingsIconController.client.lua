@@ -115,13 +115,6 @@ local function updateImage()
 	end
 end
 
-local function setActive(active)
-	settingsFrame:SetAttribute(Attrs.Active, active)
-	settingsButton:SetAttribute(Attrs.Active, active)
-	hitbox:SetAttribute(Attrs.Active, active)
-	updateImage()
-end
-
 hitbox.MouseEnter:Connect(function()
 	hovering = true
 	settingsFrame:SetAttribute(Attrs.Hovering, true)

@@ -21,7 +21,6 @@ local ModalCoordinator = require(
 	screenGui:WaitForChild("Controllers"):WaitForChild("Modals"):WaitForChild("ModalCoordinator")
 )
 
-local localPlayer = Players.LocalPlayer
 local panel = screenGui:WaitForChild("Leaderboard", 10)
 if not panel or not panel:IsA("GuiObject") then
 	warn("LeaderboardController disabled: ScreenGui.Leaderboard was not found")
