@@ -314,7 +314,11 @@ local function getPlotPlacementCFrame(sheet, floorId, requestedCFrame, template,
 
 	local localPosition = surface.cframe:PointToObjectSpace(requestedCFrame.Position)
 	local _, templateSize = template:GetBoundingBox()
-	local _, rotationY = requestedCFrame:ToOrientation()
+	-- The client sends a world-space CFrame, but building rotation is defined in
+	-- the plot's local grid frame. Extracting world yaw makes only the authored
+	-- template plot line up; radial plots need their Base rotation preserved.
+	local requestedLocalCFrame = surface.cframe:ToObjectSpace(requestedCFrame)
+	local _, rotationY = requestedLocalCFrame:ToOrientation()
 	local cellsX, cellsZ = GridPlacement.getFootprintCells(config, rotationY)
 	local solved = GridPlacement.solvePlacement(localPosition, surface.size, cellsX, cellsZ)
 	if not solved.inBounds then
@@ -322,12 +326,9 @@ local function getPlotPlacementCFrame(sheet, floorId, requestedCFrame, template,
 	end
 
 	local snappedX, snappedZ = solved.snappedX, solved.snappedZ
-	local worldPosition = surface.cframe:PointToWorldSpace(Vector3.new(
-		snappedX,
-		surface.size.Y / 2 + templateSize.Y / 2,
-		snappedZ
-	))
-	local desiredBoundingCFrame = CFrame.new(worldPosition) * CFrame.Angles(0, rotationY, 0)
+	local desiredBoundingCFrame = surface.cframe
+		* CFrame.new(snappedX, surface.size.Y / 2 + templateSize.Y / 2, snappedZ)
+		* CFrame.Angles(0, rotationY, 0)
 	local footprintCFrame = GridPlacement.getFootprintCFrame(
 		surface.cframe,
 		surface.size.Y,
@@ -861,7 +862,9 @@ local function placeBuilding(player, upgradeId, config, requestedCFrame, offsetI
 	if placementRotationY then
 		building:SetAttribute(Attrs.PlacementRotationY, placementRotationY)
 	else
-		local _, fallbackRotationY = cframe:ToOrientation()
+		local surface = FloorGeometry.GetSurface(sheet, floorId)
+		local localCFrame = surface and surface.cframe:ToObjectSpace(cframe) or cframe
+		local _, fallbackRotationY = localCFrame:ToOrientation()
 		building:SetAttribute(Attrs.PlacementRotationY, fallbackRotationY)
 	end
 	setBuildingOwner(building, player)

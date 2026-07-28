@@ -295,7 +295,6 @@ function StorePlacement.new(ctx)
 		local solved = GridPlacement.solvePlacement(localPosition, base.Size, cellsX, cellsZ)
 		local clampedX, clampedZ = solved.clampedX, solved.clampedZ
 		local y = base.Size.Y / 2 + size.Y / 2
-		local worldPosition = base.CFrame:PointToWorldSpace(Vector3.new(clampedX, y, clampedZ))
 		local footprintCFrame = GridPlacement.getFootprintCFrame(base.CFrame, base.Size.Y, clampedX, clampedZ)
 		local blockedCenter = getBlockedCenterPart(sheet)
 		local outsideBlockedCenter = not (
@@ -306,7 +305,11 @@ function StorePlacement.new(ctx)
 			placementFootprint.Size = footprintSize
 		end
 
-		placementCFrame = CFrame.new(worldPosition) * CFrame.Angles(0, placementRotation, 0)
+		-- Rotation is plot-local: every radial plot has its own yaw, and the
+		-- player's quarter turns are applied on top of that authored grid frame.
+		placementCFrame = base.CFrame
+			* CFrame.new(clampedX, y, clampedZ)
+			* CFrame.Angles(0, placementRotation, 0)
 		placementPreview:PivotTo(getAlignedModelPivotCFrame(placementPreview, placementCFrame))
 		if placementFootprint then
 			placementFootprint.CFrame = footprintCFrame

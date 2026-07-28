@@ -271,10 +271,15 @@ local function updatePlacement()
 end
 
 local function updateVisibility()
-	-- PC: always visible. Mobile: visible only while the leaderboard is closed (they swap places).
+	-- Parent visibility is the authoritative suppression boundary. Keeping the
+	-- whole HUD hidden prevents child refreshes/animations (such as title XP
+	-- effects) from leaking a stroke while StoreBottom is covering it.
 	local leaderboardOpen = screenGui:GetAttribute(Attrs.LeaderboardOpen) == true
 	local compactModal = screenGui:GetAttribute(Attrs.CompactModalActive) == true
-	hud.Visible = not compactModal and not (MobileScale.shouldUseMobile(hud) and leaderboardOpen)
+	local storeSuppressed = hud:GetAttribute(Attrs.HudStoreSuppressed) == true
+	hud.Visible = not compactModal
+		and not storeSuppressed
+		and not (MobileScale.shouldUseMobile(hud) and leaderboardOpen)
 end
 
 -- Mobile-only reflow of the HUD's stacked layout: XpBar rides on top of the Top block, and each
@@ -317,8 +322,9 @@ MobileScale.onViewportChanged(function()
 end)
 screenGui:GetAttributeChangedSignal(Attrs.LeaderboardOpen):Connect(updateVisibility)
 screenGui:GetAttributeChangedSignal(Attrs.CompactModalActive):Connect(updateVisibility)
+hud:GetAttributeChangedSignal(Attrs.HudStoreSuppressed):Connect(updateVisibility)
 
--- Fade the whole HUD out while the store band is up, and back in when it closes.
+-- Hide the whole HUD while the store band is up, and restore it when the band closes.
 HudStoreTransition.start({
 	screenGui = screenGui,
 	hud = hud,
