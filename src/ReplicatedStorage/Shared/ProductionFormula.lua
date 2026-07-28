@@ -4,6 +4,7 @@ local UpgradeConfig = require(script.Parent.UpgradeConfig)
 local WheelConfig = require(script.Parent.WheelConfig)
 local Attrs = require(script.Parent.Attrs)
 local FloorConfig = require(script.Parent.FloorConfig)
+local FriendBoostConfig = require(script.Parent.FriendBoostConfig)
 local SkinFeatureConfig = require(script.Parent.SkinFeatureConfig)
 
 local ProductionFormula = {}
@@ -13,6 +14,9 @@ local ProductionFormula = {}
 -- this is a backstop set to the highest legitimate value — the exclusive ceiling — and must
 -- not sit below it or it would silently neuter the day-7 mythical reward.
 local MAX_SKIN_MULTIPLIER = WheelConfig.MaxExclusiveSkinMultiplier
+-- Same idea for the Friend Boost, whose transport to this module is a Player attribute: clamp to
+-- the highest value the tuning bounds allow so a stale or corrupted attribute cannot inflate pay.
+local MAX_FRIEND_MULTIPLIER = FriendBoostConfig.CeilingMultiplier()
 local WORLD_EVENT_FOLDER_NAME = "WorldEventMultipliers"
 local SERVER_BOOST_VALUE_NAME = "ServerBoost"
 local SERVER_BOOST_ENDS_AT_ATTRIBUTE = "ServerBoostEndsAt"
@@ -108,6 +112,30 @@ function ProductionFormula.GetSkinMultiplier(player, buildingId, skinContext)
 		ProductionFormula.GetGooSkinMultiplier(player, skinContext),
 		ProductionFormula.GetBuildingSkinMultiplier(player, buildingId, skinContext)
 	)
+end
+
+-- Presence-based and session-only: FriendBoostService recomputes it whenever a linked player joins
+-- or leaves and publishes it on the Player. Server production passes the canonical value on the
+-- context (and offline-earnings callers pass 1, since the friend was not there while the player
+-- was away); clients read the replicated attribute.
+function ProductionFormula.GetFriendMultiplier(player, context)
+	if type(context) == "table" and type(context.FriendMultiplier) == "number" then
+		return math.clamp(context.FriendMultiplier, 1, MAX_FRIEND_MULTIPLIER)
+	end
+	local multiplier = player and player:GetAttribute(Attrs.FriendBoostMultiplier)
+	return math.clamp(type(multiplier) == "number" and multiplier or 1, 1, MAX_FRIEND_MULTIPLIER)
+end
+
+local function getFriendSource(player, context)
+	return {
+		Id = "FriendBoost",
+		Kind = "FriendBoost",
+		DisplayName = "Friend Boost",
+		Multiplier = ProductionFormula.GetFriendMultiplier(player, context),
+		Contextual = false,
+		ServerWide = false,
+		Scope = "All your building production and your manual clicks, while friends you brought here are online.",
+	}
 end
 
 local function getEventExpiry(source)
@@ -237,6 +265,9 @@ function ProductionFormula.GetMultiplierBreakdown(player, buildingId, config, fl
 	local skinSource = getSkinSource(player, buildingId, skinContext)
 	addSource(sources, skinSource)
 
+	local friendSource = getFriendSource(player, skinContext)
+	addSource(sources, friendSource)
+
 	local upgradeMultiplier = ProductionFormula.GetUpgradeMultiplier(player, buildingId, skinContext)
 	addSource(sources, {
 		Id = "BuildingUpgrade:" .. tostring(buildingId),
@@ -293,6 +324,7 @@ function ProductionFormula.GetMultiplierBreakdown(player, buildingId, config, fl
 		Sources = sources,
 		Total = upgradeMultiplier
 			* skinSource.Multiplier
+			* friendSource.Multiplier
 			* eventBreakdown.Total
 			* floorMultiplier
 			* powerFieldMultiplier,
@@ -306,13 +338,15 @@ function ProductionFormula.GetGlobalMultiplierBreakdown(player, skinContext)
 	local sources = {}
 	local skinSource = getSkinSource(player, nil, skinContext)
 	addSource(sources, skinSource)
+	local friendSource = getFriendSource(player, skinContext)
+	addSource(sources, friendSource)
 	local eventBreakdown = ProductionFormula.GetEventMultiplierBreakdown()
 	for _, source in ipairs(eventBreakdown.Sources) do
 		table.insert(sources, source)
 	end
 	return {
 		Sources = sources,
-		Total = skinSource.Multiplier * eventBreakdown.Total,
+		Total = skinSource.Multiplier * friendSource.Multiplier * eventBreakdown.Total,
 	}
 end
 

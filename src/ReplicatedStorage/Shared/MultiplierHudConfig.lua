@@ -31,6 +31,12 @@ return {
 		Floor3 = {
 			Image = "rbxassetid://113816677150656",
 		},
+		-- The same clover already authored on BottomRightHud.FriendBoost, so the two readouts of
+		-- one bonus stay recognizably the same thing.
+		FriendBoost = {
+			Image = "rbxassetid://134627555829309",
+			Color = Color3.fromRGB(120, 230, 110),
+		},
 		PowerField = {
 			Image = "rbxassetid://95966796252712",
 		},

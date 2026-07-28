@@ -10,6 +10,7 @@ local NumberFormat = require(ReplicatedStorage.Shared.NumberFormat)
 local PvpConfig = require(ReplicatedStorage.Shared.PvpConfig)
 local StoryConfig = require(ReplicatedStorage.Shared.StoryConfig)
 local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
+local FriendBoostService = require(ServerScriptService.Services.FriendBoostService)
 local GoldenCookieService = require(ServerScriptService.Services.GoldenCookieService)
 local PlayerDataService = require(ServerScriptService.Services.PlayerDataService)
 local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
@@ -193,6 +194,14 @@ function CookieService.HandleClick(player, options)
 
 	local perClick = CookieService.GetCookiesPerClick(player)
 	local amount = perClick and perClick * getClickEventMultiplier() or 0
+	-- The Friend Boost reaches manual clicks as well as buildings, because otherwise it pays
+	-- nothing at all to the players who most need a reason to invite: the ones early enough to
+	-- still be clicking for their first buildings. Autoclick income keeps its own idle formula and
+	-- never reaches this branch (AutoclickService credits cookies directly).
+	local friendMultiplier = automated and 1 or FriendBoostService.GetMultiplier(player)
+	if friendMultiplier > 1 then
+		amount = math.floor(amount * friendMultiplier + 0.5)
+	end
 	if amount <= 0 then
 		return false, 0
 	end

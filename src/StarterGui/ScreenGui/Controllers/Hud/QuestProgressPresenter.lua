@@ -1,4 +1,4 @@
--- Drives the Studio-authored near-circular quest progress widget.
+-- Drives the Studio-authored near-circular arc progress widget.
 -- The missing bottom-right quarter leaves a 270-degree visible arc:
 -- 180 degrees on the left, followed by 90 degrees on the upper right.
 

@@ -180,8 +180,22 @@ if xpText and (xpText:IsA("TextLabel") or xpText:IsA("TextButton")) then
 	end)
 end
 
+-- The server publishes the live Friend Boost on the Player; this only renders it. Rendering runs
+-- once at startup as well as on change, because a fresh ScreenGui after a respawn arrives with the
+-- attribute already set and no further change signal coming.
+local function renderFriendBoost()
+	if not friendBoostAmount then
+		return
+	end
+	local multiplier = player:GetAttribute(Attrs.FriendBoostMultiplier)
+	multiplier = type(multiplier) == "number" and multiplier or 1
+	local percent = math.max(0, math.floor((multiplier - 1) * 100 + 0.5))
+	friendBoostAmount.Text = "+" .. tostring(percent) .. "%"
+end
+
 if friendBoostAmount then
-	friendBoostAmount.Text = "+0%"
+	player:GetAttributeChangedSignal(Attrs.FriendBoostMultiplier):Connect(renderFriendBoost)
+	renderFriendBoost()
 end
 
 local liveCountBinding = LiveCookieCount.bind(liveCookieCount, cookiesValue)

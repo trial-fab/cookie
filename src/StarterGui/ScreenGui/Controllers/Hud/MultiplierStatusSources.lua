@@ -80,6 +80,7 @@ local function collectBuildings(player, sheet)
 	end
 
 	local eventMultiplier = ProductionFormula.GetEventMultiplier()
+	local friendMultiplier = ProductionFormula.GetFriendMultiplier(player)
 	local coverage = BoostFieldEffects.GetCoverage(sheet)
 	local skinMultiplierByBuildingId = {}
 	local upgradeMultiplierByBuildingId = {}
@@ -117,6 +118,7 @@ local function collectBuildings(player, sheet)
 						* skinMultiplier
 						* upgradeMultiplier
 						* floorMultiplier
+						* friendMultiplier
 						* eventMultiplier
 						* powerMultiplier
 						* speedMultiplier,
@@ -144,6 +146,30 @@ local function addGooSource(sources, player, buildings)
 		if math.abs(building.skinMultiplier - multiplier) <= EPSILON then
 			addAffected(source, building)
 		end
+	end
+	table.insert(sources, finishSource(source))
+end
+
+-- Player-global like the goo bonus rather than contextual, so every building is affected and the
+-- scope copy names the one condition that actually gates it: those friends still being here.
+local function addFriendSource(sources, player, buildings)
+	local multiplier = ProductionFormula.GetFriendMultiplier(player)
+	if not isActive(multiplier) then
+		return
+	end
+	local friendCount = player:GetAttribute(Attrs.FriendBoostCount)
+	friendCount = type(friendCount) == "number" and math.max(0, math.floor(friendCount)) or 0
+	local source = newProductionSource({
+		Id = "FriendBoost",
+		Kind = "FriendBoost",
+		IconKey = "FriendBoost",
+		DisplayName = friendCount == 1 and "Friend Boost (1 friend)"
+			or ("Friend Boost (%d friends)"):format(friendCount),
+		Multiplier = multiplier,
+		Scope = "All your building production and your manual clicks, while friends you brought here are online.",
+	})
+	for _, building in ipairs(buildings) do
+		addAffected(source, building)
 	end
 	table.insert(sources, finishSource(source))
 end
@@ -311,6 +337,7 @@ function MultiplierStatusSources.get(player)
 	local sheet = getPlayerSheet(player)
 	local buildings = collectBuildings(player, sheet)
 	addGooSource(sources, player, buildings)
+	addFriendSource(sources, player, buildings)
 	addUpgradeSources(sources, player, buildings)
 	addFloorSources(sources, player, buildings)
 	addFieldSources(sources, sheet, buildings)

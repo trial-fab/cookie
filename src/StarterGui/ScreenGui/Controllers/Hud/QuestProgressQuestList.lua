@@ -15,10 +15,11 @@ local QuestProgressCompletionStrike = require(script.Parent:WaitForChild("QuestP
 local QuestProgressQuestList = {}
 local OPEN_TWEEN_INFO = TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 local CLOSE_TWEEN_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
+local QUEST_PROGRESS_TWEEN_INFO = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local SELECTED_QUEST_COLOR = Color3.fromRGB(0, 170, 255)
 local UNSELECTED_QUEST_COLOR = Color3.fromRGB(232, 232, 236)
 local COMPLETION_HOLD_TIMEOUT_SECONDS = 10
-local INTRO_STEP_HOLD_SECONDS = 2
+local STEP_COMPLETION_HOLD_SECONDS = 2
 
 local function child(parent, name, className, recursive)
 	local instance = parent and parent:FindFirstChild(name, recursive == true)
@@ -80,9 +81,17 @@ function QuestProgressQuestList.bind(root, callbacks)
 	local trackedBody = child(trackedRow, "QuestBody", "Frame")
 	local trackedDescription = child(trackedRow, "QuestDescription", "TextLabel", true)
 	local trackedTitleButton = child(trackedRow, "QuestTitleButton", "GuiButton")
+	local questProgressBar = child(trackedBody, "QuestProgressBar", "Frame")
+	local questProgressFill = child(questProgressBar, "Fill", "Frame")
 	local rewardStrip = child(trackedRow, "QuestRewardStrip", "Frame", true)
 	local rewardIcon = child(rewardStrip, "RewardIcon", "ImageLabel", true)
-	local completedTick = child(selectorRow, "CompletedTick", "ImageLabel")
+	local selectorRows = {}
+	for index = 1, 20 do
+		local row = child(selector, ("QuestSelectorRow%02d"):format(index), "GuiButton")
+		if row then
+			table.insert(selectorRows, row)
+		end
+	end
 	local screenGui = root:FindFirstAncestorOfClass("ScreenGui")
 	local rewardFlightCompleted = getEvent(screenGui, CurrencyRewardFlightConfig.CompletedEventName)
 	local questStrikeCompleted = getEvent(screenGui, CurrencyRewardFlightConfig.QuestStrikeCompletedEventName)
@@ -95,21 +104,20 @@ function QuestProgressQuestList.bind(root, callbacks)
 	local connections = {}
 	local revealTween
 	local arcTween
-	local toggleTween
-	local activeQuestVisible = false
+	local questProgressTween
+	local questProgressTarget
 	local completionHold = false
 	local completionHoldGeneration = 0
 	local lastQuestCompleted
 	local heldStepTransition
 	local pendingCompletionCueKey
-	local introStepTransition
-	local introStepTransitionGeneration = 0
+	local timedStepTransition
+	local timedStepTransitionGeneration = 0
 	local questOpenPosition = questList:GetAttribute("OpenPosition")
 	local questClosedPosition = questList:GetAttribute("ClosedPosition")
 	local arcOpenPosition = arcHeader and arcHeader:GetAttribute("OpenPosition")
 	local arcClosedPosition = arcHeader and arcHeader:GetAttribute("ClosedPosition")
 	local toggleOpenPosition = toggleFrame and toggleFrame:GetAttribute("OpenPosition")
-	local toggleClosedPosition = toggleFrame and toggleFrame:GetAttribute("ClosedPosition")
 	if typeof(questOpenPosition) ~= "UDim2" then
 		questOpenPosition = questList.Position
 	end
@@ -120,33 +128,25 @@ function QuestProgressQuestList.bind(root, callbacks)
 		arcOpenPosition = arcHeader.Position
 	end
 	if arcHeader and typeof(arcClosedPosition) ~= "UDim2" then
-		arcClosedPosition = arcOpenPosition + UDim2.fromOffset(0, arcHeaderClip and arcHeaderClip.Size.Y.Offset or 38)
-	end
-	if arcHeader then
-		arcOpenPosition = UDim2.fromOffset(0, arcOpenPosition.Y.Offset)
-		arcClosedPosition = UDim2.fromOffset(0, arcClosedPosition.Y.Offset)
+		arcClosedPosition = arcOpenPosition
+			- UDim2.fromOffset(arcHeaderClip and arcHeaderClip.Size.X.Offset or questList.Size.X.Offset, 0)
 	end
 	if toggleFrame and typeof(toggleOpenPosition) ~= "UDim2" then
 		toggleOpenPosition = toggleFrame.Position
 	end
-	if toggleFrame and typeof(toggleClosedPosition) ~= "UDim2" then
-		toggleClosedPosition = UDim2.fromOffset(toggleOpenPosition.X.Offset, 0)
-	end
-	local defaultToggleOpenPosition = toggleOpenPosition
 	if selectorRewardLine then
 		selectorRewardLine.Visible = false
 	end
 	for index = 2, 20 do
 		local unusedTracked = questList:FindFirstChild(("QuestRow%02d"):format(index))
-		local unusedSelector = selector:FindFirstChild(("QuestSelectorRow%02d"):format(index))
 		if unusedTracked and unusedTracked:IsA("GuiObject") then
 			unusedTracked.Visible = false
 		end
-		if unusedSelector and unusedSelector:IsA("GuiObject") then
-			unusedSelector.Visible = false
-			unusedSelector.Active = false
-			unusedSelector.Selectable = false
-		end
+	end
+	for _, row in ipairs(selectorRows) do
+		row.Visible = false
+		row.Active = false
+		row.Selectable = false
 	end
 
 	local function connect(signal, callback)
@@ -157,27 +157,19 @@ function QuestProgressQuestList.bind(root, callbacks)
 		return QuestSnapshot.getTracked(snapshot)
 	end
 
-	local function updateToggleVerticalPosition()
-		if not (toggleFrame and defaultToggleOpenPosition) then
-			return
-		end
+	local function updateTrackedRowVisibility()
+		local _, quest = currentArcAndQuest()
+		trackedRow.Visible = not selectorOpen
+			and quest ~= nil
+			and (replay ~= nil or quest.Completed ~= true or completionHold)
+	end
 
-		local target = defaultToggleOpenPosition
-		if activeQuestVisible and trackedTitle and trackedBody then
-			local contentTop = math.min(trackedTitle.Position.Y.Offset, trackedBody.Position.Y.Offset)
-			local contentBottom = math.max(
-				trackedTitle.Position.Y.Offset + trackedTitle.AbsoluteSize.Y,
-				trackedBody.Position.Y.Offset + trackedBody.AbsoluteSize.Y
-			)
-			local rowTop = revealClip.Position.Y.Offset + questOpenPosition.Y.Offset + trackedRow.Position.Y.Offset
-			local targetY = rowTop + (contentTop + contentBottom) / 2 - toggleFrame.AbsoluteSize.Y / 2
-			target = UDim2.fromOffset(defaultToggleOpenPosition.X.Offset, targetY)
-		end
-
-		toggleOpenPosition = target
-		if expanded and not toggleTween then
-			toggleFrame.Position = target
-		end
+	local function updateSelectorSize()
+		local layout = selector:FindFirstChildWhichIsA("UIListLayout")
+		local padding = selector:FindFirstChildWhichIsA("UIPadding")
+		local paddingHeight = padding and padding.PaddingTop.Offset + padding.PaddingBottom.Offset or 0
+		local contentHeight = layout and layout.AbsoluteContentSize.Y or 92
+		selector.Size = UDim2.new(1, 0, 0, math.min(112, contentHeight + paddingHeight))
 	end
 
 	local function setSelectorOpen(open)
@@ -185,15 +177,17 @@ function QuestProgressQuestList.bind(root, callbacks)
 		root:SetAttribute("QuestSelectorOpen", selectorOpen)
 		selector.Visible = selectorOpen
 		selector.ScrollingEnabled = selectorOpen
+		updateTrackedRowVisibility()
 		if selectorOpen then
 			selector.AutomaticCanvasSize = Enum.AutomaticSize.Y
-			local layout = selector:FindFirstChildWhichIsA("UIListLayout")
-			local padding = selector:FindFirstChildWhichIsA("UIPadding")
-			local paddingHeight = padding and padding.PaddingTop.Offset + padding.PaddingBottom.Offset or 0
-			local contentHeight = layout and layout.AbsoluteContentSize.Y or 92
-			selector.Size = UDim2.new(1, 0, 0, math.min(112, contentHeight + paddingHeight))
-			local _, quest = currentArcAndQuest()
-			local firstSelectable = quest and quest.Selectable and selectorRow or hideCompletedToggle
+			updateSelectorSize()
+			local firstSelectable = hideCompletedToggle
+			for _, row in ipairs(selectorRows) do
+				if row.Visible and row.Selectable then
+					firstSelectable = row
+					break
+				end
+			end
 			if UserInputService.PreferredInput == Enum.PreferredInput.Gamepad and firstSelectable then
 				GuiService.SelectedObject = firstSelectable
 			end
@@ -205,6 +199,76 @@ function QuestProgressQuestList.bind(root, callbacks)
 		end
 	end
 
+	local function renderSelectorRows(arc)
+		local previousSelectable
+		for index, row in ipairs(selectorRows) do
+			local quest = arc.Quests and arc.Quests[index]
+			local visible = quest ~= nil and not (snapshot.HideCompleted == true and quest.Completed)
+			row.Visible = visible
+			row.Active = visible and quest.Selectable == true
+			row.Interactable = visible and quest.Selectable == true
+			row.Selectable = visible and quest.Selectable == true
+			row.NextSelectionUp = nil
+			row.NextSelectionDown = nil
+
+			if not quest then
+				row:SetAttribute("QuestId", nil)
+				continue
+			end
+
+			row:SetAttribute("QuestId", quest.Id)
+			row:SetAttribute("Completed", quest.Completed == true)
+			row:SetAttribute("Selected", quest.Selected == true)
+			setText(child(row, "QuestTitle", nil), quest.Title)
+			local selectorStep = child(row, "QuestStep", nil)
+			setText(selectorStep, formatStep(quest))
+			if selectorStep and selectorStep:IsA("GuiObject") then
+				selectorStep.Visible = not quest.Completed
+			end
+			local completedTick = child(row, "CompletedTick", "ImageLabel")
+			if completedTick then
+				completedTick.Visible = quest.Completed == true
+			end
+
+			local selectorTitle = child(row, "QuestTitle", nil, true)
+			local selectorStroke = row:FindFirstChildOfClass("UIStroke")
+			local selectorColor = if quest.Selected then SELECTED_QUEST_COLOR else UNSELECTED_QUEST_COLOR
+			if selectorTitle and (selectorTitle:IsA("TextLabel") or selectorTitle:IsA("TextButton")) then
+				selectorTitle.TextColor3 = selectorColor
+			end
+			row.BackgroundColor3 = Color3.fromRGB(6, 7, 9)
+			row.BackgroundTransparency = 0.15
+			if selectorStroke then
+				selectorStroke.Color = selectorColor
+			end
+
+			if row.Selectable then
+				if previousSelectable then
+					previousSelectable.NextSelectionDown = row
+					row.NextSelectionUp = previousSelectable
+				end
+				previousSelectable = row
+			end
+		end
+
+		if arc.Quests and #arc.Quests > #selectorRows then
+			warn(("Quest selector needs %d authored rows but only has %d"):format(#arc.Quests, #selectorRows))
+		end
+		if hideCompletedToggle then
+			hideCompletedToggle.NextSelectionUp = previousSelectable
+			if previousSelectable then
+				previousSelectable.NextSelectionDown = hideCompletedToggle
+			end
+		end
+		if selectorOpen then
+			task.defer(function()
+				if selectorOpen then
+					updateSelectorSize()
+				end
+			end)
+		end
+	end
+
 	local function cancelRevealTweens()
 		if revealTween then
 			revealTween:Cancel()
@@ -213,10 +277,6 @@ function QuestProgressQuestList.bind(root, callbacks)
 		if arcTween then
 			arcTween:Cancel()
 			arcTween = nil
-		end
-		if toggleTween then
-			toggleTween:Cancel()
-			toggleTween = nil
 		end
 	end
 
@@ -240,7 +300,7 @@ function QuestProgressQuestList.bind(root, callbacks)
 		end
 		local questTarget = expanded and questOpenPosition or questClosedPosition
 		local arcTarget = arcHeader and (expanded and arcOpenPosition or arcClosedPosition)
-		local toggleTarget = toggleFrame and (expanded and toggleOpenPosition or toggleClosedPosition)
+		local toggleTarget = toggleFrame and toggleOpenPosition
 		if animate ~= true then
 			questList.Position = questTarget
 			questList.Visible = expanded
@@ -251,24 +311,6 @@ function QuestProgressQuestList.bind(root, callbacks)
 				toggleFrame.Position = toggleTarget
 			end
 			return
-		end
-
-		local function tweenToggle(target, tweenInfo)
-			if not (toggleFrame and target) then
-				return
-			end
-			toggleTween = UiMotion.create(toggleFrame, tweenInfo, { Position = target })
-			local tween = toggleTween
-			tween.Completed:Once(function(playbackState)
-				if toggleTween ~= tween then
-					return
-				end
-				toggleTween = nil
-				if playbackState == Enum.PlaybackState.Completed then
-					toggleFrame.Position = target
-				end
-			end)
-			tween:Play()
 		end
 
 		revealTween =
@@ -297,19 +339,28 @@ function QuestProgressQuestList.bind(root, callbacks)
 				arcTween = nil
 				if playbackState == Enum.PlaybackState.Completed then
 					arcHeader.Position = arcTarget
-					if not transitionExpanded then
-						tweenToggle(toggleTarget, CLOSE_TWEEN_INFO)
-					end
 				end
 			end)
 			currentArcTween:Play()
-		elseif not transitionExpanded then
-			tweenToggle(toggleTarget, CLOSE_TWEEN_INFO)
 		end
+	end
 
-		if transitionExpanded then
-			tweenToggle(toggleTarget, OPEN_TWEEN_INFO)
+	local function renderQuestProgress(progress)
+		if not questProgressFill then
+			return
 		end
+		progress = math.clamp(tonumber(progress) or 0, 0, 1)
+		if questProgressTarget and math.abs(progress - questProgressTarget) < 0.001 then
+			return
+		end
+		questProgressTarget = progress
+		if questProgressTween then
+			questProgressTween:Cancel()
+		end
+		questProgressTween = UiMotion.create(questProgressFill, QUEST_PROGRESS_TWEEN_INFO, {
+			Size = UDim2.new(progress, 0, questProgressFill.Size.Y.Scale, questProgressFill.Size.Y.Offset),
+		})
+		questProgressTween:Play()
 	end
 
 	local function renderArcReward(container, arc)
@@ -386,8 +437,7 @@ function QuestProgressQuestList.bind(root, callbacks)
 			end)
 		end
 		lastQuestCompleted = completedNow
-		trackedRow.Visible = replayActive or not completedNow or completionHold
-		activeQuestVisible = trackedRow.Visible
+		updateTrackedRowVisibility()
 		setText(trackedTitle, shownQuest.Title)
 		-- A keyboard variant exists only for steps that may name a keybind. Touch and
 		-- gamepad players must never be shown one.
@@ -411,10 +461,10 @@ function QuestProgressQuestList.bind(root, callbacks)
 				localSubProgress.Target
 			)
 		end
-		if not replayActive and introStepTransition then
-			shownDescription = introStepTransition.Description
-			shownProgress = introStepTransition.Progress
-			completionCueKey = "step:" .. introStepTransition.StepId
+		if not replayActive and timedStepTransition then
+			shownDescription = timedStepTransition.Description
+			shownProgress = timedStepTransition.Progress
+			completionCueKey = "step:" .. timedStepTransition.StepId
 		elseif not replayActive and heldStepTransition then
 			shownDescription = heldStepTransition.Description
 			shownProgress = heldStepTransition.Progress
@@ -460,7 +510,7 @@ function QuestProgressQuestList.bind(root, callbacks)
 			end
 		end
 		pendingCompletionCueKey = nil
-		task.defer(updateToggleVerticalPosition)
+		renderQuestProgress(shownProgress)
 		if rewardStrip then
 			rewardStrip.Visible = true
 			setText(
@@ -476,52 +526,18 @@ function QuestProgressQuestList.bind(root, callbacks)
 			end
 		end
 
-		root:SetAttribute("Progress", math.clamp(tonumber(shownProgress) or 0, 0, 1))
+		local currentQuestArcProgress = if quest.Completed
+			then 0
+			else math.clamp(tonumber(if replayActive then quest.Progress else shownProgress) or 0, 0, 1)
+		local arcProgress = (arc.CompletedCount + currentQuestArcProgress) / math.max(1, arc.QuestCount)
+		root:SetAttribute("Progress", math.clamp(arcProgress, 0, 1))
 		root:SetAttribute("SelectedQuestId", replayActive and "chapter_replay" or snapshot.SelectedQuestId)
-
-		local selectorRowVisible = not (snapshot.HideCompleted == true and quest.Completed)
-		selectorRow.Visible = selectorRowVisible
-		selectorRow.Active = quest.Selectable == true
-		selectorRow.Interactable = quest.Selectable == true
-		selectorRow.Selectable = quest.Selectable == true
-		setText(child(selectorRow, "QuestTitle", nil), quest.Title)
-		local selectorStep = child(selectorRow, "QuestStep", nil)
-		setText(selectorStep, formatStep(quest))
-		if selectorStep and selectorStep:IsA("GuiObject") then
-			selectorStep.Visible = not quest.Completed
-		end
-		if completedTick then
-			completedTick.Visible = quest.Completed == true
-		end
-		selectorRow:SetAttribute("Completed", quest.Completed == true)
-		selectorRow:SetAttribute("Selected", quest.Selected == true)
-		local selectorTitle = child(selectorRow, "QuestTitle", nil, true)
-		local selectorStroke = selectorRow:FindFirstChildOfClass("UIStroke")
-		local selectorColor = if quest.Selected then SELECTED_QUEST_COLOR else UNSELECTED_QUEST_COLOR
-		if selectorTitle and (selectorTitle:IsA("TextLabel") or selectorTitle:IsA("TextButton")) then
-			selectorTitle.TextColor3 = selectorColor
-		end
-		selectorRow.BackgroundColor3 = Color3.fromRGB(6, 7, 9)
-		selectorRow.BackgroundTransparency = 0.15
-		if selectorStroke then
-			selectorStroke.Color = selectorColor
-		end
-
-		if hideCompletedToggle then
-			selectorRow.NextSelectionDown = hideCompletedToggle
-			hideCompletedToggle.NextSelectionUp = if quest.Selectable then selectorRow else nil
-		end
+		renderSelectorRows(arc)
 	end
 
 	connect(collapseButton.Activated, function()
 		setExpanded(not expanded, true)
 	end)
-	if trackedTitle then
-		connect(trackedTitle:GetPropertyChangedSignal("AbsoluteSize"), updateToggleVerticalPosition)
-	end
-	if trackedBody then
-		connect(trackedBody:GetPropertyChangedSignal("AbsoluteSize"), updateToggleVerticalPosition)
-	end
 	if arcHeader then
 		arcHeader.AnchorPoint = Vector2.new(0, 0)
 	end
@@ -556,15 +572,22 @@ function QuestProgressQuestList.bind(root, callbacks)
 			setSelectorOpen(not selectorOpen)
 		end)
 	end
-	connect(selectorRow.Activated, function()
-		local _, quest = currentArcAndQuest()
-		if quest and quest.Selectable then
-			setSelectorOpen(false)
-			if callbacks.onSelectQuest then
-				callbacks.onSelectQuest(quest.Id)
+	for _, row in ipairs(selectorRows) do
+		local selectorQuestRow = row
+		connect(selectorQuestRow.Activated, function()
+			local questId = selectorQuestRow:GetAttribute("QuestId")
+			local arc = currentArcAndQuest()
+			for _, quest in ipairs((arc and arc.Quests) or {}) do
+				if quest.Id == questId and quest.Selectable then
+					setSelectorOpen(false)
+					if callbacks.onSelectQuest then
+						callbacks.onSelectQuest(quest.Id)
+					end
+					break
+				end
 			end
-		end
-	end)
+		end)
+	end
 	if hideCompletedToggle then
 		connect(hideCompletedToggle.Activated, function()
 			if snapshot and callbacks.onSetHideCompleted then
@@ -585,21 +608,23 @@ function QuestProgressQuestList.bind(root, callbacks)
 				local nextCurrent = tonumber(nextQuest.SubProgress)
 				local nextTarget = tonumber(nextQuest.SubProgressTarget)
 				if
-					previousQuest.StepId == "begin_rescue"
-					and nextQuest.StepId == "unearth_cookie"
-					and nextQuest.Completed ~= true
+					(
+						(previousQuest.StepId == "begin_rescue" and nextQuest.StepId == "unearth_cookie")
+						or (previousQuest.StepId == "help_goo_recover" and nextQuest.StepId == "unlock_mixer")
+					) and nextQuest.Completed ~= true
 				then
-					introStepTransitionGeneration += 1
-					local generation = introStepTransitionGeneration
-					introStepTransition = {
+					timedStepTransitionGeneration += 1
+					local generation = timedStepTransitionGeneration
+					timedStepTransition = {
 						StepId = previousQuest.StepId,
+						TargetStepId = nextQuest.StepId,
 						Description = previousQuest.Description,
 						Progress = nextQuest.Progress,
 					}
 					pendingCompletionCueKey = "step:" .. previousQuest.StepId
-					task.delay(INTRO_STEP_HOLD_SECONDS, function()
-						if introStepTransition and introStepTransitionGeneration == generation then
-							introStepTransition = nil
+					task.delay(STEP_COMPLETION_HOLD_SECONDS, function()
+						if timedStepTransition and timedStepTransitionGeneration == generation then
+							timedStepTransition = nil
 							render()
 						end
 					end)
@@ -629,11 +654,11 @@ function QuestProgressQuestList.bind(root, callbacks)
 				end
 			end
 			if
-				introStepTransition
-				and (not nextQuest or nextQuest.StepId ~= "unearth_cookie" or nextQuest.Completed)
+				timedStepTransition
+				and (not nextQuest or nextQuest.StepId ~= timedStepTransition.TargetStepId or nextQuest.Completed)
 			then
-				introStepTransition = nil
-				introStepTransitionGeneration += 1
+				timedStepTransition = nil
+				timedStepTransitionGeneration += 1
 			end
 			if
 				heldStepTransition
@@ -673,6 +698,10 @@ function QuestProgressQuestList.bind(root, callbacks)
 		end,
 		destroy = function()
 			cancelRevealTweens()
+			if questProgressTween then
+				questProgressTween:Cancel()
+				questProgressTween = nil
+			end
 			if completionStrike then
 				completionStrike.destroy()
 			end

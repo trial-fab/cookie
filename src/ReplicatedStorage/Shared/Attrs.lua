@@ -127,6 +127,9 @@ return {
 	StoryHealingClicks = "StoryHealingClicks",
 	-- Whether the alien's dough tool (the "Mixer") is unlocked — gates building/the build shop.
 	MixerUnlocked = "MixerUnlocked",
+	-- One-time run-progression unlock for the central Ancient Core presentation. The server owns
+	-- the purchase; each client renders its own dormant or activated hub state from this projection.
+	HubCoreActivated = "HubCoreActivated",
 	-- Client-only presentation handoff: false while the tutorial Mixer visual is flying into the
 	-- center hotbar placeholder, true once HotbarCarousel may reveal its authored Mixer icon.
 	MixerUnlockPresented = "MixerUnlockPresented",
@@ -144,6 +147,11 @@ return {
 	SelectedTitleId = "SelectedTitleId",
 	GoldenCookies = "GoldenCookies",
 	Gems = "Gems",
+	-- Live Friend Boost projection (FriendBoostService owns both; session-only, never persisted).
+	-- Count is the raw number of linked friends present, which can exceed the paid cap; the
+	-- multiplier is the capped value production actually uses.
+	FriendBoostCount = "FriendBoostCount",
+	FriendBoostMultiplier = "FriendBoostMultiplier",
 	-- Boost-shop field charges the player is holding (stack cap 3 per type). Server-owned
 	-- inventory counts; the boost purchase window reads them for its Owned / stack-full state.
 	-- Unset until the purchase service ships, which the window reads as 0.

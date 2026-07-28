@@ -93,16 +93,36 @@ local function value(frame, info, field)
 	return DEFAULTS[field]
 end
 
-local castPoints = table.create(1)
-local occlusionIgnoreList = table.create(1)
+local OCCLUSION_SAMPLE_RATIO = 0.4
+local OCCLUSION_SAMPLE_DIRECTIONS = {
+	Vector2.new(-1, -1),
+	Vector2.new(1, -1),
+	Vector2.new(-1, 1),
+	Vector2.new(1, 1),
+}
+local castPoints = table.create(1 + #OCCLUSION_SAMPLE_DIRECTIONS)
+local occlusionIgnoreList = table.create(2)
 
-local function isOccluded(camera, worldPoint)
+local function isOccluded(camera, anchor, worldPoint, screenCenter, screenDepth, ignoreInset, frame)
 	castPoints[1] = worldPoint
+	local sampleHalfSize = frame.AbsoluteSize * OCCLUSION_SAMPLE_RATIO
+	for index, direction in ipairs(OCCLUSION_SAMPLE_DIRECTIONS) do
+		local screenSample = screenCenter + Vector2.new(sampleHalfSize.X * direction.X, sampleHalfSize.Y * direction.Y)
+		local ray = if ignoreInset
+			then camera:ScreenPointToRay(screenSample.X, screenSample.Y, screenDepth)
+			else camera:ViewportPointToRay(screenSample.X, screenSample.Y, screenDepth)
+		castPoints[index + 1] = ray.Origin
+	end
+
+	-- The label's own anchor should not count as a blocker when a sampled corner
+	-- lands slightly inside its rendered part.
 	local character = Players.LocalPlayer.Character
 	if character then
 		occlusionIgnoreList[1] = character
+		occlusionIgnoreList[2] = anchor
 	else
-		table.clear(occlusionIgnoreList)
+		occlusionIgnoreList[1] = anchor
+		occlusionIgnoreList[2] = nil
 	end
 
 	for _, part in ipairs(camera:GetPartsObscuringTarget(castPoints, occlusionIgnoreList)) do
@@ -121,12 +141,12 @@ end
 -- cutting, and every cheaper visibility test (distance, viewport, Z) still runs every frame.
 local OCCLUSION_INTERVAL_SECONDS = 1 / 12
 
-local function isOccludedThrottled(info, camera, worldPoint, now)
+local function isOccludedThrottled(info, camera, anchor, worldPoint, screenCenter, screenDepth, ignoreInset, frame, now)
 	if info.occludedCheckedAt and now - info.occludedCheckedAt < OCCLUSION_INTERVAL_SECONDS then
 		return info.occluded
 	end
 	info.occludedCheckedAt = now
-	info.occluded = isOccluded(camera, worldPoint)
+	info.occluded = isOccluded(camera, anchor, worldPoint, screenCenter, screenDepth, ignoreInset, frame)
 	return info.occluded
 end
 
@@ -153,27 +173,36 @@ RunService.RenderStepped:Connect(function()
 				and screenPoint.Y >= 0
 				and screenPoint.Y <= viewport.Y
 			local allowOffscreen = value(frame, info, "AllowOffscreen") == true
+			local scale = math.clamp(
+				value(frame, info, "RefDistance") / distance,
+				value(frame, info, "MinScale"),
+				value(frame, info, "MaxScale")
+			)
+			if info.scale and info.scale:IsA("UIScale") then
+				info.scale.Scale = scale
+			end
+			local gap = value(frame, info, "Gap")
+			local desiredCenter = Vector2.new(screenPoint.X + value(frame, info, "ScreenOffsetX"), screenPoint.Y - gap)
 			local visible = screenPoint.Z > 0
 				and distance <= value(frame, info, "MaxDistance")
 				and (allowOffscreen or withinViewport)
 				and (
 					value(frame, info, "OcclusionEnabled") ~= true
-					or not isOccludedThrottled(info, camera, worldPoint, now)
+					or not isOccludedThrottled(
+						info,
+						camera,
+						anchor,
+						worldPoint,
+						desiredCenter,
+						screenPoint.Z,
+						ignoreInset,
+						frame,
+						now
+					)
 				)
 			if not visible then
 				frame.Visible = false
 			else
-				local scale = math.clamp(
-					value(frame, info, "RefDistance") / distance,
-					value(frame, info, "MinScale"),
-					value(frame, info, "MaxScale")
-				)
-				if info.scale and info.scale:IsA("UIScale") then
-					info.scale.Scale = scale
-				end
-				local gap = value(frame, info, "Gap")
-				local desiredCenter =
-					Vector2.new(screenPoint.X + value(frame, info, "ScreenOffsetX"), screenPoint.Y - gap)
 				local desiredPosition = desiredCenter - frame.AbsoluteSize / 2
 				desiredPosition = Vector2.new(math.round(desiredPosition.X), math.round(desiredPosition.Y))
 				frame.Position = UDim2.fromOffset(desiredPosition.X, desiredPosition.Y)

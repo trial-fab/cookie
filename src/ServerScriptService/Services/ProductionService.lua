@@ -16,6 +16,7 @@ local CookieService = require(ServerScriptService.Services.CookieService)
 local BoostFieldService = require(ServerScriptService.Services.BoostFieldService)
 local BoostFieldEffects = require(ReplicatedStorage.Shared.BoostFieldEffects)
 local BuildingSkinService = require(ServerScriptService.Services.BuildingSkinService)
+local FriendBoostService = require(ServerScriptService.Services.FriendBoostService)
 local GooSkinService = require(ServerScriptService.Services.GooSkinService)
 local PlayerDataService = require(ServerScriptService.Services.PlayerDataService)
 local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
@@ -47,7 +48,7 @@ local function getCanonicalUpgradeCounts(player)
 	return type(run) == "table" and type(run.UpgradeCounts) == "table" and run.UpgradeCounts or nil
 end
 
-local function getCanonicalProductionContext(player, buildingId, upgradeCounts, powerFieldMultiplier)
+local function getCanonicalProductionContext(player, buildingId, upgradeCounts, powerFieldMultiplier, friendMultiplier)
 	return {
 		GooMultiplier = GooSkinService.GetBestMultiplier(player),
 		BuildingMultiplier = BuildingSkinService.GetProductionMultiplier(player, buildingId),
@@ -55,6 +56,9 @@ local function getCanonicalProductionContext(player, buildingId, upgradeCounts, 
 		-- Spatial, so it belongs to the group rather than the player: ProductionFormula folds it in
 		-- as its own breakdown source so the HUD cannot describe a different number than we pay.
 		PowerFieldMultiplier = powerFieldMultiplier,
+		-- Presence-based, so a caller pricing a window the friend was not present for (offline
+		-- earnings) passes 1 rather than the live value.
+		FriendMultiplier = friendMultiplier,
 	}
 end
 
@@ -198,6 +202,10 @@ local function computeTick(player, now)
 		return 0, {}, PRODUCTION_TICK_SECONDS
 	end
 
+	-- Sampled once for the whole pass, like field coverage: a friend who arrives or leaves
+	-- mid-window changes the rate from the next payout rather than partway through this one.
+	local friendMultiplier = FriendBoostService.GetMultiplier(player)
+
 	local state = getGroupState(player)
 	local totalCookies = 0
 	local payload = {}
@@ -229,7 +237,13 @@ local function computeTick(player, now)
 				group.upgradeId,
 				config,
 				group.floorId,
-				getCanonicalProductionContext(player, group.upgradeId, upgradeCounts, group.powerMultiplier)
+				getCanonicalProductionContext(
+					player,
+					group.upgradeId,
+					upgradeCounts,
+					group.powerMultiplier,
+					friendMultiplier
+				)
 			)
 			local rawCookies = #group.buildings * cpsPerBuilding * elapsed * group.speedMultiplier + entry.carry
 			local cookiesGained = getWholeCookiesFromCarry(rawCookies)
@@ -257,7 +271,10 @@ local function computeTick(player, now)
 	return totalCookies, payload, nextDueIn
 end
 
-function ProductionService.GetCps(player)
+-- `options.FriendMultiplier` prices production as if the Friend Boost were something else, which
+-- is how OfflineEarningsService values away time at 1 without the boost having to be special-cased
+-- anywhere inside the formula.
+function ProductionService.GetCps(player, options)
 	local upgradeCounts = getCanonicalUpgradeCounts(player)
 	if not upgradeCounts then
 		return 0
@@ -267,6 +284,8 @@ function ProductionService.GetCps(player)
 		return 0
 	end
 
+	local overrideFriendMultiplier = type(options) == "table" and tonumber(options.FriendMultiplier) or nil
+	local friendMultiplier = overrideFriendMultiplier or FriendBoostService.GetMultiplier(player)
 	local totalCps = 0
 	for _, group in pairs(groups) do
 		local config = UpgradeConfig[group.upgradeId]
@@ -279,7 +298,13 @@ function ProductionService.GetCps(player)
 				group.upgradeId,
 				config,
 				group.floorId,
-				getCanonicalProductionContext(player, group.upgradeId, upgradeCounts, group.powerMultiplier)
+				getCanonicalProductionContext(
+					player,
+					group.upgradeId,
+					upgradeCounts,
+					group.powerMultiplier,
+					friendMultiplier
+				)
 			)
 	end
 
@@ -351,6 +376,14 @@ function ProductionService.Init()
 	-- showing the old rate until the next tick, which on a 10s cadence reads as the boost having
 	-- done nothing.
 	BoostFieldService.OnFieldsChanged(function(player)
+		if player and player.Parent then
+			ProductionService.RefreshCps(player)
+		end
+	end)
+
+	-- A friend arriving or leaving changes this player's rate the moment it happens, and on a 10s
+	-- cadence a stale HUD is exactly how a boost reads as having done nothing.
+	FriendBoostService.OnChanged(function(player)
 		if player and player.Parent then
 			ProductionService.RefreshCps(player)
 		end

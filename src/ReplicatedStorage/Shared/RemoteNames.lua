@@ -10,9 +10,11 @@ return {
 	SellAll = "SellAll",
 	ClaimDailyReward = "ClaimDailyReward",
 	PurchaseBoostItem = "PurchaseBoostItem",
+	ActivateHubCore = "ActivateHubCore",
 	DropBoostField = "DropBoostField",
 	SelectGooSkin = "SelectGooSkin",
 	SelectTitle = "SelectTitle",
+	GetGlobalLeaderboards = "GetGlobalLeaderboards",
 	DevTuningApply = "DevTuningApply",
 
 	-- client -> server (fire-and-forget actions; RemoteEvent)
@@ -42,4 +44,5 @@ return {
 	GooSkinInventoryChanged = "GooSkinInventoryChanged",
 	StoryStateChanged = "StoryStateChanged",
 	QuestSnapshot = "QuestSnapshot",
+	OrbLayerPreviewChanged = "OrbLayerPreviewChanged",
 }

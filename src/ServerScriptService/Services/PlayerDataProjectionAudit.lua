@@ -383,6 +383,7 @@ function PlayerDataProjectionAudit.Check(player, data)
 			run.CanBeStolenFrom,
 			readValueProjection(player, nil, "CanBeStolenFrom", "BoolValue")
 		)
+		warnMismatch(player, "Run.HubCoreActivated", run.HubCoreActivated, player:GetAttribute(Attrs.HubCoreActivated))
 		warnMismatch(
 			player,
 			"Run.UpgradeCounts",

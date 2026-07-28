@@ -30,6 +30,7 @@ local DEFAULT_RUN_DATA = {
 	Cookies = 0,
 	CanBeStolenFrom = false,
 	ShieldTime = 600,
+	HubCoreActivated = false,
 	UpgradeCounts = {},
 	PlacementSchemaVersion = FloorConfig.PlacementSchemaVersion,
 	Placements = {
@@ -329,6 +330,7 @@ local function projectDomain7(player, data)
 	run.Cookies = tonumber(run.Cookies) or 0
 	run.CanBeStolenFrom = run.CanBeStolenFrom == true
 	run.ShieldTime = normalizeIntValue(run.ShieldTime == nil and DEFAULT_RUN_DATA.ShieldTime or run.ShieldTime)
+	run.HubCoreActivated = run.HubCoreActivated == true
 	persistent.RealPlayTime = normalizeIntValue(persistent.RealPlayTime)
 	normalizeUpgradeCounts(data, true)
 
@@ -336,6 +338,7 @@ local function projectDomain7(player, data)
 	realPlayTime.Value = persistent.RealPlayTime
 	canBeStolenFrom.Value = run.CanBeStolenFrom
 	shieldTime.Value = run.ShieldTime
+	player:SetAttribute(Attrs.HubCoreActivated, run.HubCoreActivated)
 	return reconcileUpgradeCountProjection(player, run.UpgradeCounts)
 end
 

@@ -59,7 +59,10 @@ function OfflineEarningsService.OnPlayerSetup(player)
 	lastSeen = lastSeen and math.floor(lastSeen) or 0
 
 	local now = os.time()
-	local cps = ProductionService.GetCps(player)
+	-- Away time is priced without the Friend Boost. It is a presence bonus for playing together,
+	-- and none of these hours were played together -- rejoining into a server where a friend
+	-- happens to still be standing must not retroactively pay a better rate for all of them.
+	local cps = ProductionService.GetCps(player, { FriendMultiplier = 1 })
 	local result = { Amount = 0, AwaySeconds = 0, Capped = false, Cps = cps }
 
 	if lastSeen > 0 and now > lastSeen then

@@ -174,6 +174,7 @@ table.insert(
 )
 table.insert(connections, player:GetAttributeChangedSignal(Attrs.GooSkinMultiplier):Connect(queueRefresh))
 table.insert(connections, player:GetAttributeChangedSignal(Attrs.UnlockedFloorCount):Connect(queueRefresh))
+table.insert(connections, player:GetAttributeChangedSignal(Attrs.FriendBoostMultiplier):Connect(queueRefresh))
 
 for _, attribute in ipairs({
 	Attrs.CompactModalActive,
