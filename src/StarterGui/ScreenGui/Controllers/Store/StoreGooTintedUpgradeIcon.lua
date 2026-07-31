@@ -3,7 +3,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
-local GooSkinAssets = require(Shared:WaitForChild("GooSkinAssets"))
+local GooSkinColor = require(Shared:WaitForChild("GooSkinColor"))
 
 local StoreGooTintedUpgradeIcon = {}
 local WHITE = Color3.fromRGB(255, 255, 255)
@@ -19,12 +19,6 @@ end
 function StoreGooTintedUpgradeIcon.new(ctx)
 	local M = {}
 
-	local function getSelectedBodyColor()
-		local model = GooSkinAssets.Resolve(ctx.player:GetAttribute(ctx.Attrs.SelectedGooSkinId))
-		local color = model and model:GetAttribute("DefaultBodyColor")
-		return typeof(color) == "Color3" and color or WHITE
-	end
-
 	function M.apply(row, config)
 		if not (row and config and config.IconUsesSelectedGooColor == true) then
 			return
@@ -34,7 +28,7 @@ function StoreGooTintedUpgradeIcon.new(ctx)
 		local slimeIcon = findDirectImage(icon, "IconFill")
 		local cursorIcon = findDirectImage(icon, "IconOutline")
 		if slimeIcon then
-			slimeIcon.ImageColor3 = getSelectedBodyColor()
+			slimeIcon.ImageColor3 = GooSkinColor.getSelectedBodyColor(ctx.player)
 		end
 		if cursorIcon then
 			cursorIcon.ImageColor3 = WHITE

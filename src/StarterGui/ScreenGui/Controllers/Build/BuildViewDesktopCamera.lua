@@ -14,6 +14,7 @@ local KEY_FORWARD = { [Enum.KeyCode.W] = true, [Enum.KeyCode.Up] = true }
 local KEY_BACK = { [Enum.KeyCode.S] = true, [Enum.KeyCode.Down] = true }
 local KEY_RIGHT = { [Enum.KeyCode.D] = true, [Enum.KeyCode.Right] = true }
 local KEY_LEFT = { [Enum.KeyCode.A] = true, [Enum.KeyCode.Left] = true }
+local KEY_DOWN = { [Enum.KeyCode.LeftShift] = true, [Enum.KeyCode.RightShift] = true }
 
 local BuildViewDesktopCamera = {}
 
@@ -22,8 +23,7 @@ local function isMoveKey(key)
 		or KEY_BACK[key]
 		or KEY_RIGHT[key]
 		or KEY_LEFT[key]
-		or key == Enum.KeyCode.Q
-		or key == Enum.KeyCode.E
+		or KEY_DOWN[key]
 		or key == Enum.KeyCode.Space
 end
 
@@ -128,10 +128,7 @@ function BuildViewDesktopCamera.new(ctx)
 		if heldKeys[Enum.KeyCode.Space] then
 			vert += 1
 		end
-		if heldKeys[Enum.KeyCode.E] then
-			vert += 1
-		end
-		if heldKeys[Enum.KeyCode.Q] then
+		if heldKeys[Enum.KeyCode.LeftShift] or heldKeys[Enum.KeyCode.RightShift] then
 			vert -= 1
 		end
 		vert = math.clamp(vert, -1, 1)
@@ -336,10 +333,15 @@ function BuildViewDesktopCamera.new(ctx)
 		if not ctx.isSelected() then
 			return
 		end
+		-- BuildViewController sinks Shift so Roblox's Mouse Lock cannot toggle while
+		-- the scriptable camera is active. Accept that processed Shift as descend input.
+		local processedBuildViewShift = ctx.isActive()
+			and KEY_DOWN[input.KeyCode] == true
+			and UserInputService:GetFocusedTextBox() == nil
 		local isPointerPress = input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.MouseButton3
 		local startsOnUi = isPointerPress and ctx.isInputBlocked(input.Position)
-		if gameProcessed then
+		if gameProcessed and not processedBuildViewShift then
 			return
 		end
 		if

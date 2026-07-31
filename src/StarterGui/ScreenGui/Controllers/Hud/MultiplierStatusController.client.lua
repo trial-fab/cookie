@@ -18,7 +18,7 @@ end
 screenGui:SetAttribute("MultiplierStatusControllerRunning", true)
 
 local player = Players.LocalPlayer
-local presenter = MultiplierStatusPresenter.new(screenGui)
+local presenter = MultiplierStatusPresenter.new(screenGui, player)
 if not presenter then
 	return
 end
@@ -173,6 +173,7 @@ table.insert(
 	ReplicatedStorage:GetAttributeChangedSignal(MultiplierHudConfig.ServerBoostEndsAtAttribute):Connect(queueRefresh)
 )
 table.insert(connections, player:GetAttributeChangedSignal(Attrs.GooSkinMultiplier):Connect(queueRefresh))
+table.insert(connections, player:GetAttributeChangedSignal(Attrs.SelectedGooSkinId):Connect(queueRefresh))
 table.insert(connections, player:GetAttributeChangedSignal(Attrs.UnlockedFloorCount):Connect(queueRefresh))
 table.insert(connections, player:GetAttributeChangedSignal(Attrs.FriendBoostMultiplier):Connect(queueRefresh))
 

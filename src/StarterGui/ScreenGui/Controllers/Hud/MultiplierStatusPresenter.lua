@@ -7,6 +7,7 @@ local Workspace = game:GetService("Workspace")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local CursorTooltip = require(Shared:WaitForChild("CursorTooltip"))
 local DevTuning = require(Shared:WaitForChild("DevTuning"):WaitForChild("DevTuning"))
+local GooSkinColor = require(Shared:WaitForChild("GooSkinColor"))
 local MobileScale = require(Shared:WaitForChild("MobileScale"))
 local MultiplierHudConfig = require(Shared:WaitForChild("MultiplierHudConfig"))
 local NumberFormat = require(Shared:WaitForChild("NumberFormat"))
@@ -50,49 +51,70 @@ local function getSlots(container)
 	return slots
 end
 
-local function formatProduction(source)
-	if type(source.BeforeProduction) ~= "number" or type(source.AfterProduction) ~= "number" then
-		return nil
+local function formatAffectedNames(names)
+	if type(names) ~= "table" or #names == 0 then
+		return "No building types"
 	end
-	local delta = source.AfterProduction - source.BeforeProduction
-	local sign = delta >= 0 and "+" or ""
-	return ("Affected production: %s CpS to %s CpS (%s%s CpS)."):format(
-		NumberFormat.rate(source.BeforeProduction),
-		NumberFormat.rate(source.AfterProduction),
-		sign,
-		NumberFormat.rate(delta)
-	)
+	return table.concat(names, ", ")
+end
+
+local function formatAffectedCount(source, adjective)
+	local count = math.max(0, math.floor(tonumber(source.AffectedCount) or 0))
+	local noun = count == 1 and "building" or "buildings"
+	return ("%d %s %s"):format(count, adjective, noun)
+end
+
+local function pluralizeBuildingName(name, count)
+	if count == 1 then
+		return name
+	end
+	if name:match("[^aeiou]y$") then
+		return name:sub(1, -2) .. "ies"
+	end
+	if name:match("[sxz]$") or name:match("ch$") or name:match("sh$") then
+		return name .. "es"
+	end
+	return name .. "s"
+end
+
+local function getCompactScope(source)
+	if source.Kind == "BuildingUpgrade" then
+		return formatAffectedNames(source.AffectedNames)
+	end
+	if source.Kind == "Floor" then
+		return formatAffectedCount(source, "matching")
+	end
+	if source.Kind == "BoostField" then
+		local count = math.max(0, math.floor(tonumber(source.AffectedCount) or 0))
+		return ("%d %s"):format(count, count == 1 and "building" or "buildings")
+	end
+	return source.CompactScope or "Active multiplier"
+end
+
+local function formatBonus(multiplier)
+	local percent = ((tonumber(multiplier) or 1) - 1) * 100
+	local sign = percent >= 0 and "+" or ""
+	return sign .. NumberFormat.rate(percent) .. "%"
 end
 
 local function getDescription(source)
-	local lines = { source.Scope or "Active multiplier source." }
-	if type(source.AffectedNames) == "table" and #source.AffectedNames > 0 then
-		table.insert(lines, "Buildings: " .. table.concat(source.AffectedNames, ", ") .. ".")
-	end
-	if type(source.AffectedCount) == "number" and source.Kind == "BoostField" then
-		table.insert(lines, ("Affected placed buildings: %d."):format(source.AffectedCount))
-	end
-	local production = formatProduction(source)
-	if production then
-		table.insert(lines, production)
-	end
-	return table.concat(lines, "\n")
-end
-
-local function getGooColor(multiplier)
-	local bestColor = Color3.new(1, 1, 1)
-	local bestDistance = math.huge
-	for _, entry in ipairs(MultiplierHudConfig.GooColors) do
-		local distance = math.abs(entry.Multiplier - multiplier)
-		if distance < bestDistance then
-			bestDistance = distance
-			bestColor = entry.Color
+	if source.Kind == "Floor" and type(source.AffectedNames) == "table" then
+		local lines = {}
+		for _, name in ipairs(source.AffectedNames) do
+			local count = math.max(0, math.floor(tonumber(source.AffectedCounts and source.AffectedCounts[name]) or 0))
+			table.insert(
+				lines,
+				("%d %s: %s"):format(count, pluralizeBuildingName(name, count), formatBonus(source.Multiplier))
+			)
+		end
+		if #lines > 0 then
+			return table.concat(lines, "\n")
 		end
 	end
-	return bestColor
+	return getCompactScope(source) .. ": " .. formatBonus(source.Multiplier)
 end
 
-local function applyIcon(slot, source)
+local function applyIcon(slot, source, player)
 	local icon = slot:FindFirstChild("Icon")
 	if not (icon and icon:IsA("ImageLabel")) then
 		return
@@ -100,14 +122,14 @@ local function applyIcon(slot, source)
 	local definition = MultiplierHudConfig.Icons[source.IconKey]
 	icon.Image = definition and definition.Image or MultiplierHudConfig.PlaceholderIcon
 	if source.IconKey == "Goo" then
-		icon.ImageColor3 = getGooColor(source.Multiplier)
+		icon.ImageColor3 = GooSkinColor.getSelectedBodyColor(player)
 	else
 		icon.ImageColor3 = definition and definition.Color or Color3.new(1, 1, 1)
 	end
 	icon.ImageTransparency = 0
 end
 
-function MultiplierStatusPresenter.new(screenGui)
+function MultiplierStatusPresenter.new(screenGui, player)
 	local root = screenGui:FindFirstChild(MultiplierHudConfig.RootName)
 	if not (root and root:IsA("GuiObject")) then
 		warn("Multiplier status HUD disabled: Studio-authored root was not found")
@@ -348,7 +370,7 @@ function MultiplierStatusPresenter.new(screenGui)
 					end
 					return {
 						mode = "Hint",
-						title = tostring(source.DisplayName) .. " " .. NumberFormat.multiplier(source.Multiplier),
+						title = tostring(source.DisplayName),
 						description = getDescription(source),
 					}
 				end,
@@ -360,6 +382,7 @@ function MultiplierStatusPresenter.new(screenGui)
 		if destroyed then
 			return
 		end
+		local compact = MobileScale.shouldUseMobile(root)
 		local gap = DevTuning.get("MultiplierHud.SlotGap")
 		if layout and layout:IsA("UIListLayout") then
 			layout.Padding = UDim.new(0, gap)
@@ -372,16 +395,18 @@ function MultiplierStatusPresenter.new(screenGui)
 			0
 		)
 		if responsiveScale and responsiveScale:IsA("UIScale") then
-			responsiveScale.Scale = MobileScale.shouldUseMobile(root) and DevTuning.get("MultiplierHud.CompactScale")
+			responsiveScale.Scale = compact and DevTuning.get("MultiplierHud.CompactScale")
 				or DevTuning.get("MultiplierHud.DesktopScale")
 		end
 
 		local viewport = MobileScale.getViewportSize(root)
 		local safeTopLeft, safeBottomRight = MobileScale.getCoreSafeOffsets(root)
+		local bottomOffset = compact and DevTuning.get("MultiplierHud.BottomOffset")
+			or MultiplierHudConfig.DesktopXpBarBottomOffset
 		root.AnchorPoint = Vector2.new(0, 1)
 		root.Position = UDim2.fromOffset(
 			math.round(safeTopLeft.X + DevTuning.get("MultiplierHud.LeftOffset")),
-			math.round(viewport.Y - safeBottomRight.Y - DevTuning.get("MultiplierHud.BottomOffset"))
+			math.round(viewport.Y - safeBottomRight.Y - bottomOffset)
 		)
 	end
 
@@ -471,7 +496,7 @@ function MultiplierStatusPresenter.new(screenGui)
 					and (index <= MultiplierHudConfig.SlotsPerRow and overflowCount + index or index - MultiplierHudConfig.SlotsPerRow)
 				or index
 			slot:SetAttribute("SourceId", source.Id)
-			applyIcon(slot, source)
+			applyIcon(slot, source, player)
 			setTransparency(slot, 0)
 			slot.Visible = true
 			if isNew then
@@ -479,6 +504,8 @@ function MultiplierStatusPresenter.new(screenGui)
 			end
 		end
 
+		-- Reapply the configured spacing whenever visibility changes cause the list to wrap or unwrap.
+		applyLayout()
 		updateRootVisibility()
 		presenter:refreshCountdowns()
 	end

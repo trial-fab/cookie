@@ -5,7 +5,6 @@ local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(Shared:WaitForChild("Attrs"))
-local BoostFieldEffects = require(Shared:WaitForChild("BoostFieldEffects"))
 local BoostShopConfig = require(Shared:WaitForChild("BoostShopConfig"))
 local FloorConfig = require(Shared:WaitForChild("FloorConfig"))
 local ProductionFormula = require(Shared:WaitForChild("ProductionFormula"))
@@ -53,23 +52,24 @@ end
 
 local function addAffected(source, building)
 	source._affectedNames[building.displayName] = true
+	source._affectedCounts[building.displayName] = (source._affectedCounts[building.displayName] or 0) + 1
 	source.AffectedCount += 1
-	source.BeforeProduction += math.abs(source.Multiplier) > EPSILON and building.cps / source.Multiplier or 0
-	source.AfterProduction += building.cps
 end
 
 local function finishSource(source)
-	source.AffectedNames = sortedNames(source._affectedNames)
+	source.AffectedNames = source._affectedNameOrder or sortedNames(source._affectedNames)
+	source.AffectedCounts = source._affectedCounts
 	source._affectedNames = nil
+	source._affectedNameOrder = nil
+	source._affectedCounts = nil
 	source.Active = isActive(source.Multiplier)
 	return source
 end
 
 local function newProductionSource(fields)
-	fields.BeforeProduction = 0
-	fields.AfterProduction = 0
 	fields.AffectedCount = 0
 	fields._affectedNames = {}
+	fields._affectedCounts = {}
 	return fields
 end
 
@@ -79,9 +79,6 @@ local function collectBuildings(player, sheet)
 		return buildings
 	end
 
-	local eventMultiplier = ProductionFormula.GetEventMultiplier()
-	local friendMultiplier = ProductionFormula.GetFriendMultiplier(player)
-	local coverage = BoostFieldEffects.GetCoverage(sheet)
 	local skinMultiplierByBuildingId = {}
 	local upgradeMultiplierByBuildingId = {}
 	for _, child in ipairs(sheet:GetChildren()) do
@@ -90,8 +87,6 @@ local function collectBuildings(player, sheet)
 			local config = type(buildingId) == "string" and UpgradeConfig[buildingId]
 			if config and config.TemplateKind == "Building" then
 				local floorId = FloorConfig.NormalizeId(child:GetAttribute(Attrs.FloorId))
-				local powerMultiplier, speedMultiplier =
-					BoostFieldEffects.Apply(coverage, floorId, child:GetPivot().Position)
 				local skinMultiplier = skinMultiplierByBuildingId[buildingId]
 				if not skinMultiplier then
 					skinMultiplier = ProductionFormula.GetSkinMultiplier(player, buildingId)
@@ -103,25 +98,13 @@ local function collectBuildings(player, sheet)
 					upgradeMultiplierByBuildingId[buildingId] = upgradeMultiplier
 				end
 				local floorMultiplier = ProductionFormula.GetFloorMultiplier(buildingId, floorId)
-				local baseCps = (config.CookiesGained or 0) / math.max(1, config.UpdateTime or 30)
 				table.insert(buildings, {
 					instance = child,
-					id = buildingId,
 					displayName = getDisplayName(buildingId),
 					floorId = floorId,
 					skinMultiplier = skinMultiplier,
 					upgradeMultiplier = upgradeMultiplier,
 					floorMultiplier = floorMultiplier,
-					powerMultiplier = powerMultiplier,
-					speedMultiplier = speedMultiplier,
-					cps = baseCps
-						* skinMultiplier
-						* upgradeMultiplier
-						* floorMultiplier
-						* friendMultiplier
-						* eventMultiplier
-						* powerMultiplier
-						* speedMultiplier,
 				})
 			end
 		end
@@ -138,8 +121,9 @@ local function addGooSource(sources, player, buildings)
 		Id = "GooSkin",
 		Kind = "Permanent",
 		IconKey = "Goo",
-		DisplayName = "Goo Bonus",
+		DisplayName = "Goo Boost",
 		Multiplier = multiplier,
+		CompactScope = "All buildings",
 		Scope = "All your building production. Uses your strongest owned goo.",
 	})
 	for _, building in ipairs(buildings) do
@@ -166,6 +150,7 @@ local function addFriendSource(sources, player, buildings)
 		DisplayName = friendCount == 1 and "Friend Boost (1 friend)"
 			or ("Friend Boost (%d friends)"):format(friendCount),
 		Multiplier = multiplier,
+		CompactScope = "All buildings and manual clicks",
 		Scope = "All your building production and your manual clicks, while friends you brought here are online.",
 	})
 	for _, building in ipairs(buildings) do
@@ -200,9 +185,7 @@ local function addUpgradeSources(sources, player, buildings)
 	for _, building in ipairs(buildings) do
 		local source = byMultiplier[tostring(building.upgradeMultiplier)]
 		if source then
-			source.AffectedCount += 1
-			source.BeforeProduction += building.cps / source.Multiplier
-			source.AfterProduction += building.cps
+			addAffected(source, building)
 		end
 	end
 	local ordered = {}
@@ -227,16 +210,18 @@ local function addFloorSources(sources, player, buildings)
 				IconKey = "Floor" .. tostring(definition.Order),
 				DisplayName = definition.DisplayName,
 				Multiplier = definition.Multiplier,
+				_affectedNameOrder = {},
 				Scope = "Buildings of this floor's matching types placed on this floor.",
 			})
 			for _, buildingId in ipairs(definition.BuildingIds) do
-				source._affectedNames[getDisplayName(buildingId)] = true
+				local displayName = getDisplayName(buildingId)
+				table.insert(source._affectedNameOrder, displayName)
+				source._affectedNames[displayName] = true
+				source._affectedCounts[displayName] = 0
 			end
 			for _, building in ipairs(buildings) do
 				if building.floorId == definition.Id and isActive(building.floorMultiplier) then
-					source.AffectedCount += 1
-					source.BeforeProduction += building.cps / source.Multiplier
-					source.AfterProduction += building.cps
+					addAffected(source, building)
 				end
 			end
 			table.insert(sources, finishSource(source))
@@ -286,7 +271,6 @@ local function addFieldSources(sources, sheet, buildings)
 		local strengthPercent = tonumber(field:GetAttribute("StrengthPercent")) or item.StrengthPercent
 		local multiplier = 1 + strengthPercent / 100
 		local floorId = FloorConfig.NormalizeId(field:GetAttribute(Attrs.FloorId))
-		local floor = FloorConfig.Get(floorId)
 		local source = newProductionSource({
 			Id = ("BoostField:%s:%s"):format(floorId, item.Id),
 			Kind = "BoostField",
@@ -294,7 +278,6 @@ local function addFieldSources(sources, sheet, buildings)
 			DisplayName = item.DisplayName,
 			Multiplier = multiplier,
 			RemainingInstance = field,
-			Scope = ("Buildings covered by this field on %s."):format(floor and floor.DisplayName or "this floor"),
 		})
 		for _, building in ipairs(buildings) do
 			if fieldCovers(field, item, building) then
@@ -306,10 +289,6 @@ local function addFieldSources(sources, sheet, buildings)
 end
 
 local function addEventSources(sources, buildings)
-	local totalProduction = 0
-	for _, building in ipairs(buildings) do
-		totalProduction += building.cps
-	end
 	for _, event in ipairs(ProductionFormula.GetEventMultiplierBreakdown().Sources) do
 		if event.Active then
 			local source = newProductionSource({
@@ -319,13 +298,11 @@ local function addEventSources(sources, buildings)
 				DisplayName = event.DisplayName,
 				Multiplier = event.Multiplier,
 				ExpiresAt = event.ExpiresAt,
+				CompactScope = "All server income",
 				Scope = event.Scope,
 			})
-			source.BeforeProduction = math.abs(event.Multiplier) > EPSILON and totalProduction / event.Multiplier or 0
-			source.AfterProduction = totalProduction
-			source.AffectedCount = #buildings
 			for _, building in ipairs(buildings) do
-				source._affectedNames[building.displayName] = true
+				addAffected(source, building)
 			end
 			table.insert(sources, finishSource(source))
 		end

@@ -7,6 +7,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
+local CursorTooltip = require(ReplicatedStorage.Shared.CursorTooltip)
 local CurrencyRewardFlightConfig = require(ReplicatedStorage.Shared.CurrencyRewardFlightConfig)
 local QuestSnapshot = require(ReplicatedStorage.Shared.QuestSnapshot)
 local UiMotion = require(ReplicatedStorage.Shared.UiMotion)
@@ -74,6 +75,7 @@ function QuestProgressQuestList.bind(root, callbacks)
 	local arcHeader = child(arcHeaderClip, "ArcHeader", "Frame") or child(questList, "ArcHeader", "Frame")
 	local arcHeaderButton = child(arcHeaderClip, "ArcHeaderButton", "GuiButton")
 		or child(arcHeader, "ArcHeaderButton", "GuiButton")
+	local arcRewardLine = child(arcHeader, "RewardLine", "Frame", true)
 	local selectorArcHeader = child(selector, "SelectorArcHeader", "Frame")
 	local selectorRewardLine = child(selectorArcHeader, "RewardLine", "Frame", true)
 	local hideCompletedToggle = child(selector, "HideCompletedToggle", "GuiButton")
@@ -93,6 +95,16 @@ function QuestProgressQuestList.bind(root, callbacks)
 		end
 	end
 	local screenGui = root:FindFirstAncestorOfClass("ScreenGui")
+	local rewardTooltipRegistration = screenGui
+		and arcRewardLine
+		and CursorTooltip.get(screenGui):registerGui(arcRewardLine, {
+			trigger = CursorTooltip.Trigger.Hover,
+			content = {
+				mode = "Hint",
+				title = "Mystery Goo:",
+				description = "Unlock by completing this quest.",
+			},
+		})
 	local rewardFlightCompleted = getEvent(screenGui, CurrencyRewardFlightConfig.CompletedEventName)
 	local questStrikeCompleted = getEvent(screenGui, CurrencyRewardFlightConfig.QuestStrikeCompletedEventName)
 	local completionStrike = QuestProgressCompletionStrike.bind(trackedDescription)
@@ -538,6 +550,18 @@ function QuestProgressQuestList.bind(root, callbacks)
 	connect(collapseButton.Activated, function()
 		setExpanded(not expanded, true)
 	end)
+	connect(UserInputService.InputBegan, function(input, gameProcessed)
+		if
+			gameProcessed
+			or input.KeyCode ~= Enum.KeyCode.Q
+			or UserInputService:GetFocusedTextBox() ~= nil
+			or not snapshot
+			or not root.Visible
+		then
+			return
+		end
+		setExpanded(not expanded, true)
+	end)
 	if arcHeader then
 		arcHeader.AnchorPoint = Vector2.new(0, 0)
 	end
@@ -698,6 +722,9 @@ function QuestProgressQuestList.bind(root, callbacks)
 		end,
 		destroy = function()
 			cancelRevealTweens()
+			if rewardTooltipRegistration then
+				rewardTooltipRegistration:disconnect()
+			end
 			if questProgressTween then
 				questProgressTween:Cancel()
 				questProgressTween = nil

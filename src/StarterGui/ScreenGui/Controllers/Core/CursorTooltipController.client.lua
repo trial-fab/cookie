@@ -101,6 +101,16 @@ end
 registerNamedHitbox(screenGui, "BoardToggle", "Leaderboard", function()
 	return screenGui:GetAttribute(Attrs.LeaderboardOpen) == true
 end)
+local questProgress = screenGui:FindFirstChild(GuiNames.QuestProgress)
+if questProgress then
+	task.spawn(function()
+		local progressToggleFrame = waitForDescendant(questProgress, "ProgressToggleFrame")
+		-- The authored button exactly covers ProgressToggleFrame, so it is the reliable
+		-- hover target without widening the hint to the rest of QuestProgress.
+		local hitbox = progressToggleFrame and waitForDescendant(progressToggleFrame, "QuestProgressToggle")
+		register(hitbox, "Quests")
+	end)
+end
 local hotbar = screenGui:FindFirstChild(GuiNames.Hotbar)
 if hotbar then
 	local mixerSlot = hotbar:FindFirstChild("SlotCenter")

@@ -35,6 +35,14 @@ local HINTS = {
 		showDescription = false,
 		description = "Spend golden cookies on rewards and view your collection.",
 	},
+	Quests = {
+		enabled = true,
+		showTitle = true,
+		title = "Quests",
+		showKeybind = true,
+		keybind = "Q",
+		showDescription = false,
+	},
 	Settings = {
 		enabled = true,
 		showTitle = true,

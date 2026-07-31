@@ -22,7 +22,7 @@ return {
 			max = 200,
 			step = 1,
 			scope = "client",
-			description = "Vertical offset of the multiplier icon row from the device-safe bottom edge.",
+			description = "Compact/mobile offset of the multiplier icon row from the device-safe bottom edge.",
 		},
 		{
 			key = "SlotGap",
