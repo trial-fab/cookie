@@ -14,8 +14,10 @@
 -- boost, are the next build. Today the field exists, is owned, is validated, expires correctly,
 -- and consumes exactly one charge.
 
+local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
 local BoostShopConfig = require(ReplicatedStorage.Shared.BoostShopConfig)
@@ -233,32 +235,113 @@ local function ensureTimer()
 	end)
 end
 
--- Leaves the canister's glowing Core standing at the middle of the field. The disc's ping travels
--- outward from that point, and without something sitting there it reads as a ring expanding out of
--- bare ground. Only the Core, not the whole canister: the canister is what the player is HOLDING
--- during placement, and leaving one behind would look like litter rather than a source.
-local function attachCore(field, item, restingPosition)
+-- World-space bottom of an arbitrarily rotated canister. The authored canisters pivot on their
+-- sideways Cylinder shell, so Model:GetBoundingBox().Size.Y is not their standing height.
+local function lowestWorldY(model)
+	local lowest = math.huge
+	for _, part in ipairs(model:GetDescendants()) do
+		if part:IsA("BasePart") then
+			local cframe, size = part.CFrame, part.Size
+			local halfHeight = 0.5
+				* (
+					math.abs(cframe.XVector.Y) * size.X
+					+ math.abs(cframe.YVector.Y) * size.Y
+					+ math.abs(cframe.ZVector.Y) * size.Z
+				)
+			lowest = math.min(lowest, cframe.Position.Y - halfHeight)
+		end
+	end
+	return lowest ~= math.huge and lowest or model:GetPivot().Position.Y
+end
+
+-- Tag read by the client's FloatingOrbs presenter. Applied server-side so it replicates with the
+-- field itself and every client levitates the same core without re-deriving which parts qualify.
+local FLOATING_ORB_TAG = "FloatingOrb"
+
+-- Fresh drops start as the exact solid canister the ghost preview carried. Its Core is extracted
+-- into the field so the casing can fade without taking the lasting orb with it. Restores clone only
+-- that Core: a rejoin is not a new placement and must not replay the reveal.
+local function attachCore(field, item, restingPosition, playPlacementAnimation)
 	local previews = ReplicatedStorage:FindFirstChild(BoostShopConfig.PreviewFolderName)
-	local canister = previews and previews:FindFirstChild(item.CanisterName)
-	local source = canister and canister:FindFirstChild(BoostShopConfig.Pulse.CorePartName)
+	local sourceCanister = previews and previews:FindFirstChild(item.CanisterName)
+	local source = sourceCanister and sourceCanister:FindFirstChild(BoostShopConfig.Pulse.CorePartName)
 	if not (source and source:IsA("BasePart")) then
 		return
 	end
 
-	local core = source:Clone()
+	local core
+	if playPlacementAnimation then
+		local canister = sourceCanister:Clone()
+		canister.Name = BoostShopConfig.PlacementCanisterName
+		for _, descendant in ipairs(canister:GetDescendants()) do
+			if descendant:IsA("BasePart") then
+				descendant.Anchored = true
+				descendant.CanCollide = false
+				descendant.CanQuery = false
+				descendant.CanTouch = false
+			elseif descendant:IsA("Script") or descendant:IsA("LocalScript") then
+				descendant.Disabled = true
+			end
+		end
+
+		local pivotAboveFoot = canister:GetPivot().Position.Y - lowestWorldY(canister)
+		canister:PivotTo(
+			CFrame.new(restingPosition + Vector3.new(0, pivotAboveFoot + BoostShopConfig.GhostItemLift, 0))
+				* sourceCanister:GetPivot().Rotation
+		)
+		core = canister:FindFirstChild(BoostShopConfig.Pulse.CorePartName)
+		if not (core and core:IsA("BasePart")) then
+			canister:Destroy()
+			return
+		end
+		-- Reparenting preserves the world CFrame, so the solid reveal still matches the ghost exactly.
+		core.Parent = field
+		canister.Parent = field
+		core:SetAttribute(BoostShopConfig.OrbRestOffsetAttribute, restingPosition.Y + core.Size.Y / 2 - core.Position.Y)
+		local startedAt = Workspace:GetServerTimeNow()
+		field:SetAttribute(BoostShopConfig.PlacementAnimationAttribute, startedAt)
+		-- Repeated on the tagged part so its binder does not depend on sibling/parent replication order.
+		core:SetAttribute(BoostShopConfig.PlacementAnimationAttribute, startedAt)
+		task.delay(BoostShopConfig.PlacementCanisterLifetime, function()
+			if field.Parent then
+				field:SetAttribute(BoostShopConfig.PlacementAnimationAttribute, nil)
+			end
+			if core.Parent then
+				core:SetAttribute(BoostShopConfig.PlacementAnimationAttribute, nil)
+			end
+			if canister.Parent then
+				canister:Destroy()
+			end
+		end)
+	else
+		core = source:Clone()
+		core.CFrame = CFrame.new(restingPosition + Vector3.new(0, core.Size.Y / 2, 0))
+		core.Parent = field
+	end
+
 	core.Anchored = true
-	core.CanCollide = false
-	core.CanQuery = false
+	core.CanCollide = true
+	core.CanQuery = true
 	core.CanTouch = false
-	-- Sat ON the surface rather than sunk into it. Its authored Neon colour is kept: the core IS
-	-- the item's identity, which is exactly what makes a dropped field readable at a glance.
-	core.CFrame = CFrame.new(restingPosition + Vector3.new(0, core.Size.Y / 2, 0))
-	core.Parent = field
+	-- Two fields dropped near each other would otherwise bob in lockstep and read as one mechanism.
+	-- Keyed on the item rather than on position, so Power and Speed are always opposite each other.
+	local order = table.find(BoostShopConfig.Order, item.Id) or 1
+	core:SetAttribute("OrbFloatPhase", (order - 1) / #BoostShopConfig.Order)
+	CollectionService:AddTag(core, FLOATING_ORB_TAG)
 end
 
 -- `attribution` is who the field came FROM (equal to the owner for a self-drop), carried separately
 -- from `owner` so a restored gift still reads as a gift after the giver has left the server.
-local function buildField(template, item, surface, position, owner, attribution, remainingSeconds)
+local function buildField(
+	template,
+	item,
+	surface,
+	position,
+	owner,
+	attribution,
+	remainingSeconds,
+	playPlacementAnimation
+)
 	local field = template:Clone()
 	field.Name = fieldName(item.Id)
 
@@ -297,7 +380,7 @@ local function buildField(template, item, surface, position, owner, attribution,
 
 	-- After the disc is in place and after the radius scaling above, so the core is positioned in
 	-- final world space and never inherits the disc's scale.
-	attachCore(field, item, restingPosition)
+	attachCore(field, item, restingPosition, playPlacementAnimation)
 
 	-- The sheet's own release path destroys models carrying an `Owner` pointing at the leaving
 	-- player, so this is what stops a field from being inherited by the next player assigned to
@@ -385,7 +468,7 @@ function BoostFieldService.Drop(player, itemId, position)
 
 	local attribution = { userId = player.UserId, displayName = player.DisplayName }
 	local duration = item.DurationSeconds
-	local field, restingPosition = buildField(template, item, surface, position, owner, attribution, duration)
+	local field, restingPosition = buildField(template, item, surface, position, owner, attribution, duration, true)
 	field.Parent = sheet
 	activateField(field, item, surface, owner, attribution, duration, restingPosition)
 	-- Coverage is the quality of the drop, and the number the player was actually choosing on. A
@@ -499,7 +582,7 @@ function BoostFieldService.RestoreFields(player)
 					}
 					local position = surface.originCFrame:PointToWorldSpace(Vector3.new(x, y, z))
 					local field, restingPosition =
-						buildField(template, item, surface, position, player, attribution, remaining)
+						buildField(template, item, surface, position, player, attribution, remaining, false)
 					field.Parent = sheet
 					activateField(field, item, surface, player, attribution, remaining, restingPosition)
 					restored += 1

@@ -56,7 +56,7 @@ return {
 	BottomOffset = 24,
 	SlotGap = 12,
 	TooltipOffsetX = 0,
-	TooltipOffsetY = 0,
+	TooltipOffsetY = 2,
 	DesktopScale = 1,
 	CompactScale = 0.85,
 	InfinityTextSize = 20,

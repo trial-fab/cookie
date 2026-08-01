@@ -27,6 +27,7 @@ local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(Shared:WaitForChild("Attrs"))
+local CharacterSupportProbe = require(Shared:WaitForChild("CharacterSupportProbe"))
 local Config = require(Shared:WaitForChild("FloatingRuinsConfig"))
 
 local TAG = "FloatingRuin"
@@ -35,9 +36,6 @@ local MAX_RENDER_DISTANCE = 320
 -- Tilt chases its target without overshoot; only the vertical dip is worth bouncing.
 local TILT_SMOOTHING = 9
 local EXTRA_PLAYER_SHARE = 0.35
--- Slack under the feet, so a slab that has just dipped away is still found before the character's
--- own fall catches up to it.
-local CONTACT_SLACK = 1.5
 -- Clearance always kept between a slab's lowest corner and the layer below it.
 local GAP_MARGIN = 0.05
 
@@ -168,8 +166,7 @@ local function rebuildStacks()
 			-- ever sinks that layer further away.
 			local below = stack.layers[index + 1]
 			layer.gapBelow = below
-					and (layer.restCFrame.Position.Y - layer.halfY)
-						- (below.restCFrame.Position.Y + below.halfY)
+					and (layer.restCFrame.Position.Y - layer.halfY) - (below.restCFrame.Position.Y + below.halfY)
 				or math.huge
 		end
 		stack.center = sum / #stack.layers
@@ -178,32 +175,23 @@ end
 
 local contacts = {}
 
--- Ask what each player is actually standing on rather than assuming a flat top face. The authored
--- slabs are part wedge, so most of the standable surface on a layer sits well below its top face;
--- a height band would miss a player low on a ramp entirely. One ray per player, filtered to the
--- bound layers, is both exact for any geometry and cheaper than testing every player against
--- every layer.
+-- Ask what each player's footprint is actually standing on rather than assuming a flat top face.
+-- The authored slabs are part wedge, so most of the standable surface on a layer sits below its top
+-- face; a height band would miss a player low on a ramp. The shared support probe also keeps the
+-- load while only a foot remains near an edge, matching the rounded Core's behavior.
 local function gatherContacts()
 	table.clear(contacts)
 	for _, player in ipairs(Players:GetPlayers()) do
-		local character = player.Character
-		local root = character and character:FindFirstChild("HumanoidRootPart")
-		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-		if root and humanoid and humanoid.Health > 0 then
-			-- Derived from the character rather than tuned, so it holds for R6, R15 and any
-			-- avatar scaling instead of assuming one hip height.
-			local reach = humanoid.HipHeight + root.Size.Y / 2 + CONTACT_SLACK
-			local result = Workspace:Raycast(root.Position, Vector3.new(0, -reach, 0), contactParams)
-			local layer = result and partToLayer[result.Instance]
-			if layer then
-				local entry = contacts[layer]
-				if not entry then
-					entry = { count = 0, sum = Vector3.zero }
-					contacts[layer] = entry
-				end
-				entry.count += 1
-				entry.sum += result.Position
+		local result = CharacterSupportProbe.find(player.Character, contactParams)
+		local layer = result and partToLayer[result.Instance]
+		if layer then
+			local entry = contacts[layer]
+			if not entry then
+				entry = { count = 0, sum = Vector3.zero }
+				contacts[layer] = entry
 			end
+			entry.count += 1
+			entry.sum += result.Position
 		end
 	end
 end
@@ -245,11 +233,13 @@ local function update(deltaTime)
 					local localHit = layer.restCFrame:PointToObjectSpace(entry.sum / entry.count)
 					-- Returned as a world direction so it bleeds correctly into layers whose own
 					-- authored rotation differs from this one's.
-					worldTilt = layer.restCFrame:VectorToWorldSpace(Vector3.new(
-						math.clamp(localHit.X / layer.halfX, -1, 1),
-						0,
-						math.clamp(localHit.Z / layer.halfZ, -1, 1)
-					))
+					worldTilt = layer.restCFrame:VectorToWorldSpace(
+						Vector3.new(
+							math.clamp(localHit.X / layer.halfX, -1, 1),
+							0,
+							math.clamp(localHit.Z / layer.halfZ, -1, 1)
+						)
+					)
 				end
 
 				-- Bleeding load downward also keeps the gap: the layer beneath sinks and tips with

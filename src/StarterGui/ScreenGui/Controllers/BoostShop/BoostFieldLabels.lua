@@ -1,14 +1,14 @@
 -- BoostFieldLabels: the status panel standing over a dropped field.
 --
--- Three rows, anchored to the Core at the field's centre and lifted clear of the buildings it is
--- boosting:
+-- Three rows, anchored to the fixed Rim at the field's centre and lifted clear of the buildings it
+-- is boosting. The Core can bob and dip under a player's weight without moving this game text:
 --
 --   Power Field (SomePlayer)   <- the item, crediting whoever dropped it when that was not you
 --   +50%                       <- what it is doing
 --   4:32                       <- how long it has left
 --
 -- One panel per field on purpose. An earlier pass had a separate "from <player>" label anchored to
--- the same Core, which meant two labels competing for one point in space; the attribution now rides
+-- the same point, which meant two labels competing for one point in space; the attribution now rides
 -- the name row instead.
 --
 -- The countdown is the SERVER's number. `RemainingSeconds` is written by BoostFieldService's timer
@@ -34,11 +34,12 @@ local SHEETS_NAME = "CookieSheets"
 local WORLD_LABEL_TAG = "WorldTrackedLabel"
 local REPLICATION_WAIT_SECONDS = 5
 
--- Prefer the Core standing at the field's centre; it is what the player's eye is already on.
+-- The outer Rim never moves: unlike the Core it neither bobs nor sinks, and unlike Fill it does not
+-- resize for the sonar sweep. Falling back to Fill still keeps the anchor's world position fixed.
 local function anchorPart(field)
-	local core = field:FindFirstChild(BoostShopConfig.Pulse.CorePartName)
-	if core and core:IsA("BasePart") then
-		return core
+	local rim = field:FindFirstChild(BoostShopConfig.Pulse.RimPartName)
+	if rim and rim:IsA("BasePart") then
+		return rim
 	end
 	local sweep = field:FindFirstChild(BoostShopConfig.Pulse.SweepPartName)
 	return sweep and sweep:IsA("BasePart") and sweep or nil
@@ -153,7 +154,7 @@ function BoostFieldLabels.bindWorld(screenGui)
 			-- rather than waiting on the attribute signal, which would hang this thread forever if
 			-- the value never arrived.
 			if not anchorPart(instance) then
-				instance:WaitForChild(BoostShopConfig.Pulse.CorePartName, REPLICATION_WAIT_SECONDS)
+				instance:WaitForChild(BoostShopConfig.Pulse.RimPartName, REPLICATION_WAIT_SECONDS)
 			end
 			local deadline = os.clock() + REPLICATION_WAIT_SECONDS
 			while instance:GetAttribute("RemainingSeconds") == nil and os.clock() < deadline and instance.Parent do

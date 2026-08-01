@@ -2,7 +2,8 @@
 --
 -- SlotLeft = Power Field, SlotRight = Speed Field (the slots the Remote Cookie Clicker and
 -- Teleporter vacated when they moved post-launch). This module owns only the item's state on
--- those slots: the owned-count badge, whether the slot is selectable, and the activation gesture.
+-- those slots: the owned-charge readout, its hover hint, whether the slot is selectable, and the
+-- activation gesture.
 -- HotbarCarousel keeps owning pose, spin, and visibility; nothing here fights it.
 --
 -- Activation is ONE press, like the store's cookie slot: tapping the slot (or pressing its item
@@ -10,11 +11,10 @@
 -- carousel's own handler still spins the slot to centre off the same tap, so the two compose
 -- without a hook inside HotbarCarousel. Pressing again while placing cancels.
 --
--- The slot icon is a live model preview, the same treatment building rows get (StorePreview): the
--- authored `Preview` ViewportFrame holds a WorldModel with a cloned canister from
--- ReplicatedStorage.BoostPreviews. The Camera is created here at runtime and assigned to
--- CurrentCamera on purpose — authored Camera instances are stripped in the StarterGui -> PlayerGui
--- replication, so a Studio-authored one renders blank in Play.
+-- The slot icon is a live model preview, the same treatment building rows get (StorePreview): a
+-- ViewportFrame holds a WorldModel with a cloned canister from ReplicatedStorage.BoostPreviews.
+-- BoostChargeCluster owns those viewports, and how many canisters stand in the slot is how the
+-- owned count is reported — the number badge is retired.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -23,51 +23,27 @@ local UserInputService = game:GetService("UserInputService")
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(shared:WaitForChild("Attrs"))
 local BoostShopConfig = require(shared:WaitForChild("BoostShopConfig"))
+local CursorTooltip = require(shared:WaitForChild("CursorTooltip"))
+
+local BoostChargeCluster = require(script.Parent:WaitForChild("BoostChargeCluster"))
 
 local BoostHotbarSlots = {}
 
--- Which authored slot each item occupies.
+-- Which authored slot each item occupies, and the item number that equips it. The number is both
+-- the key press and the keycap the hover hint shows, so the two can never drift apart. It mirrors
+-- HotbarCarousel's own mapping (1 = centre/Mixer, 2 = left, 3 = right).
 local SLOT_BY_ITEM = {
 	PowerField = "SlotLeft",
 	SpeedField = "SlotRight",
 }
-
--- Orbit framing for the slot preview, BAKED from a live tuning session (2026-07-26). Deliberately
--- not StorePreview's front-quarter building pose: a canister is a small vertical object in a small
--- round slot, and it reads best square-on and filling the frame, so the camera ended up at a flat
--- side-on angle with no elevation, pulled in tight (zoom 1) at a wide 60 degree field of view.
-local PREVIEW_ANGLE = math.rad(90)
-local PREVIEW_ELEVATION = math.rad(0)
-local PREVIEW_ZOOM = 1
-local PREVIEW_FOV = 60
+local SLOT_KEYS = {
+	SlotLeft = { code = Enum.KeyCode.Two, label = "2" },
+	SlotRight = { code = Enum.KeyCode.Three, label = "3" },
+}
 
 -- Longest we will wait for a requested item to reach the centre (store close, then spin) before
 -- dropping the request.
 local SPIN_WAIT_TIMEOUT = 4
-
-local function mountPreview(viewport, sourceModel)
-	viewport:ClearAllChildren()
-	viewport.CurrentCamera = nil
-
-	local world = Instance.new("WorldModel")
-	world.Name = "PreviewWorld"
-	world.Parent = viewport
-
-	local model = sourceModel:Clone()
-	model.Parent = world
-
-	local boundingCFrame, size = model:GetBoundingBox()
-	local radius = math.max(size.Magnitude / 2, 0.1)
-	local distance = radius * PREVIEW_ZOOM / math.tan(math.rad(PREVIEW_FOV) / 2)
-	local direction = CFrame.fromEulerAnglesYXZ(PREVIEW_ELEVATION, PREVIEW_ANGLE, 0).LookVector
-
-	local camera = Instance.new("Camera")
-	camera.Name = "PreviewCamera"
-	camera.FieldOfView = PREVIEW_FOV
-	camera.CFrame = CFrame.lookAt(boundingCFrame.Position - direction * distance, boundingCFrame.Position)
-	camera.Parent = viewport
-	viewport.CurrentCamera = camera
-end
 
 -- options: { screenGui, onActivate(item) }
 function BoostHotbarSlots.new(options)
@@ -80,6 +56,7 @@ function BoostHotbarSlots.new(options)
 		return nil
 	end
 
+	local tooltip = CursorTooltip.get(screenGui)
 	local bindings = {}
 	local scheduleActivate
 
@@ -94,23 +71,19 @@ function BoostHotbarSlots.new(options)
 		))
 	end
 
-	-- An empty slot is just the authored `+` placeholder; the model preview replaces it only once
-	-- the player owns a charge, and hands the slot back when the last one is spent. The two are
-	-- never visible together.
+	-- An empty slot is just the authored `+` placeholder; the canisters replace it only once the
+	-- player owns a charge, and hand the slot back when the last one is spent. The two are never
+	-- visible together.
 	local function render(binding)
 		local owned = ownedCount(binding.item)
 		-- While the placement faces own the bar, the slot belongs to Cancel/Confirm. HotbarPlacementMode
-		-- hides the authored icon/placeholder itself but knows nothing about these two, so they are
+		-- hides the authored icon/placeholder itself but knows nothing about the canisters, so they are
 		-- suppressed here or they would show through the face.
 		local placing = screenGui:GetAttribute(Attrs.PlacementActive) == true
 		local hasItem = owned > 0
 
-		if binding.badge then
-			binding.badge.Text = hasItem and tostring(owned) or ""
-			binding.badge.Visible = hasItem and not placing
-		end
-		if binding.preview then
-			binding.preview.Visible = hasItem and not placing
+		if binding.cluster then
+			binding.cluster.render(owned, not placing)
 		end
 		-- The placeholder is only ours to drive outside placement: during it HotbarPlacementMode
 		-- hides every placeholder for the Cancel/Confirm faces, and re-showing it here would fight
@@ -118,6 +91,9 @@ function BoostHotbarSlots.new(options)
 		-- show while the store is closed).
 		if binding.placeholder and not placing then
 			binding.placeholder.Visible = not hasItem and screenGui:GetAttribute(Attrs.StoreOpen) ~= true
+		end
+		if binding.tooltip then
+			binding.tooltip:refresh()
 		end
 	end
 
@@ -198,20 +174,45 @@ function BoostHotbarSlots.new(options)
 				item = item,
 				slot = slot,
 				placeholder = placeholder and placeholder:IsA("GuiObject") and placeholder or nil,
-				badge = slot:FindFirstChild("CountBadge"),
 			}
-			if binding.badge and not binding.badge:IsA("TextLabel") then
-				binding.badge = nil
+
+			-- The count is told by the canisters now, so the authored number badge is retired here
+			-- once and never driven again. It is left in place rather than destroyed: the slots are
+			-- Studio-owned, so deleting the label is the user's edit to make.
+			local badge = slot:FindFirstChild("CountBadge")
+			if badge and badge:IsA("GuiObject") then
+				badge.Visible = false
 			end
 
-			-- Mount the model preview once; render() decides when it is visible.
-			local viewport = slot:FindFirstChild("Preview")
+			-- Mount the canisters once; render() decides how many are visible.
 			local sourceModel = previews and previews:FindFirstChild(item.CanisterName)
-			if viewport and viewport:IsA("ViewportFrame") and sourceModel then
-				mountPreview(viewport, sourceModel)
-				binding.preview = viewport
-			end
+			binding.cluster = BoostChargeCluster.bind(slot, sourceModel)
 			table.insert(bindings, binding)
+
+			-- Name the item on hover, the way the Mixer names itself. Keyboard-and-mouse only, like
+			-- every other cursor hint. It stays quiet whenever the slot is not being an item: during
+			-- a placement the slot is wearing a Cancel/Confirm face (whose own hints belong to the
+			-- placement), and an open store parks its close X over these very slots.
+			binding.tooltip = tooltip:registerGui(hitbox, {
+				trigger = tooltip.Trigger.Hover,
+				getContent = function()
+					if UserInputService.PreferredInput ~= Enum.PreferredInput.KeyboardAndMouse then
+						return nil
+					end
+					if screenGui:GetAttribute(Attrs.PlacementActive) == true then
+						return nil
+					end
+					if screenGui:GetAttribute(Attrs.StoreOpen) == true then
+						return nil
+					end
+					local keys = SLOT_KEYS[slot.Name]
+					return {
+						mode = "Hint",
+						title = item.DisplayName,
+						keybind = keys and keys.label or nil,
+					}
+				end,
+			})
 
 			-- HotbarPlacementMode restores every placeholder when its exit animation FINISHES,
 			-- which lands after our own PlacementActive re-render — that is what left the preview
@@ -273,11 +274,6 @@ function BoostHotbarSlots.new(options)
 		end
 	end
 
-	-- Item numbers mirror HotbarCarousel's own mapping (1 = centre/Mixer, 2 = left, 3 = right).
-	local KEY_BY_SLOT = {
-		SlotLeft = Enum.KeyCode.Two,
-		SlotRight = Enum.KeyCode.Three,
-	}
 	local ITEM_KEYS = {
 		[Enum.KeyCode.One] = true,
 		[Enum.KeyCode.Two] = true,
@@ -302,7 +298,8 @@ function BoostHotbarSlots.new(options)
 		end
 
 		for _, binding in ipairs(bindings) do
-			if KEY_BY_SLOT[binding.slot.Name] == input.KeyCode then
+			local keys = SLOT_KEYS[binding.slot.Name]
+			if keys and keys.code == input.KeyCode then
 				if samePlacingItem ~= binding.item.Id then
 					scheduleActivate(binding)
 				end

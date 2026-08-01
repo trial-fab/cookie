@@ -4,6 +4,12 @@
 -- HubActivatedCFrame / HubActivatedPivot attributes preserve the user's final authored layout.
 -- The server owns the cookie purchase and saved flag. This client only renders that player's
 -- state, reveal, independent shell orbits, and core float.
+--
+-- BOTH states levitate. The activated core bobs on its own float; the dormant core -- authored
+-- resting on the Thruster's mount ring -- hovers just clear of it, so the thing a player can walk
+-- up the dais and reach reads as held there rather than set down. The dormant assembly moves as one
+-- rigid body (core, covers, and the shell cocoon around them), because the cocoon is tight enough
+-- that bobbing the core alone would push it through.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -12,9 +18,13 @@ local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(Shared:WaitForChild("Attrs"))
+local DevTuning = require(Shared:WaitForChild("DevTuning"):WaitForChild("DevTuning"))
 local HubCoreConfig = require(Shared:WaitForChild("HubCoreConfig"))
 local Net = require(Shared:WaitForChild("Net"))
 local NumberFormat = require(Shared:WaitForChild("NumberFormat"))
+
+local DORMANT_FLOAT_PREFIX = "HubOrbFloat."
+local DORMANT_FLOAT_KEYS = { "Enabled", "RestLift", "Amplitude", "LegSeconds" }
 
 local ACTIVATED_CFRAME_ATTRIBUTE = "HubActivatedCFrame"
 local ACTIVATED_PIVOT_ATTRIBUTE = "HubActivatedPivot"
@@ -173,9 +183,10 @@ local function trackOrbFollower(part, addedAtRuntime)
 		activatedCFrame = activatedCoreCFrame * dormantCoreCFrame:ToObjectSpace(dormantCFrame)
 	end
 
+	-- Only the core-relative poses are kept: both states now place followers off a live core CFrame,
+	-- so an absolute dormant pose would be a second truth that the float would immediately outdate.
 	orbFollowers[part] = {
 		part = part,
-		dormantCFrame = dormantCFrame,
 		activatedCFrame = activatedCFrame,
 		dormantRelativeCFrame = dormantCoreCFrame:ToObjectSpace(dormantCFrame),
 		activatedRelativeCFrame = activatedCoreCFrame:ToObjectSpace(activatedCFrame),
@@ -225,7 +236,6 @@ end
 
 local shells = table.create(SHELL_COUNT)
 local activatedShellCFrames = table.create(SHELL_COUNT)
-local dormantShellCFrames = table.create(SHELL_COUNT)
 local dormantShellRelativeCFrames = table.create(SHELL_COUNT)
 local shellRelativeRotations = table.create(SHELL_COUNT)
 local largestShellCollisionDiameter = 0
@@ -238,7 +248,6 @@ for index = 1, SHELL_COUNT do
 	end
 	table.insert(shells, shell)
 	table.insert(activatedShellCFrames, activatedCFrame)
-	table.insert(dormantShellCFrames, shell.CFrame)
 	table.insert(dormantShellRelativeCFrames, dormantCoreCFrame:ToObjectSpace(shell.CFrame))
 	table.insert(shellRelativeRotations, activatedCoreCFrame:ToObjectSpace(activatedCFrame).Rotation)
 	largestShellCollisionDiameter = math.max(largestShellCollisionDiameter, shell.Size.Magnitude)
@@ -333,6 +342,10 @@ local floatOffset = Instance.new("NumberValue")
 floatOffset.Name = "FloatOffset"
 floatOffset.Parent = script
 
+local dormantFloatOffset = Instance.new("NumberValue")
+dormantFloatOffset.Name = "DormantFloatOffset"
+dormantFloatOffset.Parent = script
+
 local photonRingPhases = {}
 for index = 1, #photonRings do
 	local phase = Instance.new("NumberValue")
@@ -343,6 +356,12 @@ end
 
 local orbitTween
 local floatTween
+local dormantFloatTween
+local dormantFloatRunning = false
+local dormantFloatTuning = {}
+for _, key in ipairs(DORMANT_FLOAT_KEYS) do
+	dormantFloatTuning[key] = DevTuning.get(DORMANT_FLOAT_PREFIX .. key)
+end
 local shellTweens = {}
 local photonRingTweens = {}
 local revealTweens = {}
@@ -437,19 +456,48 @@ local function cancelReveal()
 	table.clear(revealConnections)
 end
 
+-- The dormant assembly is rigid: the covers and the shell cocoon keep their authored offsets from
+-- the core, so the whole thing rises and settles together instead of the core drifting out of its
+-- own shell. Photon rings stay parked -- they are presented at zero while dormant.
+local function applyDormantPose()
+	if not core.Parent then
+		return
+	end
+	local liveCoreCFrame = dormantCoreCFrame * CFrame.new(0, dormantFloatOffset.Value, 0)
+	core.CFrame = liveCoreCFrame
+	for _, record in pairs(orbFollowers) do
+		record.part.CFrame = liveCoreCFrame * record.dormantRelativeCFrame
+	end
+	for index, shell in ipairs(shells) do
+		shell.CFrame = liveCoreCFrame * dormantShellRelativeCFrames[index]
+	end
+end
+
+local function stopDormantFloat()
+	dormantFloatRunning = false
+	if dormantFloatTween then
+		dormantFloatTween:Cancel()
+		dormantFloatTween = nil
+	end
+	dormantFloatOffset.Value = 0
+end
+
+-- Only the tween drives the pose from here. Stopping resets the offset first, and setDormantPose
+-- re-applies the rest pose itself, so a reset can never repose the orb mid-reveal.
+dormantFloatOffset:GetPropertyChangedSignal("Value"):Connect(function()
+	if dormantFloatRunning then
+		applyDormantPose()
+	end
+end)
+
 local function setDormantPose()
 	stopAmbient()
-	core.CFrame = dormantCoreCFrame
-	for _, record in pairs(orbFollowers) do
-		record.part.CFrame = record.dormantCFrame
-	end
+	stopDormantFloat()
+	applyDormantPose()
 	for _, record in ipairs(photonRings) do
 		record.rig.CFrame = record.dormantCFrame
 	end
 	setPhotonRingPresentation(0)
-	for index, shell in ipairs(shells) do
-		shell.CFrame = dormantShellCFrames[index]
-	end
 	for _, record in ipairs(huds) do
 		record.model:ScaleTo(record.activatedScale)
 		record.model:PivotTo(record.dormantPivot)
@@ -635,6 +683,48 @@ local function settleActivatedPose()
 	else
 		startAmbient()
 	end
+end
+
+-- One reversing Sine tween rather than a per-frame drift: some clients freeze per-frame writes on
+-- an idle window, and a levitating object that stops levitating while you read the leaderboard is
+-- worse than one that never moved.
+local function startDormantFloat()
+	stopDormantFloat()
+	if dormantFloatTuning.Enabled ~= true or reducedMotionEnabled() then
+		applyDormantPose()
+		return
+	end
+
+	local lift = dormantFloatTuning.RestLift
+	local amplitude = dormantFloatTuning.Amplitude
+	dormantFloatRunning = true
+	if amplitude <= 0 then
+		dormantFloatOffset.Value = lift
+		applyDormantPose()
+		return
+	end
+
+	-- Starts at the bottom of the travel, so the orb rises off the ring on the first leg instead of
+	-- appearing already lifted and sinking toward it.
+	dormantFloatOffset.Value = lift - amplitude
+	applyDormantPose()
+	dormantFloatTween = TweenService:Create(
+		dormantFloatOffset,
+		TweenInfo.new(
+			math.max(dormantFloatTuning.LegSeconds, 0.05),
+			Enum.EasingStyle.Sine,
+			Enum.EasingDirection.InOut,
+			-1,
+			true
+		),
+		{ Value = lift + amplitude }
+	)
+	dormantFloatTween:Play()
+end
+
+local function settleDormantPose()
+	setDormantPose()
+	startDormantFloat()
 end
 
 local function revealHudAssembly(generation)
@@ -845,7 +935,7 @@ local function refreshState()
 		end
 	else
 		cancelReveal()
-		setDormantPose()
+		settleDormantPose()
 	end
 	refreshPrompt()
 end
@@ -854,8 +944,13 @@ localPlayer:GetAttributeChangedSignal(Attrs.HubCoreActivated):Connect(refreshSta
 localPlayer:GetAttributeChangedSignal(Attrs.StoryStep):Connect(refreshPrompt)
 if screenGui then
 	screenGui:GetAttributeChangedSignal(Attrs.ReducedMotionEnabled):Connect(function()
-		if localPlayer:GetAttribute(Attrs.HubCoreActivated) == true and not revealInProgress then
+		if revealInProgress then
+			return
+		end
+		if localPlayer:GetAttribute(Attrs.HubCoreActivated) == true then
 			settleActivatedPose()
+		else
+			settleDormantPose()
 		end
 	end)
 end
@@ -863,7 +958,20 @@ leaderboard.AncestryChanged:Connect(function(_, parent)
 	if not parent then
 		cancelReveal()
 		stopAmbient()
+		stopDormantFloat()
 	end
 end)
+
+-- Live tuning re-settles only the state it can actually be seen in; an activated core is somewhere
+-- else entirely and must not be dragged back to the mount by a slider.
+for _, key in ipairs(DORMANT_FLOAT_KEYS) do
+	local tuningKey = key
+	DevTuning.observe(DORMANT_FLOAT_PREFIX .. tuningKey, function(value)
+		dormantFloatTuning[tuningKey] = value
+		if not revealInProgress and localPlayer:GetAttribute(Attrs.HubCoreActivated) ~= true then
+			settleDormantPose()
+		end
+	end)
+end
 
 refreshState()

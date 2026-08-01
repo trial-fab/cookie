@@ -48,6 +48,17 @@ BoostShopConfig.GhostItemTransparency = 0.35
 -- leave two indistinguishable grey canisters.
 BoostShopConfig.GhostItemSolidParts = { Core = true }
 
+-- A successful fresh drop briefly keeps a solid copy of the same canister at the field centre.
+-- FloatingOrbs opens this existing Cap, lifts the extracted Core, and fades the rest. The casing
+-- stays non-collidable; only the Core becomes a platform. Restored fields skip the one-shot reveal.
+BoostShopConfig.PlacementCanisterName = "PlacementCanister"
+BoostShopConfig.PlacementCanisterCapPartName = "Cap"
+BoostShopConfig.OrbRestOffsetAttribute = "OrbRestOffsetY"
+BoostShopConfig.PlacementAnimationAttribute = "PlacementAnimationStartedAt"
+-- Longer than the baked 3.1-second rise/reveal. Once every client has hidden the casing, the server
+-- removes those three decorative parts and the one-shot replication markers.
+BoostShopConfig.PlacementCanisterLifetime = 6
+
 -- Sonar ping. The INNER disc sweeps out from the centre and fades as it arrives at the edge; the
 -- outer Rim never moves, so the field's true coverage stays readable the whole time. Scaling the
 -- whole disc (the first attempt) made the one thing the player is actually deciding -- where the
@@ -63,6 +74,7 @@ BoostShopConfig.GhostItemSolidParts = { Core = true }
 -- authored values when the ping stops.
 BoostShopConfig.Pulse = {
 	SweepPartName = "Fill",
+	RimPartName = "Rim",
 	OutlineName = "PingOutline",
 	CorePartName = "Core",
 	-- A part cannot be zero-sized, and a ping that starts as a literal point is invisible anyway.
