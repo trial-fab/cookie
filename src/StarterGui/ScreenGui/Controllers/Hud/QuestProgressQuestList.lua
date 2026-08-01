@@ -57,6 +57,16 @@ local function formatStep(quest)
 	return ("%d/%d"):format(quest.StepIndex, quest.StepCount)
 end
 
+local function formatCompletedDescription(quest)
+	local description = tostring(quest.Description or "")
+	local target = tonumber(quest.SubProgressTarget)
+	if not target then
+		return description
+	end
+	local completedCount = math.max(0, math.floor(target))
+	return description:gsub("%(%d+/%d+%)%s*$", ("(%d/%d)"):format(completedCount, completedCount), 1)
+end
+
 function QuestProgressQuestList.bind(root, callbacks)
 	callbacks = callbacks or {}
 	local revealClip = child(root, "QuestRevealClip", "Frame")
@@ -642,7 +652,7 @@ function QuestProgressQuestList.bind(root, callbacks)
 					timedStepTransition = {
 						StepId = previousQuest.StepId,
 						TargetStepId = nextQuest.StepId,
-						Description = previousQuest.Description,
+						Description = formatCompletedDescription(previousQuest),
 						Progress = nextQuest.Progress,
 					}
 					pendingCompletionCueKey = "step:" .. previousQuest.StepId

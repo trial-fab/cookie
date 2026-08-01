@@ -1242,14 +1242,17 @@ local function createRow(upgradeId, index)
 			-- building the player can't afford/unlock never enters placement (the core fix).
 			-- A blocked tap flashes the number that explains why. Requirement gates also
 			-- pulse only the required-building preview, not the full widget/card.
-			local blockContainer = ctx.affordance.getPurchaseBlock(upgradeId, config)
+			local blockContainer, requiredId, requiredCount, ownedCount =
+				ctx.affordance.getPurchaseBlock(upgradeId, config)
 			if blockContainer then
 				local blockWidget = row:FindFirstChild(blockContainer, true)
 				ctx.affordance.flashNumberText(blockWidget)
 				if blockContainer == "Requirement" then
 					ctx.affordance.pulseRequirementPreview(blockWidget)
+					ctx.affordance.showBuildingRequirement(requiredId, requiredCount, ownedCount)
 				end
 				if blockContainer == "cookieCost" then
+					ctx.affordance.showCookieShortage()
 					local liveCount = store:FindFirstChild("LiveCookieCount", true)
 					local amountLabel = liveCount and liveCount:FindFirstChild("Amount", true)
 					if amountLabel and (amountLabel:IsA("TextLabel") or amountLabel:IsA("TextButton")) then
@@ -1543,6 +1546,12 @@ end)
 local function applyPurchaseResult(result)
 	result = result or {}
 	showStatus(result.message or (result.success and "Purchased." or "Purchase failed."))
+	if
+		result.success ~= true
+		and string.find(string.lower(tostring(result.message or "")), "not enough cookies", 1, true)
+	then
+		ctx.affordance.showCookieShortage()
+	end
 
 	if result.success and result.upgradeId == ctx.multiPlace.UPGRADE_ID then
 		ctx.multiPlace.setPreference(true)

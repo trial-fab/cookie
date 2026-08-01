@@ -6,7 +6,6 @@ local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Attrs = require(Shared:WaitForChild("Attrs"))
-local DevTuning = require(Shared:WaitForChild("DevTuning"):WaitForChild("DevTuning"))
 local MultiplierHudConfig = require(Shared:WaitForChild("MultiplierHudConfig"))
 local MultiplierStatusPresenter = require(script.Parent:WaitForChild("MultiplierStatusPresenter"))
 local MultiplierStatusSources = require(script.Parent:WaitForChild("MultiplierStatusSources"))
@@ -220,7 +219,7 @@ end)
 
 task.spawn(function()
 	while not destroyed and screenGui.Parent do
-		task.wait(DevTuning.get("MultiplierHud.CountdownRefreshSeconds"))
+		task.wait(MultiplierHudConfig.CountdownRefreshSeconds)
 		presenter:refreshCountdowns()
 	end
 end)

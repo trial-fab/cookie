@@ -221,6 +221,10 @@ profiles[p].Persistent.StoryStep = StoryConfig.STEPS.BuildTask
 QuestService.OnStoryStepChanged(p, StoryConfig.STEPS.BuildTask)
 check("dialogue credits to helper", tracked(p).StepId == "build_first_helper", tracked(p).StepId)
 check("affordability copy names 15", tracked(p).Description:find("15 cookies", 1, true) ~= nil, tracked(p).Description)
+check("touch affordability copy says tap", tracked(p).Description:find("Tap the cookie", 1, true) == 1,
+	tracked(p).Description)
+check("keyboard affordability copy says click", tracked(p).DescriptionKeyboard ~= nil and
+	tracked(p).DescriptionKeyboard:find("Click the cookie", 1, true) == 1, tracked(p).DescriptionKeyboard)
 
 profiles[p].Run.Cookies = 15
 QuestService.OnCookieBalanceChanged(p)

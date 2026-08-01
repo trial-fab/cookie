@@ -41,6 +41,7 @@ return {
 	Store = "Store",
 	StoreSide = "StoreSide",
 	StoreBottom = "StoreBottom",
+	StorePurchaseFeedback = "StorePurchaseFeedback",
 	ShowStore = "ShowStore",
 	StoreButton = "StoreButton",
 	Shop = "Shop",

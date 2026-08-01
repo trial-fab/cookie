@@ -22,8 +22,9 @@
 -- named child frame; this module needs no change.
 --
 -- World-stat controllers remain responsible for hit testing and selection. They can provide
--- getScreenPoint + placement = "Above" when a touch tooltip should follow a world object
--- instead of the mouse; this presenter only renders and positions their published content.
+-- getScreenPoint can anchor a tooltip away from the mouse. Use placement = "Above" for a
+-- world object or "TopRight" for a panel whose bottom-left corner should stay beside the
+-- anchor point; this presenter only renders and positions the published content.
 local GuiService = game:GetService("GuiService")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -190,7 +191,11 @@ local function newPresenter(screenGui)
 		if activeContent and type(activeContent.getScreenPoint) == "function" then
 			local ok, result = pcall(activeContent.getScreenPoint)
 			if ok and typeof(result) == "Vector2" then
-				return result, activeContent.placement == "Above" and "Above" or "Cursor"
+				local placement = activeContent.placement
+				if placement ~= "Above" and placement ~= "TopRight" then
+					placement = "Cursor"
+				end
+				return result, placement
 			end
 			if not ok and not positionProviderWarned then
 				positionProviderWarned = true
@@ -236,6 +241,13 @@ local function newPresenter(screenGui)
 			local offsetY = math.max(0, tonumber(activeContent.offsetY) or CursorTooltipConfig.OffsetY)
 			x = point.X - size.X / 2
 			y = point.Y - offsetY - size.Y
+			setHeaderHorizontalFlip(false)
+		elseif placement == "TopRight" then
+			local offsetX = tonumber(activeContent.offsetX) or CursorTooltipConfig.OffsetX
+			local offsetY = tonumber(activeContent.offsetY) or CursorTooltipConfig.OffsetY
+			x = point.X + offsetX
+			y = point.Y - offsetY - size.Y
+			setHeaderHorizontalFlip(false)
 		else
 			x = point.X + CursorTooltipConfig.OffsetX
 			if x + size.X > viewport.X then

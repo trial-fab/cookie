@@ -2,11 +2,11 @@
 -- It never creates or clones player-facing UI.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
+local GuiService = game:GetService("GuiService")
 local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local CursorTooltip = require(Shared:WaitForChild("CursorTooltip"))
-local DevTuning = require(Shared:WaitForChild("DevTuning"):WaitForChild("DevTuning"))
 local GooSkinColor = require(Shared:WaitForChild("GooSkinColor"))
 local MobileScale = require(Shared:WaitForChild("MobileScale"))
 local MultiplierHudConfig = require(Shared:WaitForChild("MultiplierHudConfig"))
@@ -149,7 +149,6 @@ function MultiplierStatusPresenter.new(screenGui, player)
 	local slotBySourceId = {}
 	local registrations = {}
 	local states = {}
-	local tuningHandles = {}
 	local viewportHandle
 	local suppressed = false
 	local destroyed = false
@@ -214,13 +213,13 @@ function MultiplierStatusPresenter.new(screenGui, player)
 		state.pulseTween = TweenService:Create(
 			state.pulseScale,
 			TweenInfo.new(
-				DevTuning.get("MultiplierHud.WarningPulseSeconds"),
+				MultiplierHudConfig.WarningPulseSeconds,
 				Enum.EasingStyle.Sine,
 				Enum.EasingDirection.InOut,
 				-1,
 				true
 			),
-			{ Scale = DevTuning.get("MultiplierHud.WarningPulseScale") }
+			{ Scale = MultiplierHudConfig.WarningPulseScale }
 		)
 		state.pulseTween:Play()
 	end
@@ -239,15 +238,11 @@ function MultiplierStatusPresenter.new(screenGui, player)
 		if not state.scale then
 			return
 		end
-		state.scale.Scale = DevTuning.get("MultiplierHud.ActivationStartScale")
+		state.scale.Scale = MultiplierHudConfig.ActivationStartScale
 		local pop = TweenService:Create(
 			state.scale,
-			TweenInfo.new(
-				DevTuning.get("MultiplierHud.ActivationPopSeconds"),
-				Enum.EasingStyle.Back,
-				Enum.EasingDirection.Out
-			),
-			{ Scale = DevTuning.get("MultiplierHud.ActivationPopScale") }
+			TweenInfo.new(MultiplierHudConfig.ActivationPopSeconds, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+			{ Scale = MultiplierHudConfig.ActivationPopScale }
 		)
 		state.motionTween = pop
 		pop.Completed:Once(function(playbackState)
@@ -257,7 +252,7 @@ function MultiplierStatusPresenter.new(screenGui, player)
 			local settle = TweenService:Create(
 				state.scale,
 				TweenInfo.new(
-					DevTuning.get("MultiplierHud.ActivationSettleSeconds"),
+					MultiplierHudConfig.ActivationSettleSeconds,
 					Enum.EasingStyle.Quad,
 					Enum.EasingDirection.Out
 				),
@@ -306,8 +301,8 @@ function MultiplierStatusPresenter.new(screenGui, player)
 		end
 		local shrink = TweenService:Create(
 			state.scale,
-			TweenInfo.new(DevTuning.get("MultiplierHud.RemovalSeconds"), Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-			{ Scale = DevTuning.get("MultiplierHud.RemovalScale") }
+			TweenInfo.new(MultiplierHudConfig.RemovalSeconds, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			{ Scale = MultiplierHudConfig.RemovalScale }
 		)
 		local icon = slot:FindFirstChild("Icon")
 		local timer = slot:FindFirstChild("Timer")
@@ -315,21 +310,13 @@ function MultiplierStatusPresenter.new(screenGui, player)
 		if icon and icon:IsA("ImageLabel") then
 			table.insert(
 				fadeTargets,
-				TweenService:Create(
-					icon,
-					TweenInfo.new(DevTuning.get("MultiplierHud.RemovalSeconds")),
-					{ ImageTransparency = 1 }
-				)
+				TweenService:Create(icon, TweenInfo.new(MultiplierHudConfig.RemovalSeconds), { ImageTransparency = 1 })
 			)
 		end
 		if timer and timer:IsA("TextLabel") then
 			table.insert(
 				fadeTargets,
-				TweenService:Create(
-					timer,
-					TweenInfo.new(DevTuning.get("MultiplierHud.RemovalSeconds")),
-					{ TextTransparency = 1 }
-				)
+				TweenService:Create(timer, TweenInfo.new(MultiplierHudConfig.RemovalSeconds), { TextTransparency = 1 })
 			)
 		end
 		state.motionTween = shrink
@@ -361,6 +348,10 @@ function MultiplierStatusPresenter.new(screenGui, player)
 		slot.Visible = false
 		local hitbox = slot:FindFirstChild("Hitbox")
 		if hitbox and hitbox:IsA("GuiButton") then
+			local tooltipAnchor = slot:FindFirstChild("Icon")
+			if not (tooltipAnchor and tooltipAnchor:IsA("GuiObject")) then
+				tooltipAnchor = hitbox
+			end
 			registrations[slot] = tooltip:registerGui(hitbox, {
 				trigger = tooltip.Trigger.HoverAndClick,
 				getContent = function()
@@ -372,6 +363,19 @@ function MultiplierStatusPresenter.new(screenGui, player)
 						mode = "Hint",
 						title = tostring(source.DisplayName),
 						description = getDescription(source),
+						placement = "TopRight",
+						offsetX = MultiplierHudConfig.TooltipOffsetX,
+						offsetY = MultiplierHudConfig.TooltipOffsetY,
+						getScreenPoint = function()
+							local position = tooltipAnchor.AbsolutePosition
+							local point = Vector2.new(position.X + tooltipAnchor.AbsoluteSize.X, position.Y)
+							-- AbsolutePosition is inset-relative here, while this ScreenGui's runtime
+							-- Position space includes the top-left GUI inset.
+							if screenGui.IgnoreGuiInset then
+								point += GuiService:GetGuiInset()
+							end
+							return point
+						end,
 					}
 				end,
 			})
@@ -383,7 +387,7 @@ function MultiplierStatusPresenter.new(screenGui, player)
 			return
 		end
 		local compact = MobileScale.shouldUseMobile(root)
-		local gap = DevTuning.get("MultiplierHud.SlotGap")
+		local gap = MultiplierHudConfig.SlotGap
 		if layout and layout:IsA("UIListLayout") then
 			layout.Padding = UDim.new(0, gap)
 		end
@@ -395,30 +399,20 @@ function MultiplierStatusPresenter.new(screenGui, player)
 			0
 		)
 		if responsiveScale and responsiveScale:IsA("UIScale") then
-			responsiveScale.Scale = compact and DevTuning.get("MultiplierHud.CompactScale")
-				or DevTuning.get("MultiplierHud.DesktopScale")
+			responsiveScale.Scale = compact and MultiplierHudConfig.CompactScale or MultiplierHudConfig.DesktopScale
 		end
 
 		local viewport = MobileScale.getViewportSize(root)
 		local safeTopLeft, safeBottomRight = MobileScale.getCoreSafeOffsets(root)
-		local bottomOffset = compact and DevTuning.get("MultiplierHud.BottomOffset")
+		local bottomOffset = compact and MultiplierHudConfig.BottomOffset
 			or MultiplierHudConfig.DesktopXpBarBottomOffset
 		root.AnchorPoint = Vector2.new(0, 1)
 		root.Position = UDim2.fromOffset(
-			math.round(safeTopLeft.X + DevTuning.get("MultiplierHud.LeftOffset")),
+			math.round(safeTopLeft.X + MultiplierHudConfig.LeftOffset),
 			math.round(viewport.Y - safeBottomRight.Y - bottomOffset)
 		)
 	end
 
-	for _, key in ipairs({
-		"LeftOffset",
-		"BottomOffset",
-		"SlotGap",
-		"DesktopScale",
-		"CompactScale",
-	}) do
-		table.insert(tuningHandles, DevTuning.observe("MultiplierHud." .. key, applyLayout))
-	end
 	viewportHandle = MobileScale.onViewportChanged(applyLayout)
 
 	local presenter = {}
@@ -515,9 +509,9 @@ function MultiplierStatusPresenter.new(screenGui, player)
 			return
 		end
 		local now = Workspace:GetServerTimeNow()
-		local warningThreshold = DevTuning.get("MultiplierHud.WarningThresholdSeconds")
-		local normalColor = DevTuning.get("MultiplierHud.NormalTextColor")
-		local warningColor = DevTuning.get("MultiplierHud.WarningTextColor")
+		local warningThreshold = MultiplierHudConfig.WarningThresholdSeconds
+		local normalColor = MultiplierHudConfig.NormalTextColor
+		local warningColor = MultiplierHudConfig.WarningTextColor
 		for slot, source in pairs(assigned) do
 			local state = getState(slot)
 			if not state.removing then
@@ -528,11 +522,11 @@ function MultiplierStatusPresenter.new(screenGui, player)
 				if timer and timer:IsA("TextLabel") then
 					if remaining ~= nil then
 						timer.Text = formatCountdown(remaining)
-						timer.TextSize = DevTuning.get("MultiplierHud.CountdownTextSize")
+						timer.TextSize = MultiplierHudConfig.CountdownTextSize
 						timer.TextColor3 = warning and warningColor or normalColor
 					else
 						timer.Text = MultiplierHudConfig.InfinityText
-						timer.TextSize = DevTuning.get("MultiplierHud.InfinityTextSize")
+						timer.TextSize = MultiplierHudConfig.InfinityTextSize
 						timer.TextColor3 = normalColor
 					end
 				end
@@ -561,9 +555,6 @@ function MultiplierStatusPresenter.new(screenGui, player)
 			cancelTween(state.motionTween)
 			cancelTween(state.pulseTween)
 			cancelFadeTweens(state)
-		end
-		for _, handle in ipairs(tuningHandles) do
-			handle:Disconnect()
 		end
 		if viewportHandle then
 			viewportHandle:destroy()

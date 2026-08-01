@@ -1,5 +1,4 @@
--- Persistent defaults and authored-instance names for the multiplier status HUD.
--- Visual/timing values remain live through the MultiplierHud DevTuning registry until baked.
+-- Persistent values and authored-instance names for the multiplier status HUD.
 return {
 	RootName = "MultiplierStatusHud",
 	SlotsName = "SourceSlots",
@@ -56,6 +55,8 @@ return {
 	DesktopXpBarBottomOffset = 8,
 	BottomOffset = 24,
 	SlotGap = 12,
+	TooltipOffsetX = 0,
+	TooltipOffsetY = 0,
 	DesktopScale = 1,
 	CompactScale = 0.85,
 	InfinityTextSize = 20,

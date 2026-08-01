@@ -281,13 +281,28 @@ function QuestProgressGuidance.new(screenGui, root)
 		return mixerSlotTarget()
 	end
 
+	local function cookieTarget()
+		local sheet = findPlayerSheet(player)
+		local cookie = sheet and sheet:FindFirstChild("Cookie")
+		if cookie and cookie:IsA("BasePart") then
+			return screenPointOfWorldPosition(cookie.Position, screenGui)
+		end
+		return nil
+	end
+
+	local function collectingFirstHelperCookies()
+		local _, quest = QuestSnapshot.getTracked(currentSnapshot)
+		if not quest or quest.StepId ~= "build_first_helper" then
+			return false
+		end
+		local current = tonumber(quest.SubProgress)
+		local target = tonumber(quest.SubProgressTarget)
+		return current ~= nil and target ~= nil and current < target
+	end
+
 	local function resolveTarget(stepId)
 		if stepId == "help_goo_recover" then
-			local sheet = findPlayerSheet(player)
-			local cookie = sheet and sheet:FindFirstChild("Cookie")
-			if cookie and cookie:IsA("BasePart") then
-				return screenPointOfWorldPosition(cookie.Position, screenGui)
-			end
+			return cookieTarget()
 		elseif stepId == "unlock_mixer" then
 			local dialogue = screenGui:FindFirstChild("StoryDialogue")
 			if not (dialogue and dialogue:IsA("GuiObject") and dialogue.Visible) then
@@ -298,6 +313,8 @@ function QuestProgressGuidance.new(screenGui, root)
 				return pointAt(continueButton)
 			end
 			return pointAt(dialogue)
+		elseif stepId == "build_first_helper" and collectingFirstHelperCookies() then
+			return cookieTarget()
 		elseif stepId == "build_first_helper" or stepId == "hire_another_noob" then
 			return buyNoobClickerTarget()
 		elseif stepId == "see_the_numbers" then
@@ -346,9 +363,11 @@ function QuestProgressGuidance.new(screenGui, root)
 			hideCues()
 			return
 		end
-		setCookieHighlight(activeStepId == "help_goo_recover")
+		local collectingCookies = collectingFirstHelperCookies()
+		setCookieHighlight(activeStepId == "help_goo_recover" or collectingCookies)
 		if
-			(activeStepId == "build_first_helper" or activeStepId == "hire_another_noob")
+			not collectingCookies
+			and (activeStepId == "build_first_helper" or activeStepId == "hire_another_noob")
 			and screenGui:GetAttribute(Attrs.StoreOpen) == true
 			and screenGui:GetAttribute(Attrs.PlacementActive) ~= true
 		then

@@ -9,14 +9,18 @@
 --     (mirrors UpgradeService.Purchase). Shared by the affordance chrome and getPurchaseBlock.
 --   • getPurchaseBlock: which explanatory widget ("Requirement"/"cookieCost") blocks a buy tap.
 --   • flashNumberText / pulseRequirementPreview: the red flash + preview pulse on a blocked tap.
+--   • showCookieShortage / showBuildingRequirement: accumulate and fade the Studio-authored
+--     blocked-purchase message without replacing the persistent row explanation.
 --
 -- Extracted from StoreController's main chunk (Luau 200-local cap). The orchestrator reaches
 -- it through ctx.affordance.* — no top-level re-aliases (see WORKFLOW.md "Code organization").
 --
 -- ctx deps: getOwnedCount, getUpgradeCost, UpgradeConfig, cookiesValue, setText,
--- rowsByUpgradeId, isSellMode, isBuildingLocked.
+-- rowsByUpgradeId, screenGui, store, isSellMode, isBuildingLocked.
 
-local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
+local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
+local UiMotion = require(Shared:WaitForChild("UiMotion"))
+local StorePurchaseFeedback = require(script.Parent:WaitForChild("StorePurchaseFeedback"))
 
 -- The fade is applied as a SOLID pre-blended colour (= what one 0.6-transparent accent over the
 -- dark panel composites to), not stacked transparency, so overlapping filler frames read as one
@@ -58,6 +62,23 @@ local function isInsideUpgradeNudge(object)
 	return object.Name == "UpgradeNudge" or object:FindFirstAncestor("UpgradeNudge") ~= nil
 end
 
+local function pluralizeBuildingName(name)
+	local lowerName = string.lower(name)
+	if string.match(lowerName, "[^aeiou]y$") then
+		return string.sub(name, 1, -2) .. "ies"
+	end
+	if
+		string.match(lowerName, "s$")
+		or string.match(lowerName, "x$")
+		or string.match(lowerName, "z$")
+		or string.match(lowerName, "ch$")
+		or string.match(lowerName, "sh$")
+	then
+		return name .. "es"
+	end
+	return name .. "s"
+end
+
 local StoreAffordance = {}
 
 function StoreAffordance.new(ctx)
@@ -68,6 +89,28 @@ function StoreAffordance.new(ctx)
 	local cookiesValue = ctx.cookiesValue
 	local setText = ctx.setText
 	local rowsByUpgradeId = ctx.rowsByUpgradeId
+	local purchaseFeedback = StorePurchaseFeedback.new(ctx)
+
+	local function showCookieShortage()
+		purchaseFeedback.show("Need more cookies!")
+	end
+
+	local function showBuildingRequirement(requiredId, requiredCount, ownedCount)
+		if type(requiredId) ~= "string" then
+			return
+		end
+		requiredCount = math.max(1, math.floor(tonumber(requiredCount) or 1))
+		ownedCount = math.max(0, math.floor(tonumber(ownedCount) or 0))
+		local missingCount = math.max(1, requiredCount - ownedCount)
+		local requiredConfig = UpgradeConfig[requiredId]
+		local buildingName = requiredConfig and requiredConfig.TemplateName or requiredId
+		if requiredCount == 1 then
+			purchaseFeedback.show(("Need %s!"):format(buildingName))
+			return
+		end
+		local countedName = if missingCount == 1 then buildingName else pluralizeBuildingName(buildingName)
+		purchaseFeedback.show(("Need %d more %s!"):format(missingCount, countedName))
+	end
 
 	-- Gating building + owned/required for a locked row (nil,nil,nil when unlocked).
 	local function getLockedRequirement(upgradeId, config, nextLevel)
@@ -538,9 +581,9 @@ function StoreAffordance.new(ctx)
 		local nextLevel = config.Levels and config.Levels[count + 1] or nil
 
 		-- Building/ownership requirement (covers UnlockRequirement and BuildingUpgrade levels).
-		local requiredId = getLockedRequirement(upgradeId, config, nextLevel)
+		local requiredId, requiredCount, ownedCount = getLockedRequirement(upgradeId, config, nextLevel)
 		if requiredId then
-			return "Requirement"
+			return "Requirement", requiredId, requiredCount, ownedCount
 		end
 
 		-- Cookie cost (maxed/free upgrades have no cost and are never blocked here).
@@ -559,6 +602,8 @@ function StoreAffordance.new(ctx)
 		getPurchaseBlock = getPurchaseBlock,
 		flashNumberText = flashNumberText,
 		pulseRequirementPreview = pulseRequirementPreview,
+		showCookieShortage = showCookieShortage,
+		showBuildingRequirement = showBuildingRequirement,
 	}
 end
 

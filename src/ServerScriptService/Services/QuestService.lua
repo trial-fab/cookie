@@ -297,13 +297,14 @@ local function firstHelperCopy(ctx)
 	local run = type(ctx.data) == "table" and ctx.data.Run
 	local cookies = math.max(0, math.floor(tonumber(type(run) == "table" and run.Cookies) or 0))
 	if cookies < cost then
-		return ("Click or tap the cookie until you have %d cookies. (%d/%d)"):format(
+		local current = math.min(cookies, cost)
+		local touch = ("Tap the cookie until you have %d cookies. (%d/%d)"):format(
 			cost,
-			math.min(cookies, cost),
+			current,
 			cost
-		),
-			math.min(cookies, cost),
-			cost
+		)
+		local keyboard = ("Click the cookie until you have %d cookies. (%d/%d)"):format(cost, current, cost)
+		return touch, current, cost, keyboard
 	end
 	return "Buy and place a Noob Clicker from the Mixer.", cost, cost
 end
