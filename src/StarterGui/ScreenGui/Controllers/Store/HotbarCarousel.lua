@@ -223,13 +223,6 @@ function HotbarCarousel.new(ctx)
 		return isPlacementActive() or (placementMode and placementMode.isTransitioning())
 	end
 
-	-- A BUILDING placement locks item selection: the bar is its controls and there is nothing to
-	-- switch to. A boost field placement does not — pressing another item number ends the field and
-	-- moves on, which is why selection (and only selection) looks past it.
-	local function selectionBlocked()
-		return placementOwnsHotbar() and not placementWasField
-	end
-
 	local function storeOpen()
 		return screenGui:GetAttribute(Attrs.StoreOpen) == true
 	end
@@ -500,6 +493,15 @@ function HotbarCarousel.new(ctx)
 		end
 	end
 
+	-- Restore the geometry for the current item arrangement without changing which item is centred.
+	-- Boost placement uses this on exit so its collapsed action faces return to carousel-sized slots.
+	local function restoreCurrentCarouselPose()
+		setSpinSettlesAt(0)
+		for poseName, slot in pairs(slotByPose) do
+			applyPose(slot, poseName, false)
+		end
+	end
+
 	-- Rotate the ring one step so `slot` lands in the centre pose; the centred slot moves out to the
 	-- flank `slot` vacated, keeping all three visible (a true 3-slot cycle). No-op if already centred.
 	local function rotateToCenter(slot)
@@ -580,7 +582,10 @@ function HotbarCarousel.new(ctx)
 	-- A slot tap: the mixer routes through the open gate; a placeholder just spins to centre (becomes
 	-- active) with no open, since it has no item yet.
 	local function selectSlot(slot)
-		if mixerRevealPending or selectionBlocked() then
+		-- During placement these physical hitboxes belong to Cancel/Rotate/Confirm. In particular,
+		-- mobile Cancel wears SlotLeft; letting that same tap reach the carousel silently selected
+		-- Power behind the placement face. Keyboard switching is deferred by selectItemNumber below.
+		if mixerRevealPending or placementOwnsHotbar() then
 			return
 		end
 		if slot == slotCenter then
@@ -688,6 +693,10 @@ function HotbarCarousel.new(ctx)
 			if mixerTransition ~= "closing" then
 				mixerTransition = "closing"
 			end
+			-- Opening can leave the physical boost slots in rotated carousel poses even though the
+			-- Mixer itself is centred. Re-establish all three authored poses before revealing the
+			-- flanks, otherwise the returning Mixer can share a pose with one of the boosts.
+			restoreCanonicalCarouselPose()
 			setKeybindBadgesSuppressed(true)
 			setPlaceholdersVisible(true)
 			updateMixerFace()
@@ -854,10 +863,15 @@ function HotbarCarousel.new(ctx)
 			return targets
 		end,
 		onExit = function()
-			-- Placement returns item 1 to the canonical center pose. This also clears any
-			-- interrupted carousel tween.
+			-- A boost field starts from a selected carousel item, so cancellation should return to
+			-- that same arrangement. Building placement still returns to the canonical Mixer pose.
+			local preserveSelectedPose = placementWasField and not storeOpen()
 			placementWasField = false
-			restoreCanonicalCarouselPose()
+			if preserveSelectedPose then
+				restoreCurrentCarouselPose()
+			else
+				restoreCanonicalCarouselPose()
+			end
 			-- The bar is ours again: run the selection that arrived while the field owned it, so
 			-- the pressed item now spins to centre and (for the mixer) opens the store.
 			local pendingPlacementSelect = pendingSelectAfterPlacement
@@ -874,7 +888,13 @@ function HotbarCarousel.new(ctx)
 				onStoreOpenChanged()
 				return
 			end
-			snapRest()
+			if preserveSelectedPose then
+				-- Geometry was restored without changing item identities above. Only restore the
+				-- Mixer's artwork; snapRest would move its physical slot back to centre.
+				setDiscOpacity(restBG, restStroke, restIcon)
+			else
+				snapRest()
+			end
 			-- Placement can now END with the store staying closed: a boost field is placed straight
 			-- from the hotbar, with no store round trip. onStoreOpenChanged's close path parks the
 			-- bar in `closing` and waits on a cookie flight that never comes in that case, which

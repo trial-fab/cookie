@@ -3,6 +3,10 @@
 local BuildViewMobileCameraConfig = {
 	DEFAULT_FOV = 60,
 	PITCH_DEGREES = 55,
+	-- Viewing side for a session's first entry. Which side of the plot reads correctly is a
+	-- world fact, not a device one, so this matches the desktop value; phone pitch and
+	-- framing distance stay independent.
+	ENTRY_YAW_DEGREES = 180,
 	MIN_PITCH_DEGREES = 15,
 	MAX_PITCH_DEGREES = 85,
 	PLACEMENT_MARGIN_STUDS = 18,

@@ -8,9 +8,43 @@ local Workspace = game:GetService("Workspace")
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local BuildViewCamera = require(shared:WaitForChild("BuildViewCamera"))
 local Config = require(shared:WaitForChild("BuildViewMobileCameraConfig"))
-local DevTuning = require(shared:WaitForChild("DevTuning"):WaitForChild("DevTuning"))
 
-local FEATURE = "BuildViewCameraMobile"
+-- Baked 2026-07-31 alongside the desktop camera: the BuildViewCameraMobile DevTuning
+-- registry was retired, so every tunable resolves straight from BuildViewMobileCameraConfig.
+-- The keys stay as the driver's value vocabulary (BuildViewController asks both cameras for
+-- values by name) but nothing here is live-adjustable any more.
+local VALUES = {
+	FieldOfView = Config.DEFAULT_FOV,
+	DefaultPitchDegrees = Config.PITCH_DEGREES,
+	EntryYawDegrees = Config.ENTRY_YAW_DEGREES,
+	MinPitchDegrees = Config.MIN_PITCH_DEGREES,
+	MaxPitchDegrees = Config.MAX_PITCH_DEGREES,
+	PlacementMarginStuds = Config.PLACEMENT_MARGIN_STUDS,
+	EntryFrameScale = Config.ENTRY_FRAME_SCALE,
+	RoamSlackStuds = Config.ROAM_SLACK_STUDS,
+	CameraStandoffStuds = Config.CAMERA_STANDOFF_STUDS,
+	MinHeight = Config.MIN_HEIGHT,
+	CeilingAllowance = Config.CEILING_ALLOWANCE,
+	BoundsResponseSeconds = Config.BOUNDS_TAU,
+	MinDistance = Config.MIN_DISTANCE,
+	MaxDistance = Config.MAX_DISTANCE,
+	EdgePanZonePixels = Config.EDGE_PAN_ZONE_PX,
+	EdgePanSpeed = Config.EDGE_PAN_SPEED,
+	VerticalSpeed = Config.VERT_SPEED,
+	PanMomentumSeconds = Config.PAN_MOMENTUM_SECONDS,
+	PanMomentumScale = Config.PAN_MOMENTUM_SCALE,
+	MinFlingPixelsPerSecond = Config.MIN_FLING_PX_PER_SEC,
+	MaxFlingPixelsPerSecond = Config.MAX_FLING_PX_PER_SEC,
+	MinFlingTravelPixels = Config.MIN_FLING_TRAVEL_PX,
+	PanVelocitySmoothing = Config.PAN_VELOCITY_SMOOTHING,
+	MomentumReleaseWindowSeconds = Config.MOMENTUM_RELEASE_WINDOW,
+	PanReferencePitchDegrees = Config.PAN_REFERENCE_PITCH_DEGREES,
+	PanMaxStudsPerPixel = Config.PAN_MAX_STUDS_PER_PIXEL,
+	PinchSensitivity = Config.PINCH_SENSITIVITY,
+	TwistSensitivity = Config.TWIST_SENSITIVITY,
+	PitchDeadZonePixels = Config.PITCH_DEAD_ZONE_PX,
+}
+
 local BuildViewMobileCamera = {}
 
 local function touchPosition(input)
@@ -23,8 +57,6 @@ end
 
 function BuildViewMobileCamera.new(ctx)
 	local self = {}
-	local tuningCache = {}
-	local tuningObserved = {}
 	local touches = {}
 	local touchOrder = {}
 	local multiLatched = false
@@ -40,17 +72,7 @@ function BuildViewMobileCamera.new(ctx)
 	local heightHoldDir = 0
 
 	local function tuning(key)
-		if tuningCache[key] == nil then
-			local dottedId = FEATURE .. "." .. key
-			tuningCache[key] = DevTuning.get(dottedId)
-			if not tuningObserved[key] then
-				tuningObserved[key] = true
-				DevTuning.observe(dottedId, function(value)
-					tuningCache[key] = value
-				end)
-			end
-		end
-		return tuningCache[key]
+		return VALUES[key]
 	end
 
 	local function pitchLimits()
@@ -336,30 +358,6 @@ function BuildViewMobileCamera.new(ctx)
 			ctx.setPosition(ctx.getPosition() + Vector3.new(0, heightHoldDir * tuning("VerticalSpeed") * dt, 0))
 		end
 	end
-
-	DevTuning.observe(FEATURE .. ".DefaultPitchDegrees", function(value)
-		tuningCache.DefaultPitchDegrees = value
-		if ctx.isSelected() and ctx.isActive() then
-			local minPitch, maxPitch = pitchLimits()
-			ctx.setPitch(math.clamp(math.rad(value), minPitch, maxPitch))
-		end
-	end)
-	for _, key in ipairs({ "MinPitchDegrees", "MaxPitchDegrees" }) do
-		DevTuning.observe(FEATURE .. "." .. key, function(value)
-			tuningCache[key] = value
-			if ctx.isSelected() and ctx.isActive() then
-				local minPitch, maxPitch = pitchLimits()
-				ctx.setPitch(math.clamp(ctx.getPitch(), minPitch, maxPitch))
-			end
-		end)
-	end
-	DevTuning.observe(FEATURE .. ".FieldOfView", function(value)
-		tuningCache.FieldOfView = value
-		local camera = Workspace.CurrentCamera
-		if ctx.isSelected() and ctx.isActive() and camera then
-			camera.FieldOfView = value
-		end
-	end)
 
 	UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		if not ctx.isSelected() or not ctx.isActive() or input.UserInputType ~= Enum.UserInputType.Touch then

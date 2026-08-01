@@ -491,7 +491,9 @@ local function enterBuildView()
 			softBoundsOptions(lastBuildViewPose.position, base)
 		)
 	else
-		yaw = 0
+		-- First entry this session: face the plot from the authored viewing side. Framing
+		-- itself stays centered on the plot -- only the side and angle are authored.
+		yaw = math.rad(cameraDriver:getValue("EntryYawDegrees"))
 		viewPitch = math.clamp(math.rad(cameraDriver:getValue("DefaultPitchDegrees")), minPitch, maxPitch)
 		cameraPos = BuildViewCamera.framePose(
 			base.CFrame,

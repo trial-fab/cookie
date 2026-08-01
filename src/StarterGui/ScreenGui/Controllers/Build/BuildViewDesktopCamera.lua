@@ -7,9 +7,40 @@ local Workspace = game:GetService("Workspace")
 
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local BuildViewCamera = require(shared:WaitForChild("BuildViewCamera"))
-local DevTuning = require(shared:WaitForChild("DevTuning"):WaitForChild("DevTuning"))
 
-local FEATURE = "BuildViewCameraDesktop"
+-- Baked 2026-07-31: the BuildViewCameraDesktop DevTuning registry was retired once its
+-- values settled, so every tunable now resolves straight from BuildViewCamera. The keys
+-- are kept as the driver's value vocabulary (BuildViewController is driver-agnostic and
+-- asks both cameras for values by name), but nothing here is live-adjustable any more.
+local VALUES = {
+	FieldOfView = BuildViewCamera.DEFAULT_FOV,
+	DefaultPitchDegrees = BuildViewCamera.PITCH_DEGREES,
+	EntryYawDegrees = BuildViewCamera.ENTRY_YAW_DEGREES,
+	MinPitchDegrees = BuildViewCamera.MIN_PITCH_DEGREES,
+	MaxPitchDegrees = BuildViewCamera.MAX_PITCH_DEGREES,
+	PlacementMarginStuds = BuildViewCamera.PLACEMENT_MARGIN_STUDS,
+	EntryFrameScale = BuildViewCamera.ENTRY_FRAME_SCALE,
+	RoamSlackStuds = BuildViewCamera.ROAM_SLACK_STUDS,
+	CameraStandoffStuds = BuildViewCamera.CAMERA_STANDOFF_STUDS,
+	MinHeight = BuildViewCamera.MIN_HEIGHT,
+	CeilingAllowance = BuildViewCamera.CEILING_ALLOWANCE,
+	BoundsResponseSeconds = BuildViewCamera.BOUNDS_TAU,
+	MinDistance = BuildViewCamera.MIN_DISTANCE,
+	MaxDistance = BuildViewCamera.MAX_DISTANCE,
+	WheelDollyStep = BuildViewCamera.WHEEL_DOLLY_STEP,
+	WheelZoomResponseSeconds = BuildViewCamera.WHEEL_ZOOM_TAU,
+	MoveSpeed = BuildViewCamera.MOVE_SPEED,
+	VerticalSpeed = BuildViewCamera.VERT_SPEED,
+	AccelRampSeconds = BuildViewCamera.ACCEL_RAMP_SECONDS,
+	AccelMaxMultiplier = BuildViewCamera.ACCEL_MAX_MULTIPLIER,
+	MovementResponseSeconds = BuildViewCamera.ACCEL_TAU,
+	MovementGlideSeconds = BuildViewCamera.DECEL_TAU,
+	EdgePanZonePixels = BuildViewCamera.EDGE_PAN_ZONE_PX,
+	EdgePanSpeed = BuildViewCamera.EDGE_PAN_SPEED,
+	YawDragSensitivity = BuildViewCamera.YAW_DRAG_SENSITIVITY,
+	PitchDragSensitivity = BuildViewCamera.PITCH_DRAG_SENSITIVITY,
+}
+
 local KEY_FORWARD = { [Enum.KeyCode.W] = true, [Enum.KeyCode.Up] = true }
 local KEY_BACK = { [Enum.KeyCode.S] = true, [Enum.KeyCode.Down] = true }
 local KEY_RIGHT = { [Enum.KeyCode.D] = true, [Enum.KeyCode.Right] = true }
@@ -29,8 +60,6 @@ end
 
 function BuildViewDesktopCamera.new(ctx)
 	local self = {}
-	local tuningCache = {}
-	local tuningObserved = {}
 	local heldKeys = {}
 	local heightHoldDir = 0
 	local velocity = Vector3.zero
@@ -43,17 +72,7 @@ function BuildViewDesktopCamera.new(ctx)
 	local moveRampStart = nil
 
 	local function tuning(key)
-		if tuningCache[key] == nil then
-			local dottedId = FEATURE .. "." .. key
-			tuningCache[key] = DevTuning.get(dottedId)
-			if not tuningObserved[key] then
-				tuningObserved[key] = true
-				DevTuning.observe(dottedId, function(value)
-					tuningCache[key] = value
-				end)
-			end
-		end
-		return tuningCache[key]
+		return VALUES[key]
 	end
 
 	local function pitchLimits()
@@ -266,30 +285,6 @@ function BuildViewDesktopCamera.new(ctx)
 			wheelDollyVelocity = Vector3.zero
 		end
 	end
-
-	DevTuning.observe(FEATURE .. ".DefaultPitchDegrees", function(value)
-		tuningCache.DefaultPitchDegrees = value
-		if ctx.isSelected() and ctx.isActive() then
-			local minPitch, maxPitch = pitchLimits()
-			ctx.setPitch(math.clamp(math.rad(value), minPitch, maxPitch))
-		end
-	end)
-	for _, key in ipairs({ "MinPitchDegrees", "MaxPitchDegrees" }) do
-		DevTuning.observe(FEATURE .. "." .. key, function(value)
-			tuningCache[key] = value
-			if ctx.isSelected() and ctx.isActive() then
-				local minPitch, maxPitch = pitchLimits()
-				ctx.setPitch(math.clamp(ctx.getPitch(), minPitch, maxPitch))
-			end
-		end)
-	end
-	DevTuning.observe(FEATURE .. ".FieldOfView", function(value)
-		tuningCache.FieldOfView = value
-		local camera = Workspace.CurrentCamera
-		if ctx.isSelected() and ctx.isActive() and camera then
-			camera.FieldOfView = value
-		end
-	end)
 
 	UserInputService.InputChanged:Connect(function(input, gameProcessed)
 		if not ctx.isSelected() or not ctx.isActive() then

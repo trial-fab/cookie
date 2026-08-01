@@ -16,10 +16,17 @@ local BuildViewCamera = {}
 -- Vertical field of view (degrees).
 BuildViewCamera.DEFAULT_FOV = 60
 
--- Fixed downward pitch (degrees below horizontal) of the look direction. ~55 gives a
--- comfortable 3/4 "creative" view that reads the plot clearly without going flat-on or
--- straight-down.
-BuildViewCamera.PITCH_DEGREES = 55
+-- Downward pitch (degrees below horizontal) of the look direction on entry. Baked from
+-- the user's live-tuning pass 2026-07-31: a low 35 reads the plot along its length like a
+-- standing view rather than the old near-overhead 3/4 angle.
+BuildViewCamera.PITCH_DEGREES = 35
+
+-- Yaw (degrees around world-up, applied to the plot's own forward) used to frame the plot
+-- on a session's FIRST Build View entry; later entries restore the pose the player left.
+-- 180 looks back down the plot from the far end, which is the side the build grid reads
+-- from. Cleanly centered: framing still targets the plot center, so only the viewing side
+-- and angle change, never a lateral offset.
+BuildViewCamera.ENTRY_YAW_DEGREES = 180
 
 -- Range the player may tilt the view to (degrees below horizontal) via right-drag. Kept
 -- off the horizon (so you never look up under the plot) and short of straight-down.
@@ -76,7 +83,9 @@ BuildViewCamera.MAX_DISTANCE = 2200
 
 -- Entry framing and controller motion values baked from the user's 2026-07-19 live-
 -- tuning pass. They live beside the camera math instead of as scattered controller literals.
-BuildViewCamera.ENTRY_FRAME_SCALE = 1.2
+-- ENTRY_FRAME_SCALE was re-baked 2026-07-31 from 1.2 to 0.45: entry now starts in close on
+-- the plot (sub-1 deliberately overflows the plot edges) instead of framing it whole.
+BuildViewCamera.ENTRY_FRAME_SCALE = 0.45
 BuildViewCamera.WHEEL_DOLLY_STEP = 11
 BuildViewCamera.WHEEL_ZOOM_TAU = 0.1
 BuildViewCamera.EDGE_PAN_ZONE_PX = 72

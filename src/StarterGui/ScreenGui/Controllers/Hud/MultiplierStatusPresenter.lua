@@ -368,7 +368,8 @@ function MultiplierStatusPresenter.new(screenGui, player)
 						offsetY = MultiplierHudConfig.TooltipOffsetY,
 						getScreenPoint = function()
 							local position = tooltipAnchor.AbsolutePosition
-							local point = Vector2.new(position.X + tooltipAnchor.AbsoluteSize.X, position.Y)
+							-- Align the tooltip's left edge with the icon's left edge.
+							local point = Vector2.new(position.X, position.Y)
 							-- AbsolutePosition is inset-relative here, while this ScreenGui's runtime
 							-- Position space includes the top-left GUI inset.
 							if screenGui.IgnoreGuiInset then
