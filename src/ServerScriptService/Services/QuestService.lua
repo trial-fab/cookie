@@ -17,6 +17,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local QuestDefinitions = require(ReplicatedStorage.Shared.QuestDefinitions)
 local Net = require(ReplicatedStorage.Shared.Net)
+local NumberFormat = require(ReplicatedStorage.Shared.NumberFormat)
 local StoryConfig = require(ReplicatedStorage.Shared.StoryConfig)
 local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
 local UpgradePricing = require(ReplicatedStorage.Shared.UpgradePricing)
@@ -158,6 +159,28 @@ local function readUpgradeCount(data, upgradeId)
 	return math.max(0, math.floor(tonumber(type(counts) == "table" and counts[upgradeId]) or 0))
 end
 
+local function readCookies(data)
+	local run = type(data) == "table" and data.Run
+	return math.max(0, math.floor(tonumber(type(run) == "table" and run.Cookies) or 0))
+end
+
+-- The live price of the player's next purchase of an upgrade. CostTuningId values stay
+-- DevTuning-backed while their feature is in development, so quest copy and quest targets
+-- both move when the price is tuned.
+local function readUpgradeCost(data, upgradeId)
+	local config = UpgradeConfig[upgradeId]
+	if not config then
+		return nil
+	end
+	local owned = readUpgradeCount(data, upgradeId)
+	return UpgradePricing.GetCost(config, owned) or tonumber(config.BaseCost) or 0
+end
+
+local function displayName(upgradeId)
+	local config = upgradeId and UpgradeConfig[upgradeId]
+	return (config and config.DisplayName) or upgradeId or ""
+end
+
 -- Facts the server can prove from canonical data always win over stored ledger entries,
 -- so a ledger that drifted (or a profile written by an older build) is corrected on load.
 local function reconcileCanonicalFacts(state, persistent, data)
@@ -227,6 +250,25 @@ resolvers.BuildingSold = function(_, ctx)
 	return ctx.ledger.BuildingSold == true
 end
 
+resolvers.CookieBalanceAtLeast = function(step, ctx)
+	local upgradeId = step.ObjectiveTarget
+	-- Owning the thing proves the save happened. Without this, a player who already bought
+	-- it parks on "save for it" forever, because the cookies they saved are now spent.
+	if readUpgradeCount(ctx.data, upgradeId) > 0 then
+		return true
+	end
+	local cost = readUpgradeCost(ctx.data, upgradeId)
+	if cost == nil then
+		return false
+	end
+	local cookies = readCookies(ctx.data)
+	return cookies >= cost, math.min(cookies, cost), cost
+end
+
+resolvers.UpgradePurchased = function(step, ctx)
+	return readUpgradeCount(ctx.data, step.ObjectiveTarget) > 0
+end
+
 resolvers.ClientUiObservation = function(step, ctx)
 	return ctx.ledger[step.ObjectiveTarget] == true
 end
@@ -283,6 +325,19 @@ end
 -- Copy
 --------------------------------------------------------------------------------
 
+-- Copy never spells an upgrade's name: "{Name}" resolves against the live DisplayName, so
+-- renaming an upgrade renames every objective that mentions it.
+local function applyCopyTokens(text, step)
+	if type(text) ~= "string" or not string.find(text, "{Name}", 1, true) then
+		return text
+	end
+	local name = displayName(QuestDefinitions.GetCopyUpgradeId(step))
+	-- gsub treats % in the replacement as a capture reference; DisplayNames never contain
+	-- one today, but escaping keeps a future rename from erroring at runtime.
+	local replacement = string.gsub(name, "%%", "%%%%")
+	return (string.gsub(text, "{Name}", replacement))
+end
+
 -- The only dynamic line in the arc so far. It must never publish the post-deduction
 -- balance between payment and the authoritative placement result, or the card flickers
 -- back to "save 15 cookies" during a purchase that is already succeeding.
@@ -309,19 +364,47 @@ local function firstHelperCopy(ctx)
 	return "Buy and place a Noob Clicker from the Mixer.", cost, cost
 end
 
+-- Quest 3 step 1. Unlike the first-helper line this needs no purchase freeze: the buy is
+-- the NEXT step, so the balance dropping below the cost afterwards is expected and this
+-- step is already complete by then.
+--
+-- "Earn", not "click" or "tap". By this point the player owns a producer, and 200 cookies is
+-- a poor thing to instruct anyone to tap for: buying more buildings and letting them run is
+-- a legitimate and often faster route. The objective names the goal and leaves the method to
+-- the player, which also means it needs no device-aware variant -- unlike quest 1's
+-- affordability line, where clicking really is the only way to reach 15.
+local function gooClickerSavingsCopy(ctx, step)
+	local upgradeId = step.ObjectiveTarget
+	local name = displayName(upgradeId)
+	if readUpgradeCount(ctx.data, upgradeId) > 0 then
+		return ("Earn cookies to buy the %s."):format(name)
+	end
+
+	local cost = readUpgradeCost(ctx.data, upgradeId) or 0
+	local cookies = readCookies(ctx.data)
+	local current = math.min(cookies, cost)
+	-- Cookie amounts abbreviate because the price is DevTuning-backed and can be raised
+	-- well past four digits; plain counts elsewhere in the arc never need it.
+	-- The goal lives in the "(x/y)" rather than the sentence: repeating it in words pushed
+	-- the line to 77 characters, and the strike overlay only animates two wrapped lines.
+	local suffix = (" (%s/%s)"):format(NumberFormat.abbreviate(current), NumberFormat.abbreviate(cost))
+	return ("Earn cookies to buy the %s.%s"):format(name, suffix), current, cost
+end
+
 local dynamicCopy = {
 	FirstHelperAffordability = firstHelperCopy,
+	GooClickerSavings = gooClickerSavingsCopy,
 }
 
 local function describeStep(step, ctx)
 	local resolver = step.DynamicCopy and dynamicCopy[step.DynamicCopy]
 	if resolver then
-		return resolver(ctx)
+		return resolver(ctx, step)
 	end
 
 	local _, current, target = evaluateStep(step, ctx)
-	local description = step.CompactObjective
-	local keyboard = step.CompactObjectiveKeyboard
+	local description = applyCopyTokens(step.CompactObjective, step)
+	local keyboard = applyCopyTokens(step.CompactObjectiveKeyboard, step)
 	if current and target and target > 1 then
 		local suffix = (" (%d/%d)"):format(current, target)
 		description ..= suffix
@@ -584,8 +667,8 @@ local function mutateLedger(player, callback)
 	return reconcileAndPublish(player, true)
 end
 
--- The tracked step, or nil. Used by the balance/purchase hooks so they only do work for
--- the one step whose copy actually depends on the live balance.
+-- The tracked step as DISPLAYED: derived, so it is already the next step the moment the
+-- current one is satisfied. Used by hooks that only need to redraw live copy.
 local function trackedStep(player, persistent, data, state)
 	local tracked = state.SelectedQuestId and QuestDefinitions.Quests[state.SelectedQuestId]
 	if not tracked then
@@ -593,6 +676,20 @@ local function trackedStep(player, persistent, data, state)
 	end
 	local ctx = makeContext(player, persistent, data, state)
 	return tracked.Steps[math.min(resolveStepIndex(tracked, state, ctx), #tracked.Steps)], ctx
+end
+
+-- The tracked step as STORED: the step still awaiting its objective. A hook that has to
+-- notice an objective being met must ask this one -- the derived step has already moved on
+-- by then, so gating on its kind silently skips the advance that needs persisting.
+local function trackedPendingStep(player, persistent, data, state)
+	local tracked = state.SelectedQuestId and QuestDefinitions.Quests[state.SelectedQuestId]
+	if not tracked then
+		return nil
+	end
+	local stored = state.QuestProgress[tracked.Id]
+	local storedIndex =
+		math.clamp(math.floor(tonumber(type(stored) == "table" and stored.StepIndex) or 1), 1, #tracked.Steps)
+	return tracked.Steps[storedIndex], makeContext(player, persistent, data, state)
 end
 
 --------------------------------------------------------------------------------
@@ -710,11 +807,46 @@ function QuestService.OnCookieBalanceChanged(player)
 	if type(state) ~= "table" then
 		return
 	end
-	local step, ctx = trackedStep(player, persistent, data, state)
-	if not step or step.DynamicCopy ~= "FirstHelperAffordability" then
+	-- A balance-gated objective IS the balance, so the crossing completes it: reconcile to
+	-- persist that advance instead of only redrawing the counter.
+	local pendingStep, ctx = trackedPendingStep(player, persistent, data, state)
+	if pendingStep and pendingStep.ObjectiveKind == "CookieBalanceAtLeast" then
+		if evaluateStep(pendingStep, ctx) then
+			reconcileAndPublish(player, true)
+		else
+			pushSnapshot(player, state, ctx)
+		end
 		return
 	end
-	pushSnapshot(player, state, ctx)
+
+	-- Everything else here is copy that merely tracks the balance, so the displayed step is
+	-- the right one to ask.
+	local step = trackedStep(player, persistent, data, state)
+	if step and step.DynamicCopy == "FirstHelperAffordability" then
+		pushSnapshot(player, state, ctx)
+	end
+end
+
+-- Non-building purchases (the Goo Clicker unlock, building upgrades). The upgrade count is
+-- the canonical proof, so nothing is written to the ledger; this only exists so the step
+-- advances on the purchase instead of waiting for the next reconcile.
+function QuestService.OnUpgradePurchased(player, upgradeId)
+	if type(upgradeId) ~= "string" then
+		return false
+	end
+	local persistent, data = getPersistent(player)
+	local state = persistent and persistent.QuestState
+	if type(state) ~= "table" then
+		return false
+	end
+	local step = trackedPendingStep(player, persistent, data, state)
+	-- CookieBalanceAtLeast is included because buying deducts before the count is written:
+	-- the balance hook fires first and still sees an unaffordable balance, so the save step
+	-- of a player who bought straight through would otherwise never resolve.
+	if step and (step.ObjectiveKind == "UpgradePurchased" or step.ObjectiveKind == "CookieBalanceAtLeast") then
+		return reconcileAndPublish(player, true)
+	end
+	return false
 end
 
 function QuestService.BeginBuildingPurchase(player, upgradeId)

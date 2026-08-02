@@ -85,6 +85,30 @@ BoostShopConfig.Pulse = {
 	Ghost = { Seconds = 1.8, FillTransparency = 0.55, OutlineTransparency = 0 },
 	Field = { Seconds = 3.6, FillTransparency = 0.8, OutlineTransparency = 0.35 },
 }
+
+-- A field warns during its final seconds, then visibly loses power after its gameplay effect has
+-- already ended. The replicated marker releases the levitating Core, both radius circles, and
+-- their particles together while the server retains the visual shell long enough to finish.
+-- Live-tuned values approved and baked on 2026-08-01; runtime code reads this table directly.
+BoostShopConfig.Expiry = {
+	StartedAtAttribute = "ExpiryAnimationStartedAt",
+	WarningSeconds = 15,
+	WarningColor = Color3.fromRGB(65, 65, 72),
+	FinalColor = Color3.fromRGB(28, 28, 32),
+	BrownoutGapStartSeconds = 0.5,
+	BrownoutGapEndSeconds = 0.17,
+	BrownoutDepthStart = 0.45,
+	BrownoutDepthEnd = 0.82,
+	BrownoutDurationStartSeconds = 0.07,
+	BrownoutDurationEndSeconds = 0.095,
+	ClusterChanceStart = 0.18,
+	ClusterChanceEnd = 0.8,
+	ClusterGapSeconds = 0.055,
+	GravityMultiplier = 1,
+	RingCollapseSeconds = 0.3,
+	RingEndScale = 0.01,
+	VisualLifetimeSeconds = 1,
+}
 -- Screen-space warning shown while the ghost is somewhere the field cannot go. Authored in Studio
 -- (StarterGui.ScreenGui.BoostShop.BoostPlacementWarning); code only sets its text and visibility.
 BoostShopConfig.WarningLabelName = "BoostPlacementWarning"

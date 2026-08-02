@@ -168,7 +168,11 @@ local function findField(sheet, itemId, floorId)
 	local targetName = fieldName(itemId)
 	local targetFloorId = FloorConfig.NormalizeId(floorId)
 	for _, child in ipairs(sheet:GetChildren()) do
-		if child.Name == targetName and FloorConfig.NormalizeId(child:GetAttribute(Attrs.FloorId)) == targetFloorId then
+		if
+			child.Name == targetName
+			and FloorConfig.NormalizeId(child:GetAttribute(Attrs.FloorId)) == targetFloorId
+			and child:GetAttribute(BoostShopConfig.Expiry.StartedAtAttribute) == nil
+		then
 			return child
 		end
 	end
@@ -184,7 +188,16 @@ local function expireField(field, state)
 	if owner then
 		clearStoredField(owner, state.itemId, state.floorId)
 	end
-	field:Destroy()
+	-- The boost is already absent from activeFields and persistence before the animation marker is
+	-- published. Coverage readers also reject marked fields, so this brief visual afterlife cannot
+	-- pay production while the Core falls and the radius circles collapse.
+	field:SetAttribute("RemainingSeconds", 0)
+	field:SetAttribute(BoostShopConfig.Expiry.StartedAtAttribute, Workspace:GetServerTimeNow())
+	task.delay(BoostShopConfig.Expiry.VisualLifetimeSeconds, function()
+		if field.Parent then
+			field:Destroy()
+		end
+	end)
 	if owner then
 		BoostAnalyticsService.RecordExpired(owner, state.itemId, state.duration)
 		notifyFieldsChanged(owner)

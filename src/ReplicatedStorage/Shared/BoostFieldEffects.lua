@@ -28,7 +28,11 @@ function BoostFieldEffects.GetCoverage(sheet)
 	local coverage = nil
 	local prefix = BoostShopConfig.FieldNamePrefix
 	for _, field in ipairs(sheet:GetChildren()) do
-		if field:IsA("Model") and field.Name:sub(1, #prefix) == prefix then
+		if
+			field:IsA("Model")
+			and field.Name:sub(1, #prefix) == prefix
+			and field:GetAttribute(BoostShopConfig.Expiry.StartedAtAttribute) == nil
+		then
 			local id = field:GetAttribute("ItemId") or field.Name:sub(#prefix + 1)
 			local item = BoostShopConfig.Items[id]
 			if item then

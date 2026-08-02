@@ -506,7 +506,9 @@ local UpgradeConfig = {
 	-- are NOT counted by OfflineEarningsService (in-session/idle engine only).
 	--
 	[AutoclickerConfig.UnlockUpgradeId] = {
-		DisplayName = "Auto-Clicker",
+		-- Display names only. The upgrade IDs above stay "Autoclicker"/"Autoclick Power"/
+		-- "Autoclick Speed" because they key Run.UpgradeCounts in every saved profile.
+		DisplayName = "Goo Clicker",
 		Description = "Makes your goo click automatically.",
 		IconFill = AutoclickerConfig.SlimeIcon,
 		IconOutline = AutoclickerConfig.CursorIcon,
@@ -531,7 +533,7 @@ local UpgradeConfig = {
 	-- EffectText shows CpS at base speed (2/s); it rises further with speed levels.
 	-- Numbers governed by tools/economy_sim.py — re-run after any change.
 	[AutoclickerConfig.PowerUpgradeId] = {
-		DisplayName = "Auto-Click Power",
+		DisplayName = "Goo Click Power",
 		Description = "Increases the cookies earned from each automatic click.",
 		IconFill = "rbxassetid://84671355431653",
 		IconOutline = "rbxassetid://125420180944081",
@@ -562,7 +564,7 @@ local UpgradeConfig = {
 	-- at 5/s (×2.5) so power × speed can't run away. Drives autoclick income AND the
 	-- orbiting-mice visual cadence (AutoclickVisualController). Read by AutoclickService.
 	["Autoclick Speed"] = {
-		DisplayName = "Auto-Click Speed",
+		DisplayName = "Goo Click Speed",
 		Description = "Increases the number of automatic clicks each second.",
 		IconFill = "rbxassetid://84671355431653",
 		IconOutline = "rbxassetid://125420180944081",

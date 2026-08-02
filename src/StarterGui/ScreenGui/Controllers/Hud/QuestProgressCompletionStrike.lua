@@ -149,7 +149,23 @@ function QuestProgressCompletionStrike.bind(description)
 				return
 			end
 			local lineWidths, width, height = prepareLines(text, false)
+			-- The label is measured from AbsoluteSize, which is a frame behind whenever this
+			-- text change also re-flowed the label. Measuring zero used to fall straight
+			-- through to the snap below, which draws the finished strike in one go and reads
+			-- as "it didn't animate". Give the layout a frame before giving up on the tween.
+			if width <= 0 or height <= 0 then
+				task.wait()
+				if playGeneration ~= generation or not description.Parent then
+					return
+				end
+				lineWidths, width, height = prepareLines(text, false)
+			end
 			if UiMotion.isReduced(description) or width <= 0 or height <= 0 then
+				if not UiMotion.isReduced(description) then
+					-- Reduced Motion snapping is intended; an unmeasurable label is not, and it
+					-- is indistinguishable on screen from the animation silently not running.
+					warn("Quest completion strike snapped: the description could not be measured")
+				end
 				for index, line in ipairs(lines) do
 					line.Size = UDim2.fromOffset(lineWidths[index] or 0, STRIKE_HEIGHT)
 				end

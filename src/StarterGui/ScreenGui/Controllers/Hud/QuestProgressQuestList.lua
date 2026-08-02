@@ -12,6 +12,7 @@ local CurrencyRewardFlightConfig = require(ReplicatedStorage.Shared.CurrencyRewa
 local QuestSnapshot = require(ReplicatedStorage.Shared.QuestSnapshot)
 local UiMotion = require(ReplicatedStorage.Shared.UiMotion)
 local QuestProgressCompletionStrike = require(script.Parent:WaitForChild("QuestProgressCompletionStrike"))
+local QuestProgressStepTransitions = require(script.Parent:WaitForChild("QuestProgressStepTransitions"))
 
 local QuestProgressQuestList = {}
 local OPEN_TWEEN_INFO = TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
@@ -20,7 +21,25 @@ local QUEST_PROGRESS_TWEEN_INFO = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enu
 local SELECTED_QUEST_COLOR = Color3.fromRGB(0, 170, 255)
 local UNSELECTED_QUEST_COLOR = Color3.fromRGB(232, 232, 236)
 local COMPLETION_HOLD_TIMEOUT_SECONDS = 10
-local STEP_COMPLETION_HOLD_SECONDS = 2
+
+-- How much of a step's share of the straight bar a finished count may fill. Short of 1 on
+-- purpose: reaching a count is not always the same as finishing the step. The first-helper
+-- step counts cookies toward a price and still needs the building placed afterwards, so a
+-- full bar there would claim the step was done while the player still had work to do.
+local SUB_PROGRESS_BAR_CAP = 0.9
+
+-- Steps whose sub-progress reaches its target while the server deliberately holds the step
+-- open for a world presentation. Their line strikes where it stands and STAYS struck until
+-- the step advances, because the wording does not change underneath it.
+--
+-- Deliberately not generic. An affordability step also reports current == target, but its
+-- wording swaps to a new instruction at that moment: leaving it struck in place would cross
+-- out "Buy and place a Noob Clicker" while the player still has to do exactly that. Those
+-- steps take the holdWithinStep path instead, which strikes the half that finished and then
+-- reveals the new half clean.
+local IN_PLACE_STRIKE_STEPS = {
+	help_goo_recover = true,
+}
 
 local function child(parent, name, className, recursive)
 	local instance = parent and parent:FindFirstChild(name, recursive == true)
@@ -57,8 +76,20 @@ local function formatStep(quest)
 	return ("%d/%d"):format(quest.StepIndex, quest.StepCount)
 end
 
+-- A keyboard variant exists only for steps that may name a keybind. Touch and gamepad
+-- players must never be shown one.
+local function resolveDescription(quest)
+	if
+		quest.DescriptionKeyboard
+		and UserInputService.PreferredInput == Enum.PreferredInput.KeyboardAndMouse
+	then
+		return tostring(quest.DescriptionKeyboard)
+	end
+	return tostring(quest.Description or "")
+end
+
 local function formatCompletedDescription(quest)
-	local description = tostring(quest.Description or "")
+	local description = resolveDescription(quest)
 	local target = tonumber(quest.SubProgressTarget)
 	if not target then
 		return description
@@ -130,11 +161,15 @@ function QuestProgressQuestList.bind(root, callbacks)
 	local questProgressTarget
 	local completionHold = false
 	local completionHoldGeneration = 0
-	local lastQuestCompleted
-	local heldStepTransition
+	local completionQuestId
 	local pendingCompletionCueKey
-	local timedStepTransition
-	local timedStepTransitionGeneration = 0
+	local stepTransitions
+	local presenting = false
+	local lastBarProgress = 0
+	local lastBarQuestId
+	-- Cue keys whose strike has already animated. Steps and quests never un-complete, so a
+	-- key that has struck once must never strike again from a second trigger.
+	local animatedCueKeys = {}
 	local questOpenPosition = questList:GetAttribute("OpenPosition")
 	local questClosedPosition = questList:GetAttribute("ClosedPosition")
 	local arcOpenPosition = arcHeader and arcHeader:GetAttribute("OpenPosition")
@@ -179,8 +214,47 @@ function QuestProgressQuestList.bind(root, callbacks)
 		return QuestSnapshot.getTracked(snapshot)
 	end
 
+	-- The rubble is counted on the client, because the server only ever sees the gated story
+	-- transition. The count is appended to the ONE authored objective: keeping a second
+	-- sentence here is what made the card read as two different objectives for one action.
+	local function withLocalCount(quest, description, completed)
+		if not (localSubProgress and quest and quest.StepId == localSubProgress.StepId) then
+			return description
+		end
+		local current = if completed then localSubProgress.Target else localSubProgress.Current
+		return ("%s (%d/%d)"):format(description, current, localSubProgress.Target)
+	end
+
+	local function findQuest(questId)
+		if not (snapshot and questId) then
+			return nil, nil
+		end
+		for _, arc in ipairs(snapshot.Arcs or {}) do
+			for _, quest in ipairs(arc.Quests or {}) do
+				if quest.Id == questId then
+					return arc, quest
+				end
+			end
+		end
+		return nil, nil
+	end
+
+	-- What the card is presenting: a quest whose completion is still being celebrated,
+	-- otherwise the tracked one. The server retargets selection to the successor in the
+	-- SAME snapshot that reports a completion, so a just-completed quest is never the
+	-- tracked one and can only be found by id.
+	local function displayArcAndQuest()
+		if completionQuestId then
+			local arc, quest = findQuest(completionQuestId)
+			if arc and quest then
+				return arc, quest
+			end
+		end
+		return currentArcAndQuest()
+	end
+
 	local function updateTrackedRowVisibility()
-		local _, quest = currentArcAndQuest()
+		local _, quest = displayArcAndQuest()
 		trackedRow.Visible = not selectorOpen
 			and quest ~= nil
 			and (replay ~= nil or quest.Completed ~= true or completionHold)
@@ -420,14 +494,30 @@ function QuestProgressQuestList.bind(root, callbacks)
 		hideCompletedToggle:SetAttribute("AccessibleText", accessibleText)
 	end
 
+	-- "The card is showing a finished objective, not the live one." Guidance waits on this so
+	-- the next instruction and the cue that points at it arrive together, instead of the cue
+	-- appearing while the player is still reading the struck-through previous step.
+	local function setPresenting(value)
+		value = value == true
+		if value == presenting then
+			return
+		end
+		presenting = value
+		if callbacks.onPresentingChanged then
+			callbacks.onPresentingChanged(presenting)
+		end
+	end
+
 	local function render()
 		if not snapshot then
 			root.Visible = false
+			setPresenting(false)
 			return
 		end
-		local arc, quest = currentArcAndQuest()
+		local arc, quest = displayArcAndQuest()
 		if not (arc and quest) then
 			root.Visible = false
+			setPresenting(false)
 			return
 		end
 		root.Visible = true
@@ -444,75 +534,53 @@ function QuestProgressQuestList.bind(root, callbacks)
 		local completedNow = quest.Completed == true
 		local questSubProgress = tonumber(quest.SubProgress)
 		local questSubProgressTarget = tonumber(quest.SubProgressTarget)
-		if not completedNow then
-			completionHold = false
-			completionHoldGeneration += 1
-		elseif lastQuestCompleted == false and quest.Reward and quest.Reward.Granted == true then
-			completionHold = true
-			completionHoldGeneration += 1
-			local generation = completionHoldGeneration
-			task.delay(COMPLETION_HOLD_TIMEOUT_SECONDS, function()
-				if completionHold and completionHoldGeneration == generation then
-					completionHold = false
-					render()
-				end
-			end)
-		end
-		lastQuestCompleted = completedNow
 		updateTrackedRowVisibility()
 		setText(trackedTitle, shownQuest.Title)
-		-- A keyboard variant exists only for steps that may name a keybind. Touch and
-		-- gamepad players must never be shown one.
-		local shownDescription = shownQuest.Description
-		if
-			shownQuest.DescriptionKeyboard
-			and UserInputService.PreferredInput == Enum.PreferredInput.KeyboardAndMouse
-		then
-			shownDescription = shownQuest.DescriptionKeyboard
-		end
+		local shownDescription = resolveDescription(shownQuest)
 		local shownProgress = replayActive and shownQuest.Progress or quest.Progress
 		local completionCueKey
-		if
-			not replayActive
-			and localSubProgress
-			and quest.StepId == localSubProgress.StepId
-			and quest.StepId == "unearth_cookie"
-		then
-			shownDescription = ("Clear the meteor rubble. (%d/%d)"):format(
-				localSubProgress.Current,
-				localSubProgress.Target
-			)
+		if not replayActive then
+			shownDescription = withLocalCount(quest, shownDescription, false)
 		end
-		if not replayActive and timedStepTransition then
-			shownDescription = timedStepTransition.Description
-			shownProgress = timedStepTransition.Progress
-			completionCueKey = "step:" .. timedStepTransition.StepId
-		elseif not replayActive and heldStepTransition then
-			shownDescription = heldStepTransition.Description
-			shownProgress = heldStepTransition.Progress
-			completionCueKey = "step:" .. heldStepTransition.StepId
+		local heldStep = not replayActive and stepTransitions and stepTransitions.current() or nil
+		if heldStep then
+			-- The outgoing objective stays struck on screen; the ring has already moved on.
+			shownDescription = heldStep.Description
+			shownProgress = heldStep.Progress
+			completionCueKey = "step:" .. heldStep.StepId
 		elseif not replayActive and completedNow then
 			completionCueKey = "quest:" .. tostring(quest.Id)
 		elseif
 			not replayActive
-			and quest.StepId == "unearth_cookie"
 			and localSubProgress
 			and localSubProgress.StepId == quest.StepId
 			and localSubProgress.Current >= localSubProgress.Target
 		then
+			-- A client-counted step (the rubble) finishes before the server credits it, so
+			-- the ring takes its own step forward with the final interaction.
 			completionCueKey = "step:" .. quest.StepId
 			shownProgress = math.min(1, shownProgress + 1 / math.max(1, quest.StepCount))
 		elseif
 			not replayActive
-			and quest.StepId == "help_goo_recover"
+			and IN_PLACE_STRIKE_STEPS[quest.StepId]
 			and questSubProgressTarget
 			and questSubProgress
 			and questSubProgress >= questSubProgressTarget
 		then
+			-- Authoritative sub-progress reached its target while the step is still tracked:
+			-- strike in place rather than waiting for the advance.
 			completionCueKey = "step:" .. quest.StepId
 		end
 		if completionStrike then
-			local animateCue = completionCueKey ~= nil and pendingCompletionCueKey == completionCueKey
+			-- Once per cue, ever. The rubble step strikes when the client counts its fifth
+			-- interaction and again when the server credits the step; without this guard the
+			-- player watches the same line get crossed out twice.
+			local animateCue = completionCueKey ~= nil
+				and pendingCompletionCueKey == completionCueKey
+				and not animatedCueKeys[completionCueKey]
+			if animateCue then
+				animatedCueKeys[completionCueKey] = true
+			end
 			local onStrikeCompleted
 			if animateCue and string.sub(completionCueKey, 1, 6) == "quest:" then
 				local completedQuestId = string.sub(completionCueKey, 7)
@@ -532,7 +600,46 @@ function QuestProgressQuestList.bind(root, callbacks)
 			end
 		end
 		pendingCompletionCueKey = nil
-		renderQuestProgress(shownProgress)
+
+		-- The straight bar also fills WITHIN a step, so a running count gives immediate
+		-- feedback that what the player is doing counts, instead of nothing moving until a
+		-- whole step ticks over. The ring is deliberately left alone: it carries ARC
+		-- progress, where a fractional step would read as noise rather than information.
+		local barProgress = shownProgress
+		if not (replayActive or heldStep or completedNow) then
+			local stepCount = math.max(1, tonumber(quest.StepCount) or 1)
+			local current, target
+			if localSubProgress and localSubProgress.StepId == quest.StepId then
+				current, target = localSubProgress.Current, localSubProgress.Target
+			else
+				current, target = questSubProgress, questSubProgressTarget
+			end
+			if current and target and target > 0 then
+				local fraction = math.min(current / target, SUB_PROGRESS_BAR_CAP)
+				local base = math.clamp(tonumber(quest.Progress) or 0, 0, 1)
+				-- Never below the step-based value: the rubble step advances the ring a whole
+				-- step on its final interaction, and the bar must not step backwards from it.
+				barProgress = math.max(barProgress, math.min(1, base + fraction / stepCount))
+			end
+		end
+
+		-- Within one quest the bar only ever moves forward. Several things legitimately
+		-- compute a lower number than the frame before -- a strike hold reports the step
+		-- boundary rather than the sub-count that just filled, and sub-progress itself can
+		-- regress when the player sells or spends -- and none of them is worth animating
+		-- backwards. A bar that retreats reads as a bug however defensible the number is.
+		if replayActive then
+			lastBarQuestId = nil
+			lastBarProgress = 0
+		else
+			if lastBarQuestId == quest.Id then
+				barProgress = math.max(barProgress, lastBarProgress)
+			else
+				lastBarQuestId = quest.Id
+			end
+			lastBarProgress = barProgress
+		end
+		renderQuestProgress(barProgress)
 		if rewardStrip then
 			rewardStrip.Visible = true
 			setText(
@@ -548,6 +655,11 @@ function QuestProgressQuestList.bind(root, callbacks)
 			end
 		end
 
+		-- Is the card still showing a finished objective rather than the live one? Gated holds
+		-- are excluded deliberately: those wait on a world presentation that guidance itself
+		-- drives (the Mixer unlock flight), so pausing guidance for one would deadlock it.
+		setPresenting(completionHold or (heldStep ~= nil and heldStep.Gate == nil))
+
 		local currentQuestArcProgress = if quest.Completed
 			then 0
 			else math.clamp(tonumber(if replayActive then quest.Progress else shownProgress) or 0, 0, 1)
@@ -556,6 +668,41 @@ function QuestProgressQuestList.bind(root, callbacks)
 		root:SetAttribute("SelectedQuestId", replayActive and "chapter_replay" or snapshot.SelectedQuestId)
 		renderSelectorRows(arc)
 	end
+
+	local function releaseCompletionHold()
+		if not (completionHold or completionQuestId) then
+			return
+		end
+		completionHold = false
+		completionQuestId = nil
+		completionHoldGeneration += 1
+		render()
+	end
+
+	-- Keep the completed card on screen through its strike and reward flight, then hand the
+	-- card back to the successor quest.
+	local function beginCompletionPresentation(questId)
+		completionQuestId = questId
+		completionHold = true
+		completionHoldGeneration += 1
+		local generation = completionHoldGeneration
+		-- Presentation failure must never strand the card, so the hold is bounded even if
+		-- the reward flight never reports back.
+		task.delay(COMPLETION_HOLD_TIMEOUT_SECONDS, function()
+			if completionHoldGeneration == generation then
+				completionHold = false
+				completionQuestId = nil
+				render()
+			end
+		end)
+	end
+
+	stepTransitions = QuestProgressStepTransitions.new({
+		onExpired = render,
+		isGateOpen = function(gate)
+			return screenGui:GetAttribute(gate) == true
+		end,
+	})
 
 	connect(collapseButton.Activated, function()
 		setExpanded(not expanded, true)
@@ -577,16 +724,23 @@ function QuestProgressQuestList.bind(root, callbacks)
 	end
 	if rewardFlightCompleted then
 		connect(rewardFlightCompleted.Event, function(currency, source)
-			if completionHold and currency == "Gems" and source == "quest:gooey_beginning" then
-				completionHold = false
-				completionHoldGeneration += 1
-				render()
+			-- Release when THIS card's own reward lands. This used to compare against one
+			-- hardcoded quest id, so every other quest sat out the full fallback timeout.
+			if
+				completionHold
+				and completionQuestId
+				and currency == "Gems"
+				and source == "quest:" .. tostring(completionQuestId)
+			then
+				releaseCompletionHold()
 			end
 		end)
 	end
 	connect(screenGui:GetAttributeChangedSignal(Attrs.MixerUnlockPresented), function()
-		if heldStepTransition and screenGui:GetAttribute(Attrs.MixerUnlockPresented) == true then
-			heldStepTransition = nil
+		if
+			screenGui:GetAttribute(Attrs.MixerUnlockPresented) == true
+			and stepTransitions.gateOpened(Attrs.MixerUnlockPresented)
+		then
 			render()
 		end
 	end)
@@ -636,71 +790,64 @@ function QuestProgressQuestList.bind(root, callbacks)
 	return {
 		renderSnapshot = function(nextSnapshot)
 			local _, previousQuest = currentArcAndQuest()
+			snapshot = nextSnapshot
 			local _, nextQuest = QuestSnapshot.getTracked(nextSnapshot)
-			if previousQuest and nextQuest then
-				local previousCurrent = tonumber(previousQuest.SubProgress)
-				local nextCurrent = tonumber(nextQuest.SubProgress)
-				local nextTarget = tonumber(nextQuest.SubProgressTarget)
-				if
-					(
-						(previousQuest.StepId == "begin_rescue" and nextQuest.StepId == "unearth_cookie")
-						or (previousQuest.StepId == "help_goo_recover" and nextQuest.StepId == "unlock_mixer")
-					) and nextQuest.Completed ~= true
-				then
-					timedStepTransitionGeneration += 1
-					local generation = timedStepTransitionGeneration
-					timedStepTransition = {
-						StepId = previousQuest.StepId,
-						TargetStepId = nextQuest.StepId,
-						Description = formatCompletedDescription(previousQuest),
-						Progress = nextQuest.Progress,
-					}
-					pendingCompletionCueKey = "step:" .. previousQuest.StepId
-					task.delay(STEP_COMPLETION_HOLD_SECONDS, function()
-						if timedStepTransition and timedStepTransitionGeneration == generation then
-							timedStepTransition = nil
-							render()
-						end
-					end)
-				elseif
-					previousQuest.StepId == "help_goo_recover"
-					and nextQuest.StepId == previousQuest.StepId
-					and nextTarget
-					and nextCurrent
-					and nextCurrent >= nextTarget
-					and (not previousCurrent or previousCurrent < nextTarget)
-				then
-					pendingCompletionCueKey = "step:" .. previousQuest.StepId
-				elseif
-					previousQuest.StepId == "unlock_mixer"
-					and nextQuest.StepId == "build_first_helper"
-					and nextQuest.Completed ~= true
-					and screenGui:GetAttribute(Attrs.MixerUnlockPresented) ~= true
-				then
-					heldStepTransition = {
-						StepId = previousQuest.StepId,
-						Description = previousQuest.Description,
-						Progress = nextQuest.Progress,
-					}
-					pendingCompletionCueKey = "step:" .. previousQuest.StepId
-				elseif previousQuest.Completed ~= true and nextQuest.Completed == true then
-					pendingCompletionCueKey = "quest:" .. tostring(nextQuest.Id)
+
+			-- Did the quest we were tracking just complete? It has to be looked up by id:
+			-- the server retargets selection to the successor in this very snapshot, so a
+			-- just-completed quest is never the tracked one.
+			if previousQuest and previousQuest.Completed ~= true and not completionQuestId then
+				local _, completedSelf = findQuest(previousQuest.Id)
+				if completedSelf and completedSelf.Completed == true then
+					stepTransitions.reconcile(nil)
+					pendingCompletionCueKey = "quest:" .. tostring(previousQuest.Id)
+					beginCompletionPresentation(previousQuest.Id)
 				end
 			end
-			if
-				timedStepTransition
-				and (not nextQuest or nextQuest.StepId ~= timedStepTransition.TargetStepId or nextQuest.Completed)
-			then
-				timedStepTransition = nil
-				timedStepTransitionGeneration += 1
+
+			if not completionQuestId then
+				-- The struck outgoing line keeps its client-side count, so it does not drop
+				-- "(5/5)" the instant the server credits the step.
+				local stepCue = stepTransitions.observe(previousQuest, nextQuest, function(outgoing)
+					return withLocalCount(outgoing, formatCompletedDescription(outgoing), true)
+				end, function(stepId)
+					return animatedCueKeys["step:" .. tostring(stepId)] == true
+				end)
+				if stepCue then
+					pendingCompletionCueKey = stepCue
+				elseif
+					previousQuest
+					and nextQuest
+					and previousQuest.Id == nextQuest.Id
+					and previousQuest.StepId == nextQuest.StepId
+					and nextQuest.Completed ~= true
+				then
+					local previousCurrent = tonumber(previousQuest.SubProgress)
+					local nextCurrent = tonumber(nextQuest.SubProgress)
+					local nextTarget = tonumber(nextQuest.SubProgressTarget)
+					if
+						nextTarget
+						and nextCurrent
+						and nextCurrent >= nextTarget
+						and (not previousCurrent or previousCurrent < nextTarget)
+					then
+						local completed = formatCompletedDescription(previousQuest)
+						if IN_PLACE_STRIKE_STEPS[nextQuest.StepId] then
+							-- The server holds this step open for a world presentation, so the
+							-- line stays struck where it is rather than being replaced.
+							pendingCompletionCueKey = "step:" .. tostring(previousQuest.StepId)
+						elseif completed ~= resolveDescription(nextQuest) then
+							-- The step's own instruction just changed: the player finished
+							-- saving and is now being asked to buy. Strike and hold the half
+							-- they completed before the new half appears.
+							pendingCompletionCueKey =
+								stepTransitions.holdWithinStep(previousQuest, nextQuest, completed)
+						end
+					end
+				end
+				stepTransitions.reconcile(nextQuest)
 			end
-			if
-				heldStepTransition
-				and (not nextQuest or nextQuest.StepId ~= "build_first_helper" or nextQuest.Completed)
-			then
-				heldStepTransition = nil
-			end
-			snapshot = nextSnapshot
+
 			if localSubProgress and (not nextQuest or nextQuest.StepId ~= localSubProgress.StepId) then
 				localSubProgress = nil
 			end
@@ -730,8 +877,12 @@ function QuestProgressQuestList.bind(root, callbacks)
 		getRewardSource = function()
 			return rewardIcon or rewardStrip
 		end,
+		isPresenting = function()
+			return presenting
+		end,
 		destroy = function()
 			cancelRevealTweens()
+			stepTransitions.destroy()
 			if rewardTooltipRegistration then
 				rewardTooltipRegistration:disconnect()
 			end

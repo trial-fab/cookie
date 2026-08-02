@@ -245,7 +245,11 @@ local function addFieldSources(sources, sheet, buildings)
 	local prefix = BoostShopConfig.FieldNamePrefix
 	local fields = {}
 	for _, child in ipairs(sheet:GetChildren()) do
-		if child:IsA("Model") and child.Name:sub(1, #prefix) == prefix then
+		if
+			child:IsA("Model")
+			and child.Name:sub(1, #prefix) == prefix
+			and child:GetAttribute(BoostShopConfig.Expiry.StartedAtAttribute) == nil
+		then
 			local itemId = child:GetAttribute("ItemId") or child.Name:sub(#prefix + 1)
 			local item = BoostShopConfig.Items[itemId]
 			if item then

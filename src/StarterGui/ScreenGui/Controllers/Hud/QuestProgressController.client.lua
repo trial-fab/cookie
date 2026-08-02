@@ -32,8 +32,30 @@ QuestProgressPresenter.bind(root)
 
 local guidance = QuestProgressGuidance.new(screenGui, root)
 local latestSnapshot
+local pendingGuidanceSnapshot
 local replayActive = false
 local list
+
+-- Guidance follows the CARD, not the server. While the card is still holding a struck-out
+-- objective, the cue for the next step is withheld, so the new instruction and the thing it
+-- points at appear together. Without this the highlight lands first and the player is being
+-- pointed somewhere before the text has told them why.
+local function refreshGuidance()
+	if replayActive or not list then
+		guidance.stop()
+		return
+	end
+	if list.isPresenting() then
+		guidance.stop()
+		return
+	end
+	if pendingGuidanceSnapshot then
+		local snapshot = pendingGuidanceSnapshot
+		pendingGuidanceSnapshot = nil
+		guidance.setSnapshot(snapshot)
+	end
+end
+
 list = QuestProgressQuestList.bind(root, {
 	onSelectQuest = function(questId)
 		guidance.stop()
@@ -41,6 +63,9 @@ list = QuestProgressQuestList.bind(root, {
 	end,
 	onSetHideCompleted = function(hidden)
 		Net.fireServer(Net.Names.QuestAction, "SetHideCompleted", hidden)
+	end,
+	onPresentingChanged = function()
+		refreshGuidance()
 	end,
 })
 if not list then
@@ -68,7 +93,8 @@ QuestProgressReplay.new(screenGui, list, function()
 	guidance.stop()
 end, function()
 	replayActive = false
-	guidance.setSnapshot(latestSnapshot)
+	pendingGuidanceSnapshot = latestSnapshot
+	refreshGuidance()
 end)
 
 Net.on(Net.Names.QuestSnapshot, function(snapshot)
@@ -76,15 +102,14 @@ Net.on(Net.Names.QuestSnapshot, function(snapshot)
 		return
 	end
 	latestSnapshot = snapshot
+	pendingGuidanceSnapshot = snapshot
+	-- Render first: this is what starts (or ends) a hold, so the guidance decision below
+	-- reads the card's settled state rather than the previous frame's.
 	list.renderSnapshot(snapshot)
 	local _, trackedQuest = QuestSnapshot.getTracked(snapshot)
 	observations.setAwaiting(trackedQuest and trackedQuest.AwaitingObservation or nil)
 	screenGui:SetAttribute(Attrs.QuestSnapshotReady, true)
-	if replayActive then
-		guidance.stop()
-	else
-		guidance.setSnapshot(snapshot)
-	end
+	refreshGuidance()
 end)
 
 Net.fireServer(Net.Names.QuestAction, "RequestSnapshot")

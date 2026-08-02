@@ -23,6 +23,7 @@ SRC = ROOT / "src"
 MODULES = {
     "QuestDefinitions": SRC / "ReplicatedStorage/Shared/QuestDefinitions.lua",
     "QuestSnapshot": SRC / "ReplicatedStorage/Shared/QuestSnapshot.lua",
+    "NumberFormat": SRC / "ReplicatedStorage/Shared/NumberFormat.lua",
     "QuestService": SRC / "ServerScriptService/Services/QuestService.lua",
 }
 TEST = ROOT / "tools/quest_logic_test.luau"

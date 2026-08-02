@@ -442,6 +442,7 @@ function BoostFieldPlacement.new(options)
 			if
 				child.Name == BoostShopConfig.FieldNamePrefix .. activeItem.Id
 				and FloorConfig.NormalizeId(child:GetAttribute(Attrs.FloorId)) == targetFloorId
+				and child:GetAttribute(BoostShopConfig.Expiry.StartedAtAttribute) == nil
 			then
 				return true
 			end

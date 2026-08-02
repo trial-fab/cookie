@@ -7,6 +7,11 @@
 -- one resolver per kind. Static copy lives here; only steps that need a live number carry
 -- a DynamicCopy id. Sub-progress "(x/y)" is appended generically from the resolved
 -- current/target, so no step string hardcodes a count.
+--
+-- Copy never hardcodes an upgrade's name either: "{Name}" resolves at runtime against
+-- UpgradeConfig.DisplayName for the step's upgrade (ObjectiveTarget, its UpgradeId field,
+-- or an explicit CopyUpgradeId). Renaming a building or upgrade moves its quest copy with
+-- it -- which is exactly what the Auto-Clicker -> Goo Clicker rename needed.
 
 local QuestDefinitions = {}
 
@@ -18,6 +23,8 @@ QuestDefinitions.ObjectiveKinds = table.freeze({
 	BuildingPlaced = true,
 	BuildingCountAtLeast = true,
 	BuildingSold = true,
+	CookieBalanceAtLeast = true,
+	UpgradePurchased = true,
 	ClientUiObservation = true,
 })
 
@@ -36,7 +43,7 @@ QuestDefinitions.Arcs = table.freeze({
 		Order = 1,
 		Title = "Getting Started",
 		UnlockCondition = table.freeze({ Kind = "Always" }),
-		QuestIds = table.freeze({ "gooey_beginning", "mixer_training" }),
+		QuestIds = table.freeze({ "gooey_beginning", "mixer_training", "first_automation" }),
 		DisplayQuestCount = 5,
 		CapstoneReward = table.freeze({
 			ReceiptId = "opening_tutorial_capstone",
@@ -72,7 +79,9 @@ QuestDefinitions.Quests = table.freeze({
 			table.freeze({
 				Id = "unearth_cookie",
 				Title = "Free the Goo",
-				CompactObjective = "Clear the rubble around the cookie.",
+				-- The one authored wording for this step. The client appends "(x/5)" as the
+				-- player clears it; it must never carry a second sentence of its own.
+				CompactObjective = "Clear the meteor rubble.",
 				ObjectiveKind = "StoryTransition",
 				ObjectiveTarget = "Healing",
 				GuideCapability = false,
@@ -129,7 +138,7 @@ QuestDefinitions.Quests = table.freeze({
 			table.freeze({
 				Id = "hire_another_noob",
 				Title = "Hire Another Noob",
-				CompactObjective = "Buy a second Noob Clicker.",
+				CompactObjective = "Buy a second {Name}.",
 				ObjectiveKind = "BuildingCountAtLeast",
 				ObjectiveTarget = table.freeze({ UpgradeId = "Noob Clicker", Count = 2 }),
 				GuideCapability = true,
@@ -150,9 +159,52 @@ QuestDefinitions.Quests = table.freeze({
 				Title = "Undo a Purchase",
 				-- "Placed" is load-bearing: the store card sells ALL of a building through
 				-- SellAll, only the world object sells one.
-				CompactObjective = "Switch the Mixer to Sell, then sell one placed Noob Clicker.",
+				CompactObjective = "Switch the Mixer to Sell, then sell one placed {Name}.",
 				ObjectiveKind = "BuildingSold",
 				ObjectiveTarget = "Any",
+				CopyUpgradeId = "Noob Clicker",
+				GuideCapability = true,
+			}),
+		}),
+	}),
+
+	-- Two steps, not three. The specced third step ("let the Goo Clicker earn its first
+	-- cookies") completed on the first payout tick roughly half a second after the
+	-- purchase, with no player action -- the same ceremony the arc spec stripped out of
+	-- Mixer Training, and it raced its own quest-completion strike. The lesson it carried
+	-- now lands on the completed card's lesson line, where the income jump is visible.
+	first_automation = table.freeze({
+		Id = "first_automation",
+		ArcId = "opening_tutorial",
+		Order = 3,
+		Title = "First Automation",
+		RequiresQuestIds = table.freeze({ "mixer_training" }),
+		Reward = table.freeze({
+			Kind = "Gems",
+			Amount = 10,
+			ReceiptId = "quest_reward_first_automation_v1",
+		}),
+		Steps = table.freeze({
+			table.freeze({
+				Id = "save_for_goo_clicker",
+				Title = "Save Your Cookies",
+				-- Cost and name both resolve live; AutoclickerUnlock.Cost is DevTuning-backed.
+				-- "Earn" leaves the method open: by now the player has a producer, and buying
+				-- more buildings is a legitimate way to reach the price.
+				CompactObjective = "Earn cookies to buy the {Name}.",
+				ObjectiveKind = "CookieBalanceAtLeast",
+				ObjectiveTarget = "Autoclicker",
+				DynamicCopy = "GooClickerSavings",
+				-- No cue. Clicking the cookie was taught in quest 1 and the objective spells
+				-- it out; pointing at it a third time is noise.
+				GuideCapability = false,
+			}),
+			table.freeze({
+				Id = "buy_goo_clicker",
+				Title = "Hire the Goo Clicker",
+				CompactObjective = "Buy the {Name} from the Upgrades tab.",
+				ObjectiveKind = "UpgradePurchased",
+				ObjectiveTarget = "Autoclicker",
 				GuideCapability = true,
 			}),
 		}),
@@ -168,6 +220,37 @@ local function validId(value)
 		and value ~= ""
 		and not string.find(string.lower(value), "preview", 1, true)
 		and not string.find(string.lower(value), "example", 1, true)
+end
+
+-- The upgrade whose DisplayName fills "{Name}" in this step's copy. Most steps already
+-- name their upgrade in the objective target; CopyUpgradeId covers the ones whose target
+-- is broader than the thing the sentence talks about (BuildingSold accepts "Any").
+function QuestDefinitions.GetCopyUpgradeId(step)
+	if type(step.CopyUpgradeId) == "string" then
+		return step.CopyUpgradeId
+	end
+	local target = step.ObjectiveTarget
+	if type(target) == "table" and type(target.UpgradeId) == "string" then
+		return target.UpgradeId
+	end
+	if type(target) == "string" then
+		return target
+	end
+	return nil
+end
+
+local function validateCopy(step)
+	for _, field in ipairs({ "CompactObjective", "CompactObjectiveKeyboard" }) do
+		local text = step[field]
+		if type(text) == "string" and string.find(text, "{Name}", 1, true) then
+			if not QuestDefinitions.GetCopyUpgradeId(step) then
+				fail(("step %s uses {Name} with no upgrade to resolve it from"):format(step.Id))
+			end
+		end
+	end
+	if step.CopyUpgradeId ~= nil and type(step.CopyUpgradeId) ~= "string" then
+		fail(("step %s has an invalid CopyUpgradeId"):format(step.Id))
+	end
 end
 
 local function validateObjective(step)
@@ -285,6 +368,7 @@ function QuestDefinitions.Validate()
 			if step.CompactObjectiveKeyboard ~= nil and type(step.CompactObjectiveKeyboard) ~= "string" then
 				fail(("step %s has an invalid keyboard copy variant"):format(step.Id))
 			end
+			validateCopy(step)
 		end
 	end
 

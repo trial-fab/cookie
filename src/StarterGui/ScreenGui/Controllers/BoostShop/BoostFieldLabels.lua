@@ -133,10 +133,22 @@ function BoostFieldLabels.bindWorld(screenGui)
 		-- replicates into PlayerGui is never mistaken for a real label.
 		CollectionService:AddTag(frame, WORLD_LABEL_TAG)
 
-		-- The field owns the panel's lifetime; nothing else has to clean it up.
-		field.Destroying:Connect(function()
-			frame:Destroy()
+		-- The effect ends at the start of the collapse, so its status panel leaves then rather than
+		-- hovering over a dead Core until the server removes the visual shell a moment later.
+		local function destroyFrame()
+			if frame.Parent then
+				frame:Destroy()
+			end
+		end
+		field:GetAttributeChangedSignal(BoostShopConfig.Expiry.StartedAtAttribute):Connect(function()
+			if field:GetAttribute(BoostShopConfig.Expiry.StartedAtAttribute) ~= nil then
+				destroyFrame()
+			end
 		end)
+		field.Destroying:Connect(destroyFrame)
+		if field:GetAttribute(BoostShopConfig.Expiry.StartedAtAttribute) ~= nil then
+			destroyFrame()
+		end
 	end
 
 	local function bind(instance)

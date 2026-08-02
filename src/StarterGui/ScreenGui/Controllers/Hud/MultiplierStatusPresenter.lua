@@ -348,10 +348,6 @@ function MultiplierStatusPresenter.new(screenGui, player)
 		slot.Visible = false
 		local hitbox = slot:FindFirstChild("Hitbox")
 		if hitbox and hitbox:IsA("GuiButton") then
-			local tooltipAnchor = slot:FindFirstChild("Icon")
-			if not (tooltipAnchor and tooltipAnchor:IsA("GuiObject")) then
-				tooltipAnchor = hitbox
-			end
 			registrations[slot] = tooltip:registerGui(hitbox, {
 				trigger = tooltip.Trigger.HoverAndClick,
 				getContent = function()
@@ -367,8 +363,9 @@ function MultiplierStatusPresenter.new(screenGui, player)
 						offsetX = MultiplierHudConfig.TooltipOffsetX,
 						offsetY = MultiplierHudConfig.TooltipOffsetY,
 						getScreenPoint = function()
-							local position = tooltipAnchor.AbsolutePosition
-							-- Align the tooltip's left edge with the icon's left edge.
+							-- PulseScale animates the icon itself, so anchor to the stable hover
+							-- hitbox to keep the tooltip from drifting during the warning pulse.
+							local position = hitbox.AbsolutePosition
 							local point = Vector2.new(position.X, position.Y)
 							-- AbsolutePosition is inset-relative here, while this ScreenGui's runtime
 							-- Position space includes the top-left GUI inset.
@@ -511,20 +508,23 @@ function MultiplierStatusPresenter.new(screenGui, player)
 		end
 		local now = Workspace:GetServerTimeNow()
 		local warningThreshold = MultiplierHudConfig.WarningThresholdSeconds
+		local criticalThreshold = MultiplierHudConfig.CriticalThresholdSeconds
 		local normalColor = MultiplierHudConfig.NormalTextColor
 		local warningColor = MultiplierHudConfig.WarningTextColor
+		local criticalColor = MultiplierHudConfig.CriticalTextColor
 		for slot, source in pairs(assigned) do
 			local state = getState(slot)
 			if not state.removing then
 				local timer = slot:FindFirstChild("Timer")
 				local remaining = getRemaining(source, now)
 				local warning = remaining ~= nil and remaining <= warningThreshold
+				local critical = remaining ~= nil and remaining <= criticalThreshold
 				state.warning = warning
 				if timer and timer:IsA("TextLabel") then
 					if remaining ~= nil then
 						timer.Text = formatCountdown(remaining)
 						timer.TextSize = MultiplierHudConfig.CountdownTextSize
-						timer.TextColor3 = warning and warningColor or normalColor
+						timer.TextColor3 = critical and criticalColor or (warning and warningColor or normalColor)
 					else
 						timer.Text = MultiplierHudConfig.InfinityText
 						timer.TextSize = MultiplierHudConfig.InfinityTextSize

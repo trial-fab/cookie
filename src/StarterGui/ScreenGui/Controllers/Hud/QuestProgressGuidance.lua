@@ -10,10 +10,29 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
+local AutoclickerConfig = require(ReplicatedStorage.Shared.AutoclickerConfig)
 local GuiNames = require(ReplicatedStorage.Shared.GuiNames)
 local QuestSnapshot = require(ReplicatedStorage.Shared.QuestSnapshot)
+local StoreShell = require(ReplicatedStorage.Shared.StoreShell)
 
 local QuestProgressGuidance = {}
+
+-- Steps whose objective is a running cookie total AND whose cue is the cookie itself. Quest
+-- 3's save step is deliberately absent: by then the player has already been shown the cookie
+-- twice, so its objective spells the instruction out instead and no cue is drawn.
+local COOKIE_SAVING_STEPS = {
+	build_first_helper = true,
+}
+
+-- Steps whose cue is a store row's own Catch pulse rather than the pointer, mapped to the
+-- upgrade whose row it is. `buy_goo_clicker` is deliberately absent: the pointer sits over
+-- the Goo Clicker row instead, because that row is a first-time discovery on a tab the
+-- player has never opened, and the pulse alone does not say "over here".
+local CATCH_ROW_STEPS = {
+	build_first_helper = "Noob Clicker",
+	hire_another_noob = "Noob Clicker",
+}
+
 local CATCH_REST_TRANSPARENCY = 0.88
 local CATCH_PULSE_TRANSPARENCY = 0.58
 local MIXER_FLIGHT_SECONDS = 2
@@ -290,9 +309,9 @@ function QuestProgressGuidance.new(screenGui, root)
 		return nil
 	end
 
-	local function collectingFirstHelperCookies()
+	local function collectingCookies()
 		local _, quest = QuestSnapshot.getTracked(currentSnapshot)
-		if not quest or quest.StepId ~= "build_first_helper" then
+		if not quest or not COOKIE_SAVING_STEPS[quest.StepId] then
 			return false
 		end
 		local current = tonumber(quest.SubProgress)
@@ -300,53 +319,94 @@ function QuestProgressGuidance.new(screenGui, root)
 		return current ~= nil and target ~= nil and current < target
 	end
 
-	local function resolveTarget(stepId)
-		if stepId == "help_goo_recover" then
-			return cookieTarget()
-		elseif stepId == "unlock_mixer" then
-			local dialogue = screenGui:FindFirstChild("StoryDialogue")
-			if not (dialogue and dialogue:IsA("GuiObject") and dialogue.Visible) then
-				return nil
-			end
-			local continueButton = dialogue:FindFirstChild("Continue", true)
-			if centerOfGui(continueButton) then
-				return pointAt(continueButton)
-			end
-			return pointAt(dialogue)
-		elseif stepId == "build_first_helper" and collectingFirstHelperCookies() then
-			return cookieTarget()
-		elseif stepId == "build_first_helper" or stepId == "hire_another_noob" then
-			return buyNoobClickerTarget()
-		elseif stepId == "see_the_numbers" then
-			if screenGui:GetAttribute(Attrs.StoreOpen) ~= true then
-				return mixerSlotTarget()
-			end
-			return pointAt(screenGui:FindFirstChild("StatsEyeToggle", true))
-		elseif stepId == "look_from_above" then
-			if screenGui:GetAttribute(Attrs.BuildModeActive) == true then
-				return nil
-			end
-			local playerGui = screenGui:FindFirstAncestorOfClass("PlayerGui")
-			local topbar = playerGui and playerGui:FindFirstChild(GuiNames.TopbarHudGui)
-			local frame = topbar and topbar:FindFirstChild(GuiNames.BuildModeFrame, true)
-			local target = frame and frame:FindFirstChild("Hitbox", true) or frame
-			-- A different ScreenGui, so ordering is DisplayOrder's job, not ZIndex's.
-			return screenPointOfGui(target, screenGui), nil
-		elseif stepId == "undo_a_purchase" then
-			if screenGui:GetAttribute(Attrs.StoreOpen) ~= true then
-				return mixerSlotTarget()
-			end
-			if screenGui:GetAttribute(Attrs.SellMode) ~= true then
-				return pointAt(screenGui:FindFirstChild("SellButton", true))
-			end
-			-- Sell mode is on: point at the placed building, never the card. Clicking the
-			-- card routes to SellAll and would take every Noob Clicker the player owns.
-			local building = findPlacedBuilding(player, "Noob Clicker")
-			if building then
-				return screenPointOfWorldPosition(building:GetPivot().Position, screenGui)
-			end
+	local function dialogueTarget()
+		local dialogue = screenGui:FindFirstChild("StoryDialogue")
+		if not (dialogue and dialogue:IsA("GuiObject") and dialogue.Visible) then
+			return nil
+		end
+		local continueButton = dialogue:FindFirstChild("Continue", true)
+		if centerOfGui(continueButton) then
+			return pointAt(continueButton)
+		end
+		return pointAt(dialogue)
+	end
+
+	local function statsEyeTarget()
+		if screenGui:GetAttribute(Attrs.StoreOpen) ~= true then
+			return mixerSlotTarget()
+		end
+		return pointAt(screenGui:FindFirstChild("StatsEyeToggle", true))
+	end
+
+	local function buildViewTarget()
+		if screenGui:GetAttribute(Attrs.BuildModeActive) == true then
+			return nil
+		end
+		local playerGui = screenGui:FindFirstAncestorOfClass("PlayerGui")
+		local topbar = playerGui and playerGui:FindFirstChild(GuiNames.TopbarHudGui)
+		local frame = topbar and topbar:FindFirstChild(GuiNames.BuildModeFrame, true)
+		local target = frame and frame:FindFirstChild("Hitbox", true) or frame
+		-- A different ScreenGui, so ordering is DisplayOrder's job, not ZIndex's.
+		return screenPointOfGui(target, screenGui), nil
+	end
+
+	local function sellPlacedBuildingTarget()
+		if screenGui:GetAttribute(Attrs.StoreOpen) ~= true then
+			return mixerSlotTarget()
+		end
+		if screenGui:GetAttribute(Attrs.SellMode) ~= true then
+			return pointAt(screenGui:FindFirstChild("SellButton", true))
+		end
+		-- Sell mode is on: point at the placed building, never the card. Clicking the card
+		-- routes to SellAll and would take every Noob Clicker the player owns.
+		local building = findPlacedBuilding(player, "Noob Clicker")
+		if building then
+			return screenPointOfWorldPosition(building:GetPivot().Position, screenGui)
 		end
 		return nil
+	end
+
+	local function buyGooClickerTarget()
+		if screenGui:GetAttribute(Attrs.StoreOpen) ~= true then
+			return mixerSlotTarget()
+		end
+		-- The Upgrades page is its own discovery: the player has only ever seen Buildings,
+		-- and the row does not exist to point at until that tab is showing.
+		local store = StoreShell.getActive(screenGui)
+		if store and store:GetAttribute(Attrs.CurrentCategory) ~= "Upgrade" then
+			local tabBar = store:FindFirstChild("TabBar")
+			local tab = tabBar and tabBar:FindFirstChild("UpgradesTab")
+			if tab then
+				return pointAt(tab)
+			end
+		end
+		return pointAt(findUpgradeRow(screenGui, AutoclickerConfig.UnlockUpgradeId))
+	end
+
+	local targetResolvers = {
+		help_goo_recover = cookieTarget,
+		unlock_mixer = dialogueTarget,
+		build_first_helper = function()
+			if collectingCookies() then
+				return cookieTarget()
+			end
+			return buyNoobClickerTarget()
+		end,
+		hire_another_noob = buyNoobClickerTarget,
+		see_the_numbers = statsEyeTarget,
+		look_from_above = buildViewTarget,
+		undo_a_purchase = sellPlacedBuildingTarget,
+		-- save_for_goo_clicker has no entry on purpose: its objective already says to click
+		-- the cookie, and re-pointing at something taught twice is noise.
+		buy_goo_clicker = buyGooClickerTarget,
+	}
+
+	local function resolveTarget(stepId)
+		local resolver = targetResolvers[stepId]
+		if not resolver then
+			return nil
+		end
+		return resolver()
 	end
 
 	local pulse
@@ -363,16 +423,17 @@ function QuestProgressGuidance.new(screenGui, root)
 			hideCues()
 			return
 		end
-		local collectingCookies = collectingFirstHelperCookies()
-		setCookieHighlight(activeStepId == "help_goo_recover" or collectingCookies)
+		local collecting = collectingCookies()
+		setCookieHighlight(activeStepId == "help_goo_recover" or collecting)
+		local catchUpgradeId = not collecting and CATCH_ROW_STEPS[activeStepId] or nil
 		if
-			not collectingCookies
-			and (activeStepId == "build_first_helper" or activeStepId == "hire_another_noob")
+			catchUpgradeId
 			and screenGui:GetAttribute(Attrs.StoreOpen) == true
 			and screenGui:GetAttribute(Attrs.PlacementActive) ~= true
 		then
-			local row = findUpgradeRow(screenGui, "Noob Clicker")
-			if startCatchPulse(row) then
+			-- Returns false when the row is not on screen (wrong tab, not yet unlocked), so
+			-- the pointer below still gets its turn at whatever leads there.
+			if startCatchPulse(findUpgradeRow(screenGui, catchUpgradeId)) then
 				pointer.Visible = false
 				return
 			end

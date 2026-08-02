@@ -108,14 +108,69 @@ function BoostFieldPulse.attach(model, settings)
 	}
 end
 
--- Watches every plot for dropped fields and gives each one the slower ping. Fields are
--- server-owned, so this only ever reads them.
+local function collapseField(model, pulse)
+	if pulse and pulse.stop then
+		pulse.stop()
+	end
+
+	-- Cutting emission first makes the shrinking rings read as a power source shutting off rather
+	-- than a healthy field merely changing size. Clear removes already-emitted sparkles too.
+	for _, descendant in ipairs(model:GetDescendants()) do
+		if descendant:IsA("ParticleEmitter") then
+			descendant.Enabled = false
+			descendant:Clear()
+		end
+	end
+
+	local remaining = BoostShopConfig.Expiry.RingCollapseSeconds
+	local function hideCollapsedPart(part)
+		if not part.Parent then
+			return
+		end
+		part.Transparency = 1
+		for _, descendant in ipairs(part:GetDescendants()) do
+			if descendant:IsA("Highlight") then
+				descendant.Enabled = false
+			end
+		end
+	end
+	for _, name in ipairs({ BoostShopConfig.Pulse.RimPartName, BoostShopConfig.Pulse.SweepPartName }) do
+		local part = model:FindFirstChild(name, true)
+		if part and part:IsA("BasePart") then
+			-- The discs are flat Cylinders: X is thickness and Y/Z are the two radial axes.
+			local target = Vector3.new(
+				part.Size.X,
+				part.Size.Y * BoostShopConfig.Expiry.RingEndScale,
+				part.Size.Z * BoostShopConfig.Expiry.RingEndScale
+			)
+			if remaining <= 0 then
+				part.Size = target
+				hideCollapsedPart(part)
+			else
+				local shrink = TweenService:Create(
+					part,
+					TweenInfo.new(remaining, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+					{ Size = target }
+				)
+				shrink.Completed:Once(function(playbackState)
+					if playbackState == Enum.PlaybackState.Completed then
+						hideCollapsedPart(part)
+					end
+				end)
+				shrink:Play()
+			end
+		end
+	end
+end
+
+-- Watches every plot for dropped fields, gives each one the slower ping, then owns the radius
+-- collapse when the server declares that field expired.
 function BoostFieldPulse.bindWorld()
 	local prefix = BoostShopConfig.FieldNamePrefix
-	local pulsed = setmetatable({}, { __mode = "k" })
+	local states = setmetatable({}, { __mode = "k" })
 
 	local function bind(instance)
-		if pulsed[instance] or not instance:IsA("Model") then
+		if states[instance] or not instance:IsA("Model") then
 			return
 		end
 		if instance.Name:sub(1, #prefix) ~= prefix then
@@ -123,15 +178,32 @@ function BoostFieldPulse.bindWorld()
 		end
 		-- Claimed before yielding so the DescendantAdded firing for this model's own children
 		-- cannot start a second binding for it.
-		pulsed[instance] = true
+		local state = { ready = false, collapsing = false, pulse = nil }
+		states[instance] = state
+
+		local function collapseIfExpired()
+			local startedAt = instance:GetAttribute(BoostShopConfig.Expiry.StartedAtAttribute)
+			if not state.ready or state.collapsing or type(startedAt) ~= "number" then
+				return
+			end
+			state.collapsing = true
+			collapseField(instance, state.pulse)
+			state.pulse = nil
+		end
+		instance:GetAttributeChangedSignal(BoostShopConfig.Expiry.StartedAtAttribute):Connect(collapseIfExpired)
 
 		task.spawn(function()
 			-- The server parents a field only after its parts exist, but REPLICATION does not
 			-- preserve that: the model arrives on the client before its descendants, so the disc
 			-- has to be waited for or a freshly dropped field silently never pings.
 			local sweep = instance:WaitForChild(BoostShopConfig.Pulse.SweepPartName, 10)
-			if sweep and instance.Parent then
-				pulsed[instance] = BoostFieldPulse.attach(instance, BoostShopConfig.Pulse.Field) or true
+			local rim = instance:WaitForChild(BoostShopConfig.Pulse.RimPartName, 10)
+			if sweep and rim and instance.Parent then
+				state.ready = true
+				if instance:GetAttribute(BoostShopConfig.Expiry.StartedAtAttribute) == nil then
+					state.pulse = BoostFieldPulse.attach(instance, BoostShopConfig.Pulse.Field)
+				end
+				collapseIfExpired()
 			end
 		end)
 	end

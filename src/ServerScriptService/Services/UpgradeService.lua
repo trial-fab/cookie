@@ -1206,6 +1206,7 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFl
 			PlayerMetricsService.RecordAutoclickerUnlocked(player)
 			AutoclickerAnalyticsService.RecordUnlocked(player, cost)
 		end
+		QuestService.OnUpgradePurchased(player, upgradeId)
 		return true, "Purchased " .. (config.DisplayName or upgradeId) .. "."
 	end
 
@@ -1272,6 +1273,8 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFl
 		end
 		StoryService.OnBuildingPlaced(player, upgradeId)
 		QuestService.OnBuildingPlaced(player, upgradeId)
+	else
+		QuestService.OnUpgradePurchased(player, upgradeId)
 	end
 
 	return true, "Purchased " .. (config.DisplayName or upgradeId) .. "."
