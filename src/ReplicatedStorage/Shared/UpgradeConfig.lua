@@ -358,8 +358,14 @@ local UpgradeConfig = {
 		InitialCount = 0,
 		TemplateKind = "BuildingUpgrade",
 		TargetBuilding = "Noob Clicker",
+		-- Level 1 unlocks at 5, not 10, deliberately out of step with every other building
+		-- upgrade line: this is the first upgrade a new player ever meets, inside the opening
+		-- quest arc, and 10 meant 284 cookies plus nine buy-and-place cycles at the arc's
+		-- weakest pacing point. 5 costs 84 and four placements. Level 2 keeps the 25 ladder.
+		-- The requirement, the nudge gate, the locked row's progress bar, and the quest copy
+		-- all read this one value, so it is the only place to change it.
 		Levels = {
-			{ Cost = 375, OutputMultiplier = 2, UnlockCount = 10 },
+			{ Cost = 375, OutputMultiplier = 2, UnlockCount = 5 },
 			{ Cost = 3750, OutputMultiplier = 2, UnlockCount = 25 },
 		},
 	},

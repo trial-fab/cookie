@@ -12,6 +12,8 @@ function QuestProgressPresentationCoordinator.new(config)
 		ApplySnapshot = config.ApplySnapshot,
 		ApplyCompletionAction = config.ApplyCompletionAction,
 		ShouldSuppressPresentation = config.ShouldSuppressPresentation,
+		PrepareRewardPresentation = config.PrepareRewardPresentation,
+		ResetRewardPresentation = config.ResetRewardPresentation,
 	}, QuestProgressPresentationCoordinator)
 end
 
@@ -22,6 +24,7 @@ function QuestProgressPresentationCoordinator:HandleEnvelope(envelope)
 	end
 	if result.SessionChanged and type(self.Queue.Reset) == "function" then
 		self.Queue:Reset(result.Snapshot)
+		if self.ResetRewardPresentation then self.ResetRewardPresentation() end
 	else
 		self.Queue:SetSnapshot(result.Snapshot)
 	end
@@ -42,6 +45,7 @@ function QuestProgressPresentationCoordinator:HandleEnvelope(envelope)
 	end
 	-- An empty list is a plain snapshot. No presentation event is synthesized.
 	if not self.ShouldSuppressPresentation or self.ShouldSuppressPresentation() ~= true then
+		if self.PrepareRewardPresentation then self.PrepareRewardPresentation(result.Transitions) end
 		self.Queue:Enqueue(result.Transitions)
 	end
 	return result

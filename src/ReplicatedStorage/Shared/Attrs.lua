@@ -147,6 +147,9 @@ return {
 	SelectedTitleId = "SelectedTitleId",
 	GoldenCookies = "GoldenCookies",
 	Gems = "Gems",
+	-- Client presentation value owned by the currency animator. Unlike Gems, this may
+	-- intentionally wait for an ordered reward flight before advancing.
+	DisplayedGems = "DisplayedGems",
 	-- Live Friend Boost projection (FriendBoostService owns both; session-only, never persisted).
 	-- Count is the raw number of linked friends present, which can exceed the paid cap; the
 	-- multiplier is the capped value production actually uses.

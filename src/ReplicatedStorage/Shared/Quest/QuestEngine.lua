@@ -149,12 +149,12 @@ local function evaluate(content, definition, instance, step, facts, state)
 	return result, phaseRank
 end
 
-local function captureEarly(content, state, cause)
+local function captureEvent(content, state, cause)
 	if cause.Kind == "FullReconcile" then
 		return
 	end
 	for _, entry in ipairs(content.TriggerIndex[cause.Kind] or {}) do
-		if entry.CaptureBeforeActive then
+		if entry.Captures then
 			local definition = content.DefinitionsById[entry.DefinitionId]
 			local instance = state.Instances[definition.InstanceId]
 			if not instance or not instance.Completed then
@@ -371,22 +371,19 @@ function QuestEngine.Interests(content, state, facts)
 			if instance and currentIndex <= #definition.Steps then
 				local currentStep = definition.Steps[currentIndex]
 				local module = content.Objectives.Get(currentStep.Objective.Kind)
-				for _, trigger in ipairs(module.Triggers) do
-					interests[trigger] = true
-				end
-				for _, trigger in ipairs(module.CopyTriggers) do
+				for _, trigger in ipairs(module.ActiveTriggers) do
 					interests[trigger] = true
 				end
 			end
 			for stepIndex = currentIndex, #definition.Steps do
 				local step = definition.Steps[stepIndex]
 				local module = content.Objectives.Get(step.Objective.Kind)
-				if module.CaptureBeforeActive then
+				if #module.CaptureTriggers > 0 then
 					local byStep = state.ObjectiveProgress[definition.InstanceId]
 					local progress = type(byStep) == "table" and byStep[step.Id] or {}
 					local result = content.Objectives.Evaluate(step.Objective, facts or {}, progress)
 					if not result or not result.Satisfied then
-						for _, trigger in ipairs(module.Triggers) do
+						for _, trigger in ipairs(module.CaptureTriggers) do
 							interests[trigger] = true
 						end
 					end
@@ -425,7 +422,7 @@ function QuestEngine.reduce(content, questState, facts, cause, sessionState)
 	local state = QuestSchema.CloneState(questState)
 	local session = clone(sessionState or {})
 	local transitions, effects = {}, {}
-	captureEarly(content, state, cause)
+	captureEvent(content, state, cause)
 	settle(content, state, facts, cause, session, transitions, effects)
 	selectTracked(content, state)
 	for _, emittedTransition in ipairs(transitions) do

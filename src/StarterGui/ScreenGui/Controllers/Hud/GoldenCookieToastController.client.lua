@@ -45,6 +45,7 @@ screenGui:SetAttribute("CurrencyRewardControllerRunning", true)
 local flightCompletedEvent = getEvent(screenGui, CurrencyRewardFlightConfig.CompletedEventName)
 local questStrikeCompletedEvent = getEvent(screenGui, CurrencyRewardFlightConfig.QuestStrikeCompletedEventName)
 local questV2RequestEvent = getEvent(screenGui, CurrencyRewardFlightConfig.QuestV2RequestEventName)
+local questV2ReservationEvent = getEvent(screenGui, CurrencyRewardFlightConfig.QuestV2ReservationEventName)
 
 local player = Players.LocalPlayer
 local leaderstats = player:WaitForChild("leaderstats")
@@ -162,6 +163,8 @@ local currencyState = {
 	},
 }
 
+local reservedQuestV2Gems = 0
+
 local function setDisplayed(currency, value, immediate)
 	local state = currencyState[currency]
 	value = math.max(0, math.floor(tonumber(value) or 0))
@@ -170,10 +173,28 @@ local function setDisplayed(currency, value, immediate)
 	end
 	state.displayInitialized = true
 	state.displayed = value
+	if currency == GEMS then screenGui:SetAttribute(Attrs.DisplayedGems, value) end
 	for _, binding in pairs(bindings[currency]) do
 		binding.setValue(value, immediate)
 	end
 end
+
+questV2ReservationEvent.Event:Connect(function(action, amount)
+	local state = currencyState[GEMS]
+	if action == "Reserve" then
+		amount = math.max(0, math.floor(tonumber(amount) or 0))
+		if amount <= 0 then return end
+		reservedQuestV2Gems += amount
+		-- Cancel the ordinary short correlation fallback. The ordered quest queue
+		-- now owns when this already-authoritative delta becomes visible.
+		state.positiveToken += 1
+	elseif action == "Reset" and reservedQuestV2Gems > 0 then
+		reservedQuestV2Gems = 0
+		state.positiveToken += 1
+		state.overrideRevision += 1
+		setDisplayed(GEMS, state.authoritative)
+	end
+end)
 
 for currency, state in pairs(currencyState) do
 	setDisplayed(currency, state.authoritative, true)
@@ -186,6 +207,11 @@ for currency, state in pairs(currencyState) do
 		if nextValue <= previous then
 			state.overrideRevision += 1
 			setDisplayed(currency, nextValue)
+			return
+		end
+		if currency == GEMS and reservedQuestV2Gems > 0 then
+			-- Quest reward presentation was reserved before (or in the same replication
+			-- turn as) this increase. Keep the old display until its flight arrives.
 			return
 		end
 
@@ -454,6 +480,17 @@ end)
 questV2RequestEvent.Event:Connect(function(amount, source, newTotal, sourceAnchor)
 	if type(source) ~= "string" or string.sub(source, 1, 9) ~= "quest-v2:" then
 		return
+	end
+	amount = math.max(0, math.floor(tonumber(amount) or 0))
+	if amount <= 0 then return end
+	if reservedQuestV2Gems > 0 then
+		reservedQuestV2Gems = math.max(0, reservedQuestV2Gems - amount)
+		local state = currencyState[GEMS]
+		-- If several flights were not coalesced, each lands on its own intermediate
+		-- total. The final flight consumes the reservation and reaches authority.
+		newTotal = reservedQuestV2Gems > 0
+			and math.max(state.displayed, state.authoritative - reservedQuestV2Gems)
+			or state.authoritative
 	end
 	enqueueEarn(GEMS, amount, source, newTotal, sourceAnchor)
 end)

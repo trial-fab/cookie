@@ -98,7 +98,7 @@ local copyContext = { FormatNumber = function(value) return tostring(math.floor(
 local shortfallCopy = assert(QuestCopy.Render(q5.Steps[2].Copy, shortfall, copyContext))
 local affordableCopy = assert(QuestCopy.Render(q5.Steps[2].Copy, affordable, copyContext))
 check("live boost price drives shortfall progress", shortfallCopy == "Earn 40 gems to buy a boost field. (25/40)", shortfallCopy)
-check("live boost price drives affordable instruction", affordableCopy == "Buy a Power Field or a Speed Field. (40 gems)", affordableCopy)
+check("live boost price drives affordable instruction", affordableCopy == "Buy a Power Field or a Speed Field for 40 gems.", affordableCopy)
 
 local isolatedAuthored = clone(Opening)
 isolatedAuthored.Arcs[1].QuestIds = { "powering_up" }
@@ -186,6 +186,21 @@ check("session replacement clears queued presentation state atomically",
 	string.find(PRESENTATION_QUEUE_SOURCE, "function QuestProgressPresentationQueue:Reset(snapshot)", 1, true)
 		and string.find(CLIENT_SOURCE, "if strikeVisual and metadata.SessionChanged then", 1, true)
 		and not string.find(CLIENT_SOURCE, "if strikeVisual and (metadata.SessionChanged or metadata.TransitionCount == 0)", 1, true))
+check("live currency progress is objective-owned and renderer-generic",
+	Objectives.Get("BuildingPlaced").LiveProgress.Source == "CookieBalance"
+		and Objectives.Get("BoostPurchased").LiveProgress.Source == "GemBalance"
+		and string.find(RENDERER_SOURCE, "ResolveLiveProgress", 1, true)
+		and not string.find(RENDERER_SOURCE, "CookieBalanceAtLeast", 1, true)
+		and not string.find(RENDERER_SOURCE, "BoostPurchased", 1, true))
+check("live currency presentation reacts without owning completion",
+	string.find(CLIENT_SOURCE, 'GetPropertyChangedSignal("Value")', 1, true)
+		and string.find(CLIENT_SOURCE, "GetAttributeChangedSignal(Attrs.Gems)", 1, true)
+		and string.find(CLIENT_SOURCE, "RefreshLiveProgress", 1, true))
+check("quest gem copy follows the held currency display without mutating event-time copy",
+	string.find(CURRENCY_CONTROLLER_SOURCE, "SetAttribute(Attrs.DisplayedGems", 1, true)
+		and string.find(CLIENT_SOURCE, "GetAttribute(Attrs.DisplayedGems)", 1, true)
+		and string.find(CLIENT_SOURCE, "GetAttributeChangedSignal(Attrs.DisplayedGems)", 1, true)
+		and string.find(RENDERER_SOURCE, "if replay or eventDisplay or completionInstanceId or barAwaitingPresentation then return end", 1, true))
 
 local forbidden = { "IN_PLACE_STRIKE_STEPS", "GATED_STEPS", "COOKIE_SAVING_STEPS", "CATCH_ROW_STEPS", "dynamicCopy" }
 local orchestration = table.concat({ QUEST_SERVICE_SOURCE, CLIENT_SOURCE, RENDERER_SOURCE, GUIDE_TARGET_SOURCE }, "\n")

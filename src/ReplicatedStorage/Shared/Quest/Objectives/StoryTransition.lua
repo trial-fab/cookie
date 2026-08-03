@@ -3,9 +3,8 @@ local Util = require(script.Parent.Util)
 local Objective = {
 	Kind = "StoryTransition",
 	ProgressMode = "CapturedFact",
-	Triggers = { "StoryAdvanced", "IntroCompleted" },
-	CopyTriggers = {},
-	CaptureBeforeActive = true,
+	ActiveTriggers = { "StoryAdvanced", "IntroCompleted" },
+	CaptureTriggers = { "StoryAdvanced", "IntroCompleted" },
 	Phases = { "Waiting", "Satisfied" },
 }
 

@@ -343,11 +343,13 @@ function QuestSchema.ValidateManifest(manifest, objectives, rewards)
 			definition.StepById[step.Id] = step
 			acceptedAnalyticsIds[QuestSchema.StepAnalyticsId(definition.InstanceId, step.Id)] = true
 			local indexedTriggers = {}
-			for _, trigger in ipairs(objectiveModule.Triggers) do
+			local captureTriggers = {}
+			for _, trigger in ipairs(objectiveModule.ActiveTriggers) do
 				indexedTriggers[trigger] = true
 			end
-			for _, trigger in ipairs(objectiveModule.CopyTriggers) do
+			for _, trigger in ipairs(objectiveModule.CaptureTriggers) do
 				indexedTriggers[trigger] = true
+				captureTriggers[trigger] = true
 			end
 			for trigger in pairs(indexedTriggers) do
 				local entries = triggerIndex[trigger]
@@ -361,7 +363,7 @@ function QuestSchema.ValidateManifest(manifest, objectives, rewards)
 					StepId = step.Id,
 					StepIndex = stepIndex,
 					ObjectiveKind = objectiveModule.Kind,
-					CaptureBeforeActive = objectiveModule.CaptureBeforeActive,
+					Captures = captureTriggers[trigger] == true,
 				})
 			end
 		end

@@ -59,6 +59,7 @@ TEXT_INPUTS = {
     "BOOST_FIELD_SOURCE": SRC / "ServerScriptService/Services/BoostFieldService.lua",
     "BOOST_PROMPTS_SOURCE": SRC / "StarterGui/ScreenGui/Controllers/BoostShop/BoostShopPrompts.lua",
     "GEM_SERVICE_SOURCE": SRC / "ServerScriptService/Services/GemService.lua",
+    "CURRENCY_CONTROLLER_SOURCE": SRC / "StarterGui/ScreenGui/Controllers/Hud/GoldenCookieToastController.client.lua",
     "PLAYER_DATA_SOURCE": SRC / "ServerScriptService/Services/PlayerDataService.lua",
     "REMOTE_NAMES_SOURCE": SRC / "ReplicatedStorage/Shared/RemoteNames.lua",
     "ECONOMY_SIM_SOURCE": ROOT / "tools/economy_sim.py",

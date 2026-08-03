@@ -3,9 +3,8 @@ local Util = require(script.Parent.Util)
 local Objective = {
 	Kind = "ManualOwnerClickCount",
 	ProgressMode = "CapturedFact",
-	Triggers = { "HealingProgressChanged" },
-	CopyTriggers = {},
-	CaptureBeforeActive = true,
+	ActiveTriggers = { "HealingProgressChanged" },
+	CaptureTriggers = { "HealingProgressChanged" },
 	Phases = { "Healing", "Satisfied" },
 }
 

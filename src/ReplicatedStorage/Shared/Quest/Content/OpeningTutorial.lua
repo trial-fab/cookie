@@ -59,7 +59,7 @@ local definitions = {
 			Enabled = true,
 			Terminal = localized("Quest.GooeyBeginning.Replay.Terminal", "Chapter replay complete."),
 			RewardLabel = localized("Quest.GooeyBeginning.Replay.RewardLabel", "Chapter Replay"),
-			RewardValue = localized("Quest.GooeyBeginning.Replay.RewardValue", "No Reward"),
+			RewardValue = localized("Quest.GooeyBeginning.Replay.RewardValue", "Already Earned"),
 		},
 		Presentation = tutorialPresentation,
 		Steps = {
@@ -97,10 +97,12 @@ local definitions = {
 				Id = "help_goo_recover",
 				Title = localized("Quest.GooeyBeginning.HelpGooRecover.Title", "Help the Goo Recover"),
 				Objective = { Kind = "ManualOwnerClickCount", Params = { Target = 5 } },
-				Copy = copy("Quest.GooeyBeginning.HelpGooRecover.Objective", "Tap the cookie 5 times to heal Goob.", {
+				-- "the goo", not "Goob": the name is first shown by the dialogue nameplate in
+				-- unlock_mixer, one step later. The card must not know it before the game says it.
+				Copy = copy("Quest.GooeyBeginning.HelpGooRecover.Objective", "Tap the cookie 5 times to heal the goo.", {
 					Variants = {
-						Keyboard = "Click the cookie 5 times to heal Goob.",
-						Gamepad = "Select the cookie 5 times to heal Goob.",
+						Keyboard = "Click the cookie 5 times to heal the goo.",
+						Gamepad = "Select the cookie 5 times to heal the goo.",
 					},
 					Tokens = { Current = CURRENT_TOKEN, Target = TARGET_TOKEN },
 					Progress = { Kind = "CountUp", Fallback = "({Current}/{Target})" },
@@ -172,7 +174,7 @@ local definitions = {
 		Order = 2,
 		Lifecycle = { Kind = "OneTime" },
 		RequiresDefinitionIds = { "gooey_beginning" },
-		Title = localized("Quest.MixerTraining.Title", "Mixer Training"),
+		Title = localized("Quest.MixerTraining.Title", "Mixing It Up"),
 		Help = { Enabled = true },
 		Presentation = tutorialPresentation,
 		Steps = {
@@ -232,7 +234,7 @@ local definitions = {
 			},
 			{
 				Id = "undo_a_purchase",
-				Title = localized("Quest.MixerTraining.UndoPurchase.Title", "Undo a Purchase"),
+				Title = localized("Quest.MixerTraining.UndoPurchase.Title", "Second Thoughts"),
 				Objective = { Kind = "BuildingSold", Params = { UpgradeId = "Any" } },
 				Copy = copy(
 					"Quest.MixerTraining.UndoPurchase.Objective",
@@ -253,7 +255,9 @@ local definitions = {
 				},
 			},
 		},
-		Rewards = { { SlotId = "mixer_training_gems", Kind = "Gems", Params = { Amount = 10 } } },
+		-- 5, not 10: four short actions, the arc's lightest quest. The split is effort-weighted
+		-- so the reward slope stops running against the effort slope. Total stays 40.
+		Rewards = { { SlotId = "mixer_training_gems", Kind = "Gems", Params = { Amount = 5 } } },
 	},
 	{
 		Id = "first_automation",
@@ -262,7 +266,7 @@ local definitions = {
 		Order = 3,
 		Lifecycle = { Kind = "OneTime" },
 		RequiresDefinitionIds = { "mixer_training" },
-		Title = localized("Quest.FirstAutomation.Title", "First Automation"),
+		Title = localized("Quest.FirstAutomation.Title", "Hands Off"),
 		Help = { Enabled = true },
 		Presentation = tutorialPresentation,
 		Steps = {
@@ -305,7 +309,7 @@ local definitions = {
 		Order = 4,
 		Lifecycle = { Kind = "OneTime" },
 		RequiresDefinitionIds = { "first_automation" },
-		Title = localized("Quest.UnderstandingUpgrades.Title", "Understanding Upgrades"),
+		Title = localized("Quest.UnderstandingUpgrades.Title", "Twice the Cookies"),
 		Help = { Enabled = true },
 		Presentation = tutorialPresentation,
 		Steps = {
@@ -361,8 +365,13 @@ local definitions = {
 				Id = "steady_hands",
 				Title = localized("Quest.UnderstandingUpgrades.SteadyHands.Title", "Steady Hands"),
 				Objective = { Kind = "UpgradePurchased", Params = { UpgradeId = "Noob Clicker Upgrades" } },
-				Copy = copy("Quest.UnderstandingUpgrades.SteadyHands.Objective", "Buy {Name} to double your Noob Clickers.", {
-					Tokens = { Name = NAME_TOKEN },
+				-- "double your Noob Clickers" read as doubling the count you own. The upgrade
+				-- doubles their output, which is also what the card's own description says.
+				Copy = copy("Quest.UnderstandingUpgrades.SteadyHands.Objective", "Buy {Name} to double {Building} output.", {
+					Tokens = {
+						Name = NAME_TOKEN,
+						Building = { Type = "UpgradeDisplayName", Value = "Noob Clicker" },
+					},
 				}),
 				Presentation = {
 					StepCompletion = "TutorialImmediateReveal",
@@ -377,7 +386,8 @@ local definitions = {
 				},
 			},
 		},
-		Rewards = { { SlotId = "understanding_upgrades_gems", Kind = "Gems", Params = { Amount = 5 } } },
+		-- 10, not 5: the arc's longest quest was paying its least. Swapped with mixer_training.
+		Rewards = { { SlotId = "understanding_upgrades_gems", Kind = "Gems", Params = { Amount = 10 } } },
 	},
 	{
 		Id = "powering_up",
@@ -386,7 +396,7 @@ local definitions = {
 		Order = 5,
 		Lifecycle = { Kind = "OneTime" },
 		RequiresDefinitionIds = { "understanding_upgrades" },
-		Title = localized("Quest.PoweringUp.Title", "Powering Up"),
+		Title = localized("Quest.PoweringUp.Title", "Field Trip"),
 		Help = { Enabled = true },
 		Presentation = tutorialPresentation,
 		Steps = {
@@ -418,12 +428,15 @@ local definitions = {
 					Kind = "BoostPurchased",
 					Params = { ItemIds = { "PowerField", "SpeedField" } },
 				},
-				Copy = copy("Quest.PoweringUp.BuyField.Objective", "Buy a Power Field or a Speed Field. ({Target} gems)", {
+				-- The price is stated inline, not as a trailing "(40 gems)": the player spent four
+				-- quests learning that a trailing parenthetical is progress toward a goal, and the
+				-- Shortfall phase below still owns that slot.
+				Copy = copy("Quest.PoweringUp.BuyField.Objective", "Buy a Power Field or a Speed Field for {Target} gems.", {
 					Tokens = { Current = CURRENT_TOKEN, Target = TARGET_TOKEN },
 					Phases = {
 						Shortfall = { Fallback = "Earn {Target} gems to buy a boost field." },
-						Affordable = { Fallback = "Buy a Power Field or a Speed Field. ({Target} gems)" },
-						Satisfied = { Fallback = "Buy a Power Field or a Speed Field. ({Target} gems)" },
+						Affordable = { Fallback = "Buy a Power Field or a Speed Field for {Target} gems." },
+						Satisfied = { Fallback = "Buy a Power Field or a Speed Field for {Target} gems." },
 					},
 					Progress = { Kind = "CountUp", Fallback = "({Current}/{Target})", Phases = { "Shortfall" } },
 				}),
@@ -485,7 +498,7 @@ return {
 				"powering_up",
 			},
 			DisplayQuestCount = 5,
-			Title = localized("Quest.OpeningTutorial.Title", "Getting Started"),
+			Title = localized("Quest.OpeningTutorial.Title", "First Batch"),
 			Reward = { DefinitionId = "powering_up", SlotId = "opening_tutorial_capstone" },
 		},
 	},

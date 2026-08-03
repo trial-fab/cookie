@@ -3,9 +3,8 @@ local Util = require(script.Parent.Util)
 local Objective = {
 	Kind = "BoostFieldDropped",
 	ProgressMode = "CapturedFact",
-	Triggers = { "BoostFieldDropped" },
-	CopyTriggers = {},
-	CaptureBeforeActive = true,
+	ActiveTriggers = { "BoostFieldDropped" },
+	CaptureTriggers = { "BoostFieldDropped" },
 	Phases = { "Waiting", "Satisfied" },
 }
 

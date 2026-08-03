@@ -1,4 +1,5 @@
 local DomainEvents = require(script.Parent.Parent.DomainEvents)
+local Util = require(script.Parent.Util)
 local StoryTransition = require(script.Parent.StoryTransition)
 local ManualOwnerClickCount = require(script.Parent.ManualOwnerClickCount)
 local BuildingPlaced = require(script.Parent.BuildingPlaced)
@@ -17,6 +18,11 @@ local PROGRESS_MODES = {
 	CapturedFact = true,
 	Accumulated = true,
 	ClientObservation = true,
+}
+
+local LIVE_PROGRESS_SOURCES = {
+	CookieBalance = true,
+	GemBalance = true,
 }
 
 local MODULES = {
@@ -57,6 +63,51 @@ local function validateTriggers(module, field)
 	end
 end
 
+local function triggerSet(values)
+	local result = {}
+	for _, trigger in ipairs(values) do result[trigger] = true end
+	return result
+end
+
+local function validateLiveProgress(module, phases)
+	local declaration = module.LiveProgress
+	if declaration == nil then return end
+	if type(declaration) ~= "table" then fail(module.Kind .. " has invalid LiveProgress") end
+	for key in pairs(declaration) do
+		if key ~= "Source" and key ~= "Phases" then
+			fail(module.Kind .. " LiveProgress has unknown field " .. tostring(key))
+		end
+	end
+	if not LIVE_PROGRESS_SOURCES[declaration.Source] then
+		fail(module.Kind .. " has unknown live progress source " .. tostring(declaration.Source))
+	end
+	if type(declaration.Phases) ~= "table" or #declaration.Phases < 1 or #declaration.Phases > 16 then
+		fail(module.Kind .. " has invalid live progress phases")
+	end
+	local seen = {}
+	for _, phase in ipairs(declaration.Phases) do
+		if type(phase) ~= "string" or not phases[phase] or seen[phase] then
+			fail(module.Kind .. " has unknown or duplicate live progress phase")
+		end
+		seen[phase] = true
+	end
+end
+
+local function validatePhaseSubset(module, field, phases)
+	local values = module[field]
+	if values == nil then return end
+	if type(values) ~= "table" or #values < 1 or #values > 16 then
+		fail(module.Kind .. " has invalid " .. field)
+	end
+	local seen = {}
+	for _, phase in ipairs(values) do
+		if type(phase) ~= "string" or not phases[phase] or seen[phase] then
+			fail(module.Kind .. " has unknown or duplicate " .. field .. " phase")
+		end
+		seen[phase] = true
+	end
+end
+
 for _, module in ipairs(MODULES) do
 	if type(module.Kind) ~= "string" or module.Kind == "" or byKind[module.Kind] then
 		fail("objective kinds must be unique non-empty strings")
@@ -71,14 +122,17 @@ for _, module in ipairs(MODULES) do
 	then
 		fail(module.Kind .. " is missing a registry function")
 	end
-	if type(module.CaptureBeforeActive) ~= "boolean" then
-		fail(module.Kind .. " needs CaptureBeforeActive")
+	validateTriggers(module, "ActiveTriggers")
+	validateTriggers(module, "CaptureTriggers")
+	local activeTriggerSet = triggerSet(module.ActiveTriggers)
+	for _, trigger in ipairs(module.CaptureTriggers) do
+		if not activeTriggerSet[trigger] then
+			fail(module.Kind .. " capture trigger is not active: " .. trigger)
+		end
 	end
-	if module.CaptureBeforeActive and type(module.Capture) ~= "function" then
-		fail(module.Kind .. " captures early without Capture")
+	if #module.CaptureTriggers > 0 and type(module.Capture) ~= "function" then
+		fail(module.Kind .. " declares capture triggers without Capture")
 	end
-	validateTriggers(module, "Triggers")
-	validateTriggers(module, "CopyTriggers")
 	local phases = {}
 	if type(module.Phases) ~= "table" or #module.Phases < 1 or #module.Phases > 16 then
 		fail(module.Kind .. " has invalid phases")
@@ -89,9 +143,11 @@ for _, module in ipairs(MODULES) do
 		end
 		phases[phase] = rank
 	end
+	validateLiveProgress(module, phases)
+	validatePhaseSubset(module, "ProgressBarPhases", phases)
 	phaseRanksByKind[module.Kind] = phases
 	byKind[module.Kind] = module
-	for _, trigger in ipairs(module.Triggers) do
+	for _, trigger in ipairs(module.ActiveTriggers) do
 		local kinds = triggerToKinds[trigger]
 		if not kinds then
 			kinds = {}
@@ -132,17 +188,25 @@ function Registry.ValidateKindContract(module)
 	if not PROGRESS_MODES[module.ProgressMode] then
 		return false, "invalid progress mode"
 	end
-	if type(module.Triggers) ~= "table" or type(module.CopyTriggers) ~= "table" then
+	if type(module.ActiveTriggers) ~= "table" or type(module.CaptureTriggers) ~= "table" then
 		return false, "invalid triggers"
 	end
-	for _, field in ipairs({ "Triggers", "CopyTriggers" }) do
+	local activeTriggers = {}
+	for _, field in ipairs({ "ActiveTriggers", "CaptureTriggers" }) do
 		local seen = {}
 		for _, trigger in ipairs(module[field]) do
 			if not DomainEvents.IsKnown(trigger) or seen[trigger] then
 				return false, "unknown or duplicate trigger"
 			end
 			seen[trigger] = true
+			if field == "ActiveTriggers" then activeTriggers[trigger] = true end
+			if field == "CaptureTriggers" and not activeTriggers[trigger] then
+				return false, "capture trigger is not active"
+			end
 		end
+	end
+	if #module.CaptureTriggers > 0 and type(module.Capture) ~= "function" then
+		return false, "missing capture function"
 	end
 	if type(module.Phases) ~= "table" or #module.Phases < 1 then
 		return false, "invalid phases"
@@ -154,7 +218,72 @@ function Registry.ValidateKindContract(module)
 		end
 		phases[phase] = true
 	end
+	if module.LiveProgress ~= nil then
+		if type(module.LiveProgress) ~= "table" or not LIVE_PROGRESS_SOURCES[module.LiveProgress.Source]
+			or type(module.LiveProgress.Phases) ~= "table" or #module.LiveProgress.Phases < 1
+		then
+			return false, "invalid live progress"
+		end
+		local seen = {}
+		for _, phase in ipairs(module.LiveProgress.Phases) do
+			if not phases[phase] or seen[phase] then return false, "invalid live progress phase" end
+			seen[phase] = true
+		end
+		for key in pairs(module.LiveProgress) do
+			if key ~= "Source" and key ~= "Phases" then return false, "invalid live progress field" end
+		end
+	end
+	if module.ProgressBarPhases ~= nil then
+		if type(module.ProgressBarPhases) ~= "table" or #module.ProgressBarPhases < 1 then
+			return false, "invalid progress bar phases"
+		end
+		local seen = {}
+		for _, phase in ipairs(module.ProgressBarPhases) do
+			if not phases[phase] or seen[phase] then return false, "invalid progress bar phase" end
+			seen[phase] = true
+		end
+	end
 	return true
+end
+
+function Registry.ShowsProgressBar(objective, projection)
+	local module = type(objective) == "table" and byKind[objective.Kind]
+	if module and module.ProgressBarPhases then
+		for _, phase in ipairs(module.ProgressBarPhases) do
+			if projection and projection.Phase == phase then return true end
+		end
+		return false
+	end
+	return (tonumber(projection and projection.Target) or 1) > 1
+end
+
+function Registry.ResolveLiveProgress(objective, projection, liveFacts)
+	local module = type(objective) == "table" and byKind[objective.Kind]
+	local declaration = module and module.LiveProgress
+	if not declaration or type(projection) ~= "table" or type(liveFacts) ~= "table" then return projection end
+	local enabled = false
+	for _, phase in ipairs(declaration.Phases) do
+		if projection.Phase == phase then
+			enabled = true
+			break
+		end
+	end
+	if not enabled then return projection end
+	local live = tonumber(liveFacts[declaration.Source])
+	local target = tonumber(projection.Target)
+	if not Util.finite(live) or not Util.finite(target) or target <= 0 then return projection end
+	local current = math.clamp(math.floor(live), 0, target)
+	if current == tonumber(projection.Current) then return projection end
+	local result = {}
+	for key, value in pairs(projection) do result[key] = value end
+	result.Current = current
+	result.ProgressFraction = nil
+	if type(projection.Tokens) == "table" then
+		result.Tokens = {}
+		for key, value in pairs(projection.Tokens) do result.Tokens[key] = value end
+		result.Tokens.Current = current
+	end
+	return result
 end
 
 function Registry.ValidateResult(kind, result)

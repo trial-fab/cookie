@@ -595,6 +595,7 @@ local function adapters(options)
 			if options.RewardMissing then return false end
 			if options.RewardPending then
 				pending.Reward = done
+				pending.RewardTransition = context.Transition
 				return function(reason) table.insert(trace, "reward:cancel:" .. tostring(reason)) end
 			end
 			done("completed")
@@ -709,6 +710,41 @@ fixtures.stage_c_ready_bootstrap_and_plain_publish = function()
 	})
 	coordinator:HandleEnvelope(protocolEnvelope("plain-session", 1, snapshot(0), {}))
 	check("plain coordinator republish invokes no ceremony adapter", snapshots == 1 and #trace == 0 and queue:IsIdle())
+
+	local prepared, resets, enqueued = 0, 0, 0
+	local rewardQueue = {
+		Reset = function() end,
+		SetSnapshot = function() end,
+		Enqueue = function(_, transitions) enqueued += #transitions end,
+	}
+	local rewardCoordinator = ProductionCoordinator.new({
+		Reducer = ProductionReducer.new({ Protocol = Protocol }),
+		Queue = rewardQueue,
+		PrepareRewardPresentation = function(transitions)
+			for _, transition in ipairs(transitions) do
+				if transition.Kind == "RewardGranted" then
+					prepared += transition.Projection.Amount
+				end
+			end
+		end,
+		ResetRewardPresentation = function() resets += 1 end,
+	})
+	rewardCoordinator:HandleEnvelope(protocolEnvelope(
+		"reward-reservation-session",
+		1,
+		snapshot(0),
+		{
+			rawTransition("RewardGranted", {
+				RewardSlotId = "fixture_gems",
+				RewardKind = "Gems",
+				Projection = { Amount = 10 },
+			}),
+		}
+	))
+	check(
+		"accepted rewards reserve their displayed delta before queueing",
+		prepared == 10 and resets == 1 and enqueued == 1
+	)
 end
 
 fixtures.stage_c_event_time_strike_and_guides = function()
@@ -921,24 +957,34 @@ fixtures.stage_c_reward_correlation_and_cascades = function()
 		completion("onetime:q1", "q1_gems"),
 		reward("onetime:q1", "q1_gems", 10),
 		completion("onetime:q2", "q2_gems"),
-		reward("onetime:q2", "q2_gems", 0),
+		reward("onetime:q2", "q2_gems", 5),
 	})
-	check("first correlated reward holds cascade presentation", pending.Reward ~= nil and not queue:IsIdle())
+	check(
+		"cascade completion strikes lead into one combined reward flight",
+		pending.Reward ~= nil
+			and not queue:IsIdle()
+			and pending.RewardTransition.InstanceId == "onetime:q2"
+			and pending.RewardTransition.Projection.Amount == 15
+	)
 	pending.Reward("completed")
 	check(
-		"cascade rewards are sequential and zero-value skips flight",
+		"same-turn cascade rewards are represented by the combined flight",
 		queue:IsIdle()
 			and joined(queue.State.PresentedRewards) == "onetime:q1/q1_gems | onetime:q2/q2_gems"
 			and queue.State.CompletionSignals["onetime:q1"]
 			and queue.State.CompletionSignals["onetime:q2"],
 		joined(trace)
 	)
-	local q1End, q2Begin
+	local q1End, q2Begin, combinedReward
 	for index, item in ipairs(trace) do
 		if item == "completion:end:onetime:q1" then q1End = index end
 		if item == "completion:begin:onetime:q2" then q2Begin = index end
+		if item == "reward:start:onetime:q2/q2_gems" then combinedReward = index end
 	end
-	check("second completion begins only after first correlated reward ends", q1End and q2Begin and q1End < q2Begin)
+	check(
+		"combined reward starts only after both completion sequences",
+		q1End and q2Begin and combinedReward and q1End < q2Begin and q2Begin < combinedReward
+	)
 
 	local missing = productionQueue("Standard", { RewardMissing = true })
 	missing:Enqueue({ completion("onetime:missing", "gems"), reward("onetime:missing", "gems", 5) })

@@ -3,9 +3,10 @@ local Util = require(script.Parent.Util)
 local Objective = {
 	Kind = "BuildingPlaced",
 	ProgressMode = "Canonical",
-	Triggers = { "BuildingPlaced", "BuildingCountChanged" },
-	CopyTriggers = { "CookieBalanceChanged" },
-	CaptureBeforeActive = true,
+	ActiveTriggers = { "BuildingPlaced", "BuildingCountChanged", "CookieBalanceChanged" },
+	CaptureTriggers = { "BuildingPlaced", "BuildingCountChanged" },
+	LiveProgress = { Source = "CookieBalance", Phases = { "Saving" } },
+	ProgressBarPhases = { "Saving" },
 	Phases = { "Saving", "Affordable", "WaitingForPlacement", "Satisfied" },
 }
 
@@ -40,8 +41,14 @@ function Objective.Evaluate(params, facts, progress)
 		Satisfied = satisfied,
 		Current = affordability and math.min(math.max(0, balance), target) or satisfied and 1 or 0,
 		Target = affordability and target or 1,
+		-- The bar tracks the cookies collected, so a full count reads as a full bar; the
+		-- copy flipping to "Place a {Name}" is what says the saving is done and an action
+		-- remains. This used to cap at 0.75 so a full bar could not imply a finished step,
+		-- which read as the placement silently owning the last quarter of the bar.
+		-- Still explicit rather than left to Current/Target: once satisfied, Current is the
+		-- balance AFTER paying, so the fallback would collapse the finished bar to nearly 0.
 		ProgressFraction = satisfied and 1
-			or affordability and math.clamp(balance / target, 0, 1) * 0.75
+			or affordability and math.clamp(balance / target, 0, 1)
 			or 0,
 		Phase = phase,
 		Tokens = {

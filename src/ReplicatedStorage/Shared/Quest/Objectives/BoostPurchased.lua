@@ -3,9 +3,9 @@ local Util = require(script.Parent.Util)
 local Objective = {
 	Kind = "BoostPurchased",
 	ProgressMode = "CapturedFact",
-	Triggers = { "BoostPurchased", "GemBalanceChanged" },
-	CopyTriggers = { "GemBalanceChanged" },
-	CaptureBeforeActive = true,
+	ActiveTriggers = { "BoostPurchased", "GemBalanceChanged" },
+	CaptureTriggers = { "BoostPurchased" },
+	LiveProgress = { Source = "GemBalance", Phases = { "Shortfall" } },
 	Phases = { "Shortfall", "Affordable", "Satisfied" },
 }
 
@@ -47,7 +47,9 @@ function Objective.Evaluate(_, facts, progress)
 		Satisfied = captured,
 		Current = current,
 		Target = target,
-		ProgressFraction = captured and 1 or math.clamp(current / target, 0, 1) * 0.75,
+		-- Full gem count reads as a full bar, matching BuildingPlaced: the bar tracks what
+		-- the player collected, and the copy carries the action that remains.
+		ProgressFraction = captured and 1 or math.clamp(current / target, 0, 1),
 		Phase = captured and "Satisfied" or balance >= target and "Affordable" or "Shortfall",
 		Tokens = { Current = current, Target = target },
 	}

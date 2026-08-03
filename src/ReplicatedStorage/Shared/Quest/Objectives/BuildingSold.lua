@@ -3,9 +3,8 @@ local Util = require(script.Parent.Util)
 local Objective = {
 	Kind = "BuildingSold",
 	ProgressMode = "CapturedFact",
-	Triggers = { "BuildingSold" },
-	CopyTriggers = {},
-	CaptureBeforeActive = true,
+	ActiveTriggers = { "BuildingSold" },
+	CaptureTriggers = { "BuildingSold" },
 	Phases = { "WaitingForSale", "Satisfied" },
 }
 

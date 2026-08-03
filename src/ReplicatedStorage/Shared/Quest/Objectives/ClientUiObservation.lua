@@ -4,9 +4,8 @@ local UiObservations = require(script.Parent.Parent.UiObservations)
 local Objective = {
 	Kind = "ClientUiObservation",
 	ProgressMode = "ClientObservation",
-	Triggers = { "UiObservation" },
-	CopyTriggers = {},
-	CaptureBeforeActive = true,
+	ActiveTriggers = { "UiObservation" },
+	CaptureTriggers = { "UiObservation" },
 	Phases = { "WaitingForObservation", "Satisfied" },
 }
 

@@ -28,6 +28,20 @@ local function rewardKey(transition)
 	return tostring(transition.InstanceId) .. "/" .. tostring(transition.RewardSlotId)
 end
 
+local function rewardPresentationKeys(transition)
+	return transition._PresentationRewardKeys or { rewardKey(transition) }
+end
+
+local function copyTransition(transition)
+	local result = {}
+	for key, value in pairs(transition) do result[key] = value end
+	if type(transition.Projection) == "table" then
+		result.Projection = {}
+		for key, value in pairs(transition.Projection) do result.Projection[key] = value end
+	end
+	return result
+end
+
 function QuestProgressPresentationQueue.new(config)
 	assert(type(config) == "table", "QuestProgressPresentationQueue config required")
 	assert(type(config.Policies) == "table", "presentation policy registry required")
@@ -257,6 +271,40 @@ function QuestProgressPresentationQueue:_currentContext(transition)
 	}
 end
 
+-- A single server turn may finish a blocked quest and then cascade through another
+-- quest whose facts were already satisfied. Both rewards are authoritative, but
+-- flying the first one before the remaining completion strikes makes the second
+-- flight look like a duplicate. Fold same-kind rewards from that stamped turn into
+-- the next reward; the last completion owns one flight for their combined amount.
+function QuestProgressPresentationQueue:_deferToCascadeReward(transition)
+	-- PresentReward currently animates currency only. Non-currency rewards keep their
+	-- individual identity even if a future adapter gives them a visual treatment.
+	if transition.PresentationMode == "Passive" or transition.RewardKind ~= "Gems" then return false end
+	for _, item in ipairs(self.Items) do
+		local candidate = item.Transition
+		if candidate.Kind == "RewardGranted"
+			and candidate.PresentationMode ~= "Passive"
+			and candidate.RewardKind == transition.RewardKind
+			and candidate.Revision == transition.Revision
+			and candidate.CauseTimestamp == transition.CauseTimestamp
+		then
+			local combined = copyTransition(candidate)
+			combined.Projection.Amount = math.max(0, tonumber(transition.Projection and transition.Projection.Amount) or 0)
+				+ math.max(0, tonumber(candidate.Projection and candidate.Projection.Amount) or 0)
+			combined._PresentationRewardKeys = {}
+			for _, key in ipairs(rewardPresentationKeys(transition)) do
+				table.insert(combined._PresentationRewardKeys, key)
+			end
+			for _, key in ipairs(rewardPresentationKeys(candidate)) do
+				table.insert(combined._PresentationRewardKeys, key)
+			end
+			item.Transition = combined
+			return true
+		end
+	end
+	return false
+end
+
 function QuestProgressPresentationQueue:_run(action)
 	local transition = action.Transition
 	local context = self:_currentContext(transition)
@@ -322,16 +370,17 @@ function QuestProgressPresentationQueue:_run(action)
 		self:_record("completion:end:" .. transition.InstanceId)
 		self:_syncAdapter("EndCompletion", context)
 	elseif action.Kind == "PresentReward" then
-		local key = rewardKey(transition)
+		local keys = rewardPresentationKeys(transition)
+		local key = table.concat(keys, "+")
 		local amount = tonumber(transition.Projection and transition.Projection.Amount)
 		if amount == 0 then
-			table.insert(self.State.PresentedRewards, key)
+			for _, presentedKey in ipairs(keys) do table.insert(self.State.PresentedRewards, presentedKey) end
 			self:_record("reward:zero:" .. key)
 			return
 		end
 		self:_record("reward:start:" .. key)
 		self:_adapter("PresentReward", context, "Reward", function(outcome)
-			table.insert(self.State.PresentedRewards, key)
+			for _, presentedKey in ipairs(keys) do table.insert(self.State.PresentedRewards, presentedKey) end
 			self:_record("reward:" .. tostring(outcome) .. ":" .. key)
 		end)
 	elseif action.Kind == "PresentPassive" then
@@ -407,16 +456,22 @@ function QuestProgressPresentationQueue:_actionsFor(transition, localOnly)
 		end
 		return actions
 	elseif transition.Kind == "RewardGranted" then
-		local actions = { { Kind = "PresentReward", Transition = transition } }
+		local deferred = self:_deferToCascadeReward(transition)
+		local actions = deferred and {} or { { Kind = "PresentReward", Transition = transition } }
 		local completion = self.Completion[transition.InstanceId]
 		if completion and completion.Remaining[transition.RewardSlotId] then
 			completion.Remaining[transition.RewardSlotId] = nil
 			if next(completion.Remaining) == nil then
 				table.insert(actions, { Kind = "EndCompletion", Transition = transition })
-				local successor = selectedStep(self.Snapshot)
-				if successor then
-					table.insert(actions, { Kind = "RenderCurrent", Transition = transition })
-					table.insert(actions, { Kind = "StartGuide", Transition = transition })
+				-- A deferred cascade reward is followed immediately by more ordered quest
+				-- presentation. Let that transition own its copy and guide instead of
+				-- briefly starting the final snapshot's guide between two strikes.
+				if not deferred then
+					local successor = selectedStep(self.Snapshot)
+					if successor then
+						table.insert(actions, { Kind = "RenderCurrent", Transition = transition })
+						table.insert(actions, { Kind = "StartGuide", Transition = transition })
+					end
 				end
 			end
 		end

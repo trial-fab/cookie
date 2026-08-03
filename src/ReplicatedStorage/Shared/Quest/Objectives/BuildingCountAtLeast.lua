@@ -3,9 +3,8 @@ local Util = require(script.Parent.Util)
 local Objective = {
 	Kind = "BuildingCountAtLeast",
 	ProgressMode = "Canonical",
-	Triggers = { "BuildingPlaced", "BuildingCountChanged", "BuildingSold" },
-	CopyTriggers = {},
-	CaptureBeforeActive = false,
+	ActiveTriggers = { "BuildingPlaced", "BuildingCountChanged", "BuildingSold" },
+	CaptureTriggers = {},
 	Phases = { "Collecting", "Satisfied" },
 }
 

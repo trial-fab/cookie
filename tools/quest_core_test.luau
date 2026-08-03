@@ -196,10 +196,75 @@ check("unknown trigger is rejected", DomainEvents.Validate("MadeUpEvent", {}, 1)
 check("objective kind contract rejects unknown triggers", not Objectives.ValidateKindContract({
 	Kind = "BadKind",
 	ProgressMode = "Canonical",
-	Triggers = { "MadeUpEvent" },
-	CopyTriggers = {},
+	ActiveTriggers = { "MadeUpEvent" },
+	CaptureTriggers = {},
 	Phases = { "Waiting" },
 }))
+check("objective kind contract rejects capture-only triggers", not Objectives.ValidateKindContract({
+	Kind = "BadCaptureKind",
+	ProgressMode = "CapturedFact",
+	ActiveTriggers = {},
+	CaptureTriggers = { "BuildingSold" },
+	Capture = function() return {} end,
+	Phases = { "Waiting" },
+}))
+check("objective kind contract rejects unknown live sources", not Objectives.ValidateKindContract({
+	Kind = "BadLiveKind",
+	ProgressMode = "Canonical",
+	ActiveTriggers = {},
+	CaptureTriggers = {},
+	LiveProgress = { Source = "MadeUpBalance", Phases = { "Waiting" } },
+	Phases = { "Waiting" },
+}))
+local liveSaving = Objectives.ResolveLiveProgress(
+	{ Kind = "BuildingPlaced", Params = { UpgradeId = "Noob Clicker", ShowAffordability = true } },
+	{
+		Satisfied = false,
+		Current = 4,
+		Target = 15,
+		ProgressFraction = 4 / 15,
+		Phase = "Saving",
+		Tokens = { Current = 4, Target = 15 },
+	},
+	{ CookieBalance = 9 }
+)
+check(
+	"live progress is objective-declared and presentation-only",
+	liveSaving.Current == 9 and liveSaving.ProgressFraction == nil and liveSaving.Tokens.Current == 9
+)
+local affordableProjection = {
+	Satisfied = false,
+	Current = 15,
+	Target = 15,
+	ProgressFraction = 1,
+	Phase = "Affordable",
+	Tokens = { Current = 15, Target = 15 },
+}
+check(
+	"live progress preserves transaction-safe undeclared phases",
+	Objectives.ResolveLiveProgress(
+		{ Kind = "BuildingPlaced", Params = { UpgradeId = "Noob Clicker", ShowAffordability = true } },
+		affordableProjection,
+		{ CookieBalance = 0 }
+	) == affordableProjection
+)
+check(
+	"BuildingPlaced progress bar belongs only to its saving phase",
+	Objectives.ShowsProgressBar(
+		{ Kind = "BuildingPlaced", Params = { UpgradeId = "Noob Clicker", ShowAffordability = true } },
+		liveSaving
+	)
+		and not Objectives.ShowsProgressBar(
+			{ Kind = "BuildingPlaced", Params = { UpgradeId = "Noob Clicker", ShowAffordability = true } },
+			affordableProjection
+		)
+)
+local boostModule = Objectives.Get("BoostPurchased")
+check(
+	"active and durable capture triggers remain distinct",
+	table.find(boostModule.ActiveTriggers, "GemBalanceChanged") ~= nil
+		and table.find(boostModule.CaptureTriggers, "GemBalanceChanged") == nil
+)
 check("structured result rejects undeclared phases", not Objectives.ValidateResult("BuildingSold", {
 	Satisfied = false,
 	Current = 0,

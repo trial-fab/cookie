@@ -3,11 +3,11 @@ local Util = require(script.Parent.Util)
 local Objective = {
 	Kind = "CookieBalanceAtLeast",
 	ProgressMode = "Canonical",
-	Triggers = { "CookieBalanceChanged", "UpgradePurchased" },
 	-- Building purchases publish their committed placement after the pending
 	-- deduction; re-evaluate live balance copy at that resolution boundary.
-	CopyTriggers = { "CookieBalanceChanged", "BuildingPlaced" },
-	CaptureBeforeActive = false,
+	ActiveTriggers = { "CookieBalanceChanged", "UpgradePurchased", "BuildingPlaced" },
+	CaptureTriggers = {},
+	LiveProgress = { Source = "CookieBalance", Phases = { "Saving" } },
 	Phases = { "Saving", "Affordable", "Owned" },
 }
 

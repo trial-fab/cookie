@@ -3,9 +3,8 @@ local Util = require(script.Parent.Util)
 local Objective = {
 	Kind = "UpgradePurchased",
 	ProgressMode = "Canonical",
-	Triggers = { "UpgradePurchased" },
-	CopyTriggers = {},
-	CaptureBeforeActive = true,
+	ActiveTriggers = { "UpgradePurchased" },
+	CaptureTriggers = { "UpgradePurchased" },
 	Phases = { "WaitingForPurchase", "Satisfied" },
 }
 

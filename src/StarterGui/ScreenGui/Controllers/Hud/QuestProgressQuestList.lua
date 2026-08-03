@@ -13,6 +13,7 @@ local UiMotion = require(ReplicatedStorage.Shared.UiMotion)
 local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
 
 local QuestProgressQuestList = {}
+
 local SELECTED_COLOR = Color3.fromRGB(0, 170, 255)
 local UNSELECTED_COLOR = Color3.fromRGB(232, 232, 236)
 local OPEN_INFO = TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
@@ -62,6 +63,7 @@ end
 function QuestProgressQuestList.bind(root, config)
 	config = config or {}
 	local content = assert(config.Content, "quest renderer needs canonical content")
+	local getLiveFacts = type(config.GetLiveFacts) == "function" and config.GetLiveFacts or nil
 	local revealClip = child(root, "QuestRevealClip", "Frame")
 	local questList = child(revealClip, "QuestList", "Frame")
 	local trackedRow = child(questList, "QuestRow01", "Frame")
@@ -111,7 +113,14 @@ function QuestProgressQuestList.bind(root, config)
 	local arcTween
 	local questProgressTween
 	local rewardTooltipRegistration
-	local lastProgressByInstance = {}
+	-- QuestProgressPresentationCoordinator publishes the advanced snapshot BEFORE it
+	-- enqueues the transitions that present the step the player just finished. So a
+	-- completing step always renders one pass showing the NEXT step's progress, and the
+	-- bar tweened down toward it before the ceremony tweened it back to full. Hold the bar
+	-- across that gap; the ordered presentation below releases it. (The old whole-quest bar
+	-- hid this behind a monotonic high-water table, which also blocked the honest backwards
+	-- movement when a player spends what they were saving.)
+	local barAwaitingPresentation = false
 	local openPosition = questList:GetAttribute("OpenPosition")
 	local closedPosition = questList:GetAttribute("ClosedPosition")
 	local arcOpenPosition = arcHeader and arcHeader:GetAttribute("OpenPosition")
@@ -146,31 +155,29 @@ function QuestProgressQuestList.bind(root, config)
 		return rendered or ""
 	end
 
-	local function instanceProgress(instance, projection, projectedStepIndex, completeProjectedStep)
-		if not instance then return 0 end
-		-- A snapshot may already contain the completed quest while its ordered
-		-- transition ceremony is still draining. In that case the transition owns
-		-- the displayed step boundary; completion only forces 100% for convergent
-		-- snapshot rendering.
-		if instance.Completed and projectedStepIndex == nil then return 1 end
-		local within = 0
-		if completeProjectedStep then
-			within = 1
-		else
-			local declared = tonumber(projection and projection.ProgressFraction)
-			local current = tonumber(projection and projection.Current)
-			local target = tonumber(projection and projection.Target)
-			if declared then
-				within = math.clamp(declared, 0, 1)
-			elseif current and target and target > 0 then
-				within = math.clamp(current / target, 0, 1)
-			end
-		end
-		local stepIndex = tonumber(projectedStepIndex) or tonumber(instance.StepIndex) or 1
-		local value = math.clamp(((stepIndex - 1) + within) / math.max(1, instance.StepCount), 0, 1)
-		local high = math.max(lastProgressByInstance[instance.InstanceId] or 0, value)
-		lastProgressByInstance[instance.InstanceId] = high
-		return high
+	-- The straight bar is the CURRENT STEP's own 0..1, not the quest's. Overall progress is
+	-- the ring's job, and a bar that crawled a fraction of a step's share was the least
+	-- useful of the three signals on screen. Objectives can narrow it to counted phases
+	-- when one objective transitions from accumulating a count to a binary action.
+	local function isCountedStep(step, projection)
+		if not (step and step.Objective) then return false end
+		return content.Objectives.ShowsProgressBar(step.Objective, projection)
+	end
+
+	-- Objective kinds explicitly declare any non-authoritative live count they present.
+	-- The shared registry resolves that contract so this renderer never needs a kind table.
+	local function resolveLiveProgress(step, projection)
+		if not (getLiveFacts and step and step.Objective and projection) then return projection end
+		return content.Objectives.ResolveLiveProgress(step.Objective, projection, getLiveFacts())
+	end
+
+	local function stepProgress(projection)
+		local declared = tonumber(projection and projection.ProgressFraction)
+		if declared then return math.clamp(declared, 0, 1) end
+		local current = tonumber(projection and projection.Current)
+		local target = tonumber(projection and projection.Target)
+		if current and target and target > 0 then return math.clamp(current / target, 0, 1) end
+		return 0
 	end
 
 	local function arcProgress(arc, instance)
@@ -258,7 +265,7 @@ function QuestProgressQuestList.bind(root, config)
 			local reward = arcReward(definitionArc)
 			line.Visible = arc ~= nil and reward ~= nil and showReward == true
 			local resolved = reward and reward.Projection.Resolved ~= false
-			setText(child(line, "ArcRewardLabel", "TextLabel", true), reward and (resolved and reward.Granted and "Unlocked" or "Arc Reward") or "")
+			setText(child(line, "ArcRewardLabel", "TextLabel", true), reward and (resolved and reward.Granted and "Unlocked" or "Quest Reward") or "")
 			setText(child(line, "RewardName", "TextLabel", true), reward and (resolved and reward.Projection.DisplayName
 				or reward.Projection.MysteryDisplayName or reward.RewardKind) or "")
 			local silhouette = child(line, "RewardSilhouette", "ImageLabel", true)
@@ -277,14 +284,18 @@ function QuestProgressQuestList.bind(root, config)
 			getContent = function()
 				local instance = displayInstance()
 				local arc = instance and findArc(snapshot, instance.ArcId) or snapshot and snapshot.Arcs[1]
-				local reward = arcReward(definitionArcFor(arc))
+				local definitionArc = definitionArcFor(arc)
+				local reward = arcReward(definitionArc)
 				local projection = reward and reward.Projection or {}
 				local resolved = projection.Resolved ~= false
 				local name = resolved and projection.DisplayName or projection.MysteryDisplayName
+				-- This reward is granted by the arc's final quest, not the tracked one.
+				local arcTitle = definitionArc and QuestCopy.ResolveLocalized(definitionArc.Title, copyContext())
 				return {
 					mode = "Hint",
-					title = tostring(name or reward and reward.RewardKind or "Arc Reward") .. ":",
-					description = "Unlock by completing this quest.",
+					title = tostring(name or reward and reward.RewardKind or "Quest Reward") .. ":",
+					description = arcTitle and ("Complete every quest in %s to unlock."):format(arcTitle)
+						or "Complete every quest in this line to unlock.",
 				}
 			end,
 		})
@@ -407,25 +418,7 @@ function QuestProgressQuestList.bind(root, config)
 		end
 	end
 
-	local function render()
-		if replay then
-			root.Visible = true
-			setText(trackedTitle, replay.Title)
-			setText(trackedDescription, replay.Description)
-			rewardStrip.Visible = false
-			if questProgressFill then
-				questProgressFill.Size = UDim2.fromScale(math.clamp(replay.Progress or 0, 0, 1), 1)
-			end
-			local selected = selectedInstance(snapshot)
-			local arc = selected and findArc(snapshot, selected.ArcId) or snapshot and snapshot.Arcs[1]
-			root:SetAttribute("Progress", arcProgress(arc, selected))
-			trackedRow.Visible = not selectorOpen
-			return
-		end
-		local instance = displayInstance()
-		root.Visible = instance ~= nil
-		trackedRow.Visible = not selectorOpen and instance ~= nil
-		if not instance then return end
+	local function renderTrackedCard(instance)
 		local definition = content.DefinitionsById[instance.DefinitionId]
 		local projection = instance.CurrentStep.Projection
 		local definitionId = instance.DefinitionId
@@ -467,24 +460,52 @@ function QuestProgressQuestList.bind(root, config)
 			local rendered = QuestCopy.Render(step.LocalProgress.Card, projection, copyContext())
 			setText(trackedDescription, rendered or "")
 		else
+			projection = resolveLiveProgress(step, projection)
 			setText(trackedDescription, renderDescription(definitionId, stepId, projection))
 		end
 		setText(trackedTitle, definition and QuestCopy.ResolveLocalized(definition.Title, copyContext()) or instance.QuestId)
-		local progress = instanceProgress(
-			instance,
-			projection,
-			eventDisplay and eventDisplay.StepIndex,
-			eventDisplay ~= nil and projection.Satisfied == true
-		)
-		if questProgressFill then
+		local counted = isCountedStep(step, projection)
+		if questProgressBar and not barAwaitingPresentation then questProgressBar.Visible = counted end
+		if questProgressFill and not barAwaitingPresentation then
 			if questProgressTween then questProgressTween:Cancel() end
-			questProgressTween = UiMotion.create(
-				questProgressFill,
-				TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ Size = UDim2.fromScale(progress, 1) }
-			)
-			questProgressTween:Play()
+			if counted then
+				questProgressTween = UiMotion.create(
+					questProgressFill,
+					TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+					{ Size = UDim2.fromScale(stepProgress(projection), 1) }
+				)
+				questProgressTween:Play()
+			else
+				-- Snap empty while hidden so the next counted step starts from zero instead
+				-- of animating down from the previous step's fill on its first visible frame.
+				questProgressFill.Size = UDim2.fromScale(0, 1)
+			end
 		end
+	end
+
+	local function render()
+		if replay then
+			root.Visible = true
+			setText(trackedTitle, replay.Title)
+			setText(trackedDescription, replay.Description)
+			rewardStrip.Visible = false
+			-- Replay carries its own whole-chapter progress rather than a step count, so the
+			-- bar stays visible here and keeps showing that.
+			if questProgressBar then questProgressBar.Visible = true end
+			if questProgressFill then
+				questProgressFill.Size = UDim2.fromScale(math.clamp(replay.Progress or 0, 0, 1), 1)
+			end
+			local selected = selectedInstance(snapshot)
+			local arc = selected and findArc(snapshot, selected.ArcId) or snapshot and snapshot.Arcs[1]
+			root:SetAttribute("Progress", arcProgress(arc, selected))
+			trackedRow.Visible = not selectorOpen
+			return
+		end
+		local instance = displayInstance()
+		root.Visible = instance ~= nil
+		trackedRow.Visible = not selectorOpen and instance ~= nil
+		if not instance then return end
+		renderTrackedCard(instance)
 		local arc = findArc(snapshot, instance.ArcId)
 		root:SetAttribute("Progress", arcProgress(arc, instance))
 		renderArcHeader(arcHeader, arc, true)
@@ -562,7 +583,11 @@ function QuestProgressQuestList.bind(root, config)
 
 	return {
 		ApplySnapshot = function(nextSnapshot, metadata)
-			if metadata and metadata.SessionChanged then table.clear(lastProgressByInstance) end
+			-- Transitions accompanying this snapshot mean a presentation is coming for the
+			-- step being left behind; no transitions means this snapshot IS the current
+			-- state and the bar should track it (which also releases a hold that a
+			-- suppressed presentation queue would otherwise strand).
+			barAwaitingPresentation = (tonumber(metadata and metadata.TransitionCount) or 0) > 0
 			snapshot = nextSnapshot
 			if localProgress then
 				local selected = selectedInstance(snapshot)
@@ -572,6 +597,7 @@ function QuestProgressQuestList.bind(root, config)
 		end,
 		RenderEvent = function(context)
 			local transition = context.Transition or {}
+			barAwaitingPresentation = false
 			eventDisplay = {
 				Kind = transition.Kind,
 				InstanceId = transition.InstanceId,
@@ -583,8 +609,16 @@ function QuestProgressQuestList.bind(root, config)
 			render()
 		end,
 		RenderCurrent = function()
+			barAwaitingPresentation = false
 			eventDisplay = nil
 			render()
+		end,
+		RefreshLiveProgress = function()
+			-- Ordered event copy is frozen at event time. Replacing its text beneath an
+			-- active strike would desynchronize the overlay geometry and ceremony.
+			if replay or eventDisplay or completionInstanceId or barAwaitingPresentation then return end
+			local instance = not replay and displayInstance() or nil
+			if instance then renderTrackedCard(instance) end
 		end,
 		BeginCompletion = function(context)
 			completionInstanceId = context.Transition and context.Transition.InstanceId
@@ -599,10 +633,10 @@ function QuestProgressQuestList.bind(root, config)
 			render()
 		end,
 		ResetPresentation = function()
+			barAwaitingPresentation = false
 			eventDisplay = nil
 			completionInstanceId = nil
 			localProgress = nil
-			table.clear(lastProgressByInstance)
 		end,
 		SetLocalProgress = function(stepId, current, target)
 			target = math.max(1, math.floor(tonumber(target) or 1))

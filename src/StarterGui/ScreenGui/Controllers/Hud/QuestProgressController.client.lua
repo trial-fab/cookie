@@ -49,12 +49,67 @@ local position = QuestProgressPosition.bind(root)
 local ring = QuestProgressPresenter.bind(root)
 local mixerUnlockVisual = QuestProgressMixerUnlockVisual.new(screenGui, root)
 local renderer
+
+-- Presentation-only facts use the same replicated sources as the currency HUD. Objective
+-- modules decide whether a phase consumes one; completion remains server-owned.
+local function getLiveFacts()
+	local stats = player:FindFirstChild("leaderstats")
+	local cookies = stats and stats:FindFirstChild("Cookies")
+	return {
+		CookieBalance = cookies and cookies:IsA("ValueBase") and tonumber(cookies.Value) or nil,
+		-- Quest copy follows the number the player can actually see. The currency
+		-- controller may hold it behind an ordered reward flight even though the
+		-- authoritative player attribute has already advanced safely.
+		GemBalance = tonumber(screenGui:GetAttribute(Attrs.DisplayedGems))
+			or tonumber(player:GetAttribute(Attrs.Gems)),
+	}
+end
+
 renderer = QuestProgressQuestList.bind(root, {
 	Content = Content,
+	GetLiveFacts = getLiveFacts,
 	OnSelectInstance = function(instanceId) Net.fireServer(Net.Names.QuestSelectV2, instanceId) end,
 	OnSetHideCompleted = function(hidden) Net.fireServer(Net.Names.QuestPreferenceV2, hidden) end,
 })
 if not renderer then return end
+
+local liveProgressConnections = {}
+local observedCookies
+local cookieValueConnection
+local function refreshLiveProgress()
+	if renderer and type(renderer.RefreshLiveProgress) == "function" then renderer.RefreshLiveProgress() end
+end
+local function bindCookieValue()
+	local stats = player:FindFirstChild("leaderstats")
+	local cookies = stats and stats:FindFirstChild("Cookies")
+	if not (cookies and cookies:IsA("ValueBase")) then cookies = nil end
+	if cookies == observedCookies then return end
+	if cookieValueConnection then
+		cookieValueConnection:Disconnect()
+		cookieValueConnection = nil
+	end
+	observedCookies = cookies
+	if observedCookies then
+		cookieValueConnection = observedCookies:GetPropertyChangedSignal("Value"):Connect(refreshLiveProgress)
+	end
+	refreshLiveProgress()
+end
+table.insert(liveProgressConnections, player.DescendantAdded:Connect(function(descendant)
+	if descendant.Name == "leaderstats" or descendant.Name == "Cookies" then bindCookieValue() end
+end))
+table.insert(liveProgressConnections, player.DescendantRemoving:Connect(function(descendant)
+	if descendant == observedCookies then
+		if cookieValueConnection then
+			cookieValueConnection:Disconnect()
+			cookieValueConnection = nil
+		end
+		observedCookies = nil
+		refreshLiveProgress()
+	end
+end))
+table.insert(liveProgressConnections, player:GetAttributeChangedSignal(Attrs.Gems):Connect(refreshLiveProgress))
+table.insert(liveProgressConnections, screenGui:GetAttributeChangedSignal(Attrs.DisplayedGems):Connect(refreshLiveProgress))
+bindCookieValue()
 
 local targetAdapter = QuestProgressGuideTargets.new(screenGui, root)
 local guides = QuestProgressGuideKinds.new({
@@ -85,6 +140,7 @@ local function getEvent(name)
 end
 
 local rewardRequested = getEvent(CurrencyRewardFlightConfig.QuestV2RequestEventName)
+local rewardReserved = getEvent(CurrencyRewardFlightConfig.QuestV2ReservationEventName)
 local rewardCompleted = getEvent(CurrencyRewardFlightConfig.CompletedEventName)
 local rewards = {
 	Present = function(context, done)
@@ -174,6 +230,21 @@ coordinator = QuestProgressPresentationCoordinator.new({
 	Reducer = reducer,
 	Queue = queue,
 	ShouldSuppressPresentation = function() return replayActive end,
+	PrepareRewardPresentation = function(transitions)
+		local amount = 0
+		for _, transition in ipairs(transitions or {}) do
+			if transition.Kind == "RewardGranted"
+				and transition.RewardKind == "Gems"
+				and transition.PresentationMode ~= "Passive"
+			then
+				amount += math.max(0, math.floor(tonumber(transition.Projection and transition.Projection.Amount) or 0))
+			end
+		end
+		if amount > 0 then rewardReserved:Fire("Reserve", amount) end
+	end,
+	ResetRewardPresentation = function()
+		rewardReserved:Fire("Reset")
+	end,
 	ApplyCompletionAction = function(transition, snapshot)
 		completionActions:Run({ Transition = transition, Snapshot = snapshot })
 	end,
@@ -290,6 +361,7 @@ local controller = QuestProgressV2Controller.new({
 controller:Start()
 
 script.Destroying:Connect(function()
+	rewardReserved:Fire("Reset")
 	controller:Stop()
 	disconnectObservationSender()
 	observations.destroy()
@@ -300,5 +372,7 @@ script.Destroying:Connect(function()
 	if ring then ring.destroy() end
 	if position then position.destroy() end
 	if mixerUnlockVisual then mixerUnlockVisual.destroy() end
+	if cookieValueConnection then cookieValueConnection:Disconnect() end
+	for _, connection in ipairs(liveProgressConnections) do connection:Disconnect() end
 	renderer.destroy()
 end)
