@@ -417,7 +417,9 @@ local definitions = {
 						Kind = "OffscreenWorldTarget",
 						TargetId = "SignAnchor",
 						Style = "HighlightPointer",
-						Frame = "WorldPointer",
+						-- The stall is a long walk across the crater, not something to point at
+						-- from a screen edge: this step lays an arrow trail to it instead.
+						Frame = "WorldTrail",
 					},
 				},
 			},

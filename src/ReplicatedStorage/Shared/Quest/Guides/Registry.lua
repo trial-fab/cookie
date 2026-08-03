@@ -19,6 +19,9 @@ local FRAMES = {
 	CookieHighlight = true,
 	CatchPulse = true,
 	WorldPointer = true,
+	-- Ground-following arrow trail from the player to a world target. Only meaningful on the
+	-- world guide kinds; other kinds fall back to the flat pointer.
+	WorldTrail = true,
 }
 
 local STYLES = {

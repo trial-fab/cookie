@@ -10,6 +10,7 @@ local Workspace = game:GetService("Workspace")
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
 local BoostShopConfig = require(ReplicatedStorage.Shared.BoostShopConfig)
 local GuiNames = require(ReplicatedStorage.Shared.GuiNames)
+local QuestGuideWorldTrail = require(script.Parent.QuestGuideWorldTrail)
 local StoreShell = require(ReplicatedStorage.Shared.StoreShell)
 local UiMotion = require(ReplicatedStorage.Shared.UiMotion)
 
@@ -78,6 +79,7 @@ function QuestProgressGuideTargets.new(screenGui, root)
 	local activeTween
 	local catchState
 	local authoredZ = root.ZIndex
+	local trail = QuestGuideWorldTrail.new()
 
 	if pointer and pointer:IsA("GuiObject") then pointer.Visible = false end
 	if cookieHighlight and cookieHighlight:IsA("Highlight") then cookieHighlight.Enabled = false end
@@ -85,6 +87,7 @@ function QuestProgressGuideTargets.new(screenGui, root)
 	local function stopVisual()
 		if activeConnection then activeConnection:Disconnect(); activeConnection = nil end
 		if activeTween then activeTween:Cancel(); activeTween = nil end
+		trail.Stop()
 		if catchState and catchState.Instance.Parent then
 			catchState.Instance.BackgroundColor3 = catchState.Color
 			catchState.Instance.BackgroundTransparency = catchState.Transparency
@@ -253,6 +256,14 @@ function QuestProgressGuideTargets.new(screenGui, root)
 			cookieHighlight.OutlineTransparency = 0
 			cookieHighlight.Enabled = true
 		end
+		-- A world target far enough to walk to is guided entirely by the ground arrow trail. The
+		-- flat pointer is not wired at all for these steps, so nothing pins itself to the screen
+		-- edge while the arrows are doing the job.
+		if node.Frame == "WorldTrail" and descriptor.Kind == "World" then
+			trail.Start(descriptor.Value)
+			return stopVisual
+		end
+
 		if not (pointer and pointer:IsA("GuiObject")) then return nil end
 		local function place()
 			if screenGui:GetAttribute(Attrs.CompactModalActive) == true then pointer.Visible = false; return end
@@ -279,7 +290,10 @@ function QuestProgressGuideTargets.new(screenGui, root)
 			local connection = RunService.RenderStepped:Connect(callback)
 			return function() connection:Disconnect() end
 		end,
-		Destroy = stopVisual,
+		Destroy = function()
+			stopVisual()
+			trail.Destroy()
+		end,
 	}
 end
 
