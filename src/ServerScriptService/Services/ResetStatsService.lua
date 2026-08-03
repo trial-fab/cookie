@@ -6,11 +6,13 @@ local BoostShopService = require(ServerScriptService.Services.BoostShopService)
 local CookieService = require(ServerScriptService.Services.CookieService)
 local FloorService = require(ServerScriptService.Services.FloorService)
 local GemService = require(ServerScriptService.Services.GemService)
+local GooSkinService = require(ServerScriptService.Services.GooSkinService)
 local PlayerDataService = require(ServerScriptService.Services.PlayerDataService)
 local QuestService = require(ServerScriptService.Services.QuestService)
 local ShieldService = require(ServerScriptService.Services.ShieldService)
 local StoryService = require(ServerScriptService.Services.StoryService)
 local UpgradeService = require(ServerScriptService.Services.UpgradeService)
+local GooSkinConfig = require(game:GetService("ReplicatedStorage").Shared.GooSkinConfig)
 
 local ResetStatsService = {}
 
@@ -69,8 +71,7 @@ function ResetStatsService.ResetOnboardingForDevelopment(player)
 	-- These canonical persistent mutations are grouped without yielding. World/projection
 	-- resynchronization happens afterward through the existing run-reset path.
 	if
-		not QuestService.ResetForDevelopment(player)
-		or not StoryService.ResetForDevelopment(player)
+		not StoryService.ResetForDevelopment(player)
 		or GemService.SetGems(player, 0) == nil
 		-- Charges bought with those test gems go with them, so a dev reset returns the player to
 		-- a clean pre-purchase state instead of leaving stock behind. Fields already dropped go
@@ -80,11 +81,14 @@ function ResetStatsService.ResetOnboardingForDevelopment(player)
 	then
 		return false
 	end
+	-- The opening capstone is earned progression, not a paid entitlement.
+	GooSkinService.RevokeEarnedSkinForDevelopment(player, GooSkinConfig.OpeningQuestSkinId)
 	if not ResetStatsService.ResetPlayer(player) then
 		return false
 	end
-	QuestService.SetupPlayer(player)
-	return true
+	-- Reconcile only after story/run/currency/charges are clean, otherwise a quest
+	-- reset would immediately backfill from the pre-reset canonical state.
+	return QuestService.ResetForDevelopment(player)
 end
 
 function ResetStatsService.Init()

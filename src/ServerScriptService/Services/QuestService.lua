@@ -1,952 +1,390 @@
--- QuestService — authoritative quest progression for the Getting Started arc.
---
--- Definition-driven: QuestDefinitions declares each step's ObjectiveKind/Target and this
--- service owns one resolver per kind. Adding a quest is a definitions change plus, at
--- most, one new resolver and the domain hook that feeds it.
---
--- Two rules shape the design:
---   1. Facts, not counters. Progress is derived from canonical state plus a bounded
---      ledger of demonstrated facts, so a player who did something early is credited and
---      a reconnect cannot lose progress.
---   2. Steps never un-complete. Some objectives are non-monotonic (owning two buildings
---      stops being true when one is sold), so the persisted step index is a high-water
---      mark and the derived index can only push it forward.
+-- Thin production orchestrator for the universal protocol-v2 quest system.
+-- Gameplay services publish committed outcomes through NotifyDomain; this module
+-- owns composition, fresh quest persistence, validated client ingress, and transport.
 
+local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local QuestDefinitions = require(ReplicatedStorage.Shared.QuestDefinitions)
-local Net = require(ReplicatedStorage.Shared.Net)
-local NumberFormat = require(ReplicatedStorage.Shared.NumberFormat)
-local StoryConfig = require(ReplicatedStorage.Shared.StoryConfig)
-local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
-local UpgradePricing = require(ReplicatedStorage.Shared.UpgradePricing)
+local Shared = ReplicatedStorage.Shared
+local BoostShopConfig = require(Shared.BoostShopConfig)
+local Net = require(Shared.Net)
+local QuestProtocol = require(Shared.Quest.QuestProtocol)
+local QuestSchema = require(Shared.Quest.QuestSchema)
+local QuestEngine = require(Shared.Quest.QuestEngine)
+local DomainEvents = require(Shared.Quest.DomainEvents)
+local UiObservations = require(Shared.Quest.UiObservations)
+local Manifest = require(Shared.Quest.Content.Manifest)
+local RewardRegistry = require(Shared.Quest.Rewards.Registry)
+local StoryConfig = require(Shared.StoryConfig)
+local UpgradeConfig = require(Shared.UpgradeConfig)
+local UpgradePricing = require(Shared.UpgradePricing)
+
 local GemService = require(script.Parent.GemService)
+local GooSkinService = require(script.Parent.GooSkinService)
 local PlayerDataService = require(script.Parent.PlayerDataService)
 local QuestAnalyticsService = require(script.Parent.QuestAnalyticsService)
+local QuestEffectRunner = require(script.Parent.Quest.QuestEffectRunner)
+local QuestEventRouter = require(script.Parent.Quest.QuestEventRouter)
+local QuestFactProvider = require(script.Parent.Quest.QuestFactProvider)
+local QuestPersistence = require(script.Parent.Quest.QuestPersistence)
+local QuestProtocolServer = require(script.Parent.Quest.QuestProtocolServer)
+local QuestSessionOutbox = require(script.Parent.Quest.QuestSessionOutbox)
 
 local QuestService = {}
 
-local ARC_ID = "opening_tutorial"
-local FIRST_QUEST_ID = "gooey_beginning"
+local OBSERVATION_LIMIT = 30
+local OBSERVATION_WINDOW_SECONDS = 10
+local CONTROL_INTENT_LIMIT = 12
+local CONTROL_INTENT_WINDOW_SECONDS = 10
+local PROGRESS_PUBLISH_INTERVAL_SECONDS = 0.2
 
--- Bounded demonstrated-objective ledger. Numeric keys clamp; everything else is a flag.
-local LEDGER_FLAGS = {
-	IntroCompleted = true,
-	RubbleCleared = true,
-	HealingSequenceCompleted = true,
-	LoreCompleted = true,
-	NoobClickerPlaced = true,
-	StatsEyeEnabled = true,
-	BuildViewOpened = true,
-	BuildingSold = true,
-}
-
-local STORY_RANK = {
-	[StoryConfig.STEPS.Meteor] = 1,
-	[StoryConfig.STEPS.Healing] = 2,
-	[StoryConfig.STEPS.Lore] = 3,
-	[StoryConfig.STEPS.BuildTask] = 4,
-	[StoryConfig.STEPS.Complete] = 5,
-}
-
--- Which ledger fact a story-transition objective is really asking about.
-local STORY_OBJECTIVE_LEDGER_KEY = {
-	IntroCompleted = "IntroCompleted",
-	[StoryConfig.STEPS.Healing] = "RubbleCleared",
-	[StoryConfig.STEPS.BuildTask] = "LoreCompleted",
-}
-
-local ACTION_WINDOW_SECONDS = 10
-local ACTION_LIMIT = 30
-
-local QUEST_REWARD_RECEIPTS = {}
-local ARC_REWARD_RECEIPTS = {}
-for _, quest in pairs(QuestDefinitions.Quests) do
-	QUEST_REWARD_RECEIPTS[quest.Reward.ReceiptId] = true
-end
-for _, arc in pairs(QuestDefinitions.Arcs) do
-	ARC_REWARD_RECEIPTS[arc.CapstoneReward.ReceiptId] = true
-end
-
-local stepStartedAtByPlayer = setmetatable({}, { __mode = "k" })
-local rateByPlayer = setmetatable({}, { __mode = "k" })
+local router
+local persistence
+local factProvider
+local protocolServer
+local observationRateByPlayer = setmetatable({}, { __mode = "k" })
+local controlRateByPlayer = setmetatable({}, { __mode = "k" })
 local buildingPurchasePendingByPlayer = setmetatable({}, { __mode = "k" })
+local lastPublishAtByPlayer = setmetatable({}, { __mode = "k" })
+local pendingPublishTokenByPlayer = setmetatable({}, { __mode = "k" })
+local presentationMetrics = { ImmediatePublishes = 0, DeferredPublishes = 0, CoalescedUpdates = 0 }
 
---------------------------------------------------------------------------------
--- Profile state
---------------------------------------------------------------------------------
+local function timestamp()
+	return os.time()
+end
 
-local function getPersistent(player)
+local function countUpgrade(player, upgradeId)
 	local data = PlayerDataService.Get(player)
-	local persistent = type(data) == "table" and data.Persistent
-	return type(persistent) == "table" and persistent or nil, data
-end
-
-local function newState()
-	return {
-		SchemaVersion = QuestDefinitions.SchemaVersion,
-		Initialized = true,
-		CompletedQuestIds = {},
-		QuestProgress = {},
-		ObjectiveLedger = {},
-		QuestRewardReceipts = {},
-		ArcRewardReceipts = {},
-		SelectedQuestId = FIRST_QUEST_ID,
-		HideCompleted = false,
-	}
-end
-
-local function normalizeBoolDictionary(source, allowlist)
-	local normalized = {}
-	if type(source) ~= "table" then
-		return normalized
-	end
-	for key, value in pairs(source) do
-		if value == true and (not allowlist or allowlist[key]) then
-			normalized[key] = true
-		end
-	end
-	return normalized
-end
-
-local function normalizeState(raw)
-	local state = newState()
-	if type(raw) ~= "table" then
-		return state
-	end
-
-	local rawVersion = tonumber(raw.SchemaVersion) or 1
-	state.Initialized = raw.Initialized == true
-	state.CompletedQuestIds = normalizeBoolDictionary(raw.CompletedQuestIds, QuestDefinitions.Quests)
-	state.QuestRewardReceipts = normalizeBoolDictionary(raw.QuestRewardReceipts, QUEST_REWARD_RECEIPTS)
-	state.ArcRewardReceipts = normalizeBoolDictionary(raw.ArcRewardReceipts, ARC_REWARD_RECEIPTS)
-	state.HideCompleted = raw.HideCompleted == true
-	state.SelectedQuestId = QuestDefinitions.Quests[raw.SelectedQuestId] and raw.SelectedQuestId or nil
-
-	local ledger = type(raw.ObjectiveLedger) == "table" and raw.ObjectiveLedger or {}
-	for key in pairs(LEDGER_FLAGS) do
-		state.ObjectiveLedger[key] = ledger[key] == true or nil
-	end
-	state.ObjectiveLedger.HealingManualClicks =
-		math.clamp(math.floor(tonumber(ledger.HealingManualClicks) or 0), 0, StoryConfig.HEALING_CLICKS)
-
-	local rawProgress = type(raw.QuestProgress) == "table" and raw.QuestProgress or {}
-	for questId, quest in pairs(QuestDefinitions.Quests) do
-		local progress = rawProgress[questId]
-		if type(progress) == "table" then
-			local stepIndex = math.floor(tonumber(progress.StepIndex) or 1)
-			-- v1 stored the index of the step being worked on before the auto-credited
-			-- intro step existed; v2 onward stores the same 1-based index this build uses.
-			if rawVersion < 2 and questId == FIRST_QUEST_ID then
-				stepIndex += 1
-			end
-			state.QuestProgress[questId] = {
-				StepIndex = math.clamp(stepIndex, 1, #quest.Steps + 1),
-			}
-		end
-	end
-	return state
-end
-
---------------------------------------------------------------------------------
--- Canonical reconciliation
---------------------------------------------------------------------------------
-
-local function readUpgradeCount(data, upgradeId)
 	local run = type(data) == "table" and data.Run
 	local counts = type(run) == "table" and run.UpgradeCounts
-	return math.max(0, math.floor(tonumber(type(counts) == "table" and counts[upgradeId]) or 0))
+	return math.clamp(math.floor(tonumber(type(counts) == "table" and counts[upgradeId]) or 0), 0, 1000000000)
 end
 
-local function readCookies(data)
+local function cookieBalance(player)
+	local data = PlayerDataService.Get(player)
 	local run = type(data) == "table" and data.Run
-	return math.max(0, math.floor(tonumber(type(run) == "table" and run.Cookies) or 0))
+	return math.max(0, tonumber(type(run) == "table" and run.Cookies) or 0)
 end
 
--- The live price of the player's next purchase of an upgrade. CostTuningId values stay
--- DevTuning-backed while their feature is in development, so quest copy and quest targets
--- both move when the price is tuned.
-local function readUpgradeCost(data, upgradeId)
-	local config = UpgradeConfig[upgradeId]
-	if not config then
-		return nil
+local function allowRate(bucketByPlayer, player, limit, windowSeconds)
+	local now = os.clock()
+	local state = bucketByPlayer[player]
+	if not state or now - state.StartedAt >= windowSeconds then
+		state = { StartedAt = now, Count = 0 }
+		bucketByPlayer[player] = state
 	end
-	local owned = readUpgradeCount(data, upgradeId)
-	return UpgradePricing.GetCost(config, owned) or tonumber(config.BaseCost) or 0
+	if state.Count >= limit then return false end
+	state.Count += 1
+	return true
 end
 
-local function displayName(upgradeId)
-	local config = upgradeId and UpgradeConfig[upgradeId]
-	return (config and config.DisplayName) or upgradeId or ""
+local function allowObservation(player)
+	return allowRate(observationRateByPlayer, player, OBSERVATION_LIMIT, OBSERVATION_WINDOW_SECONDS)
 end
 
--- Facts the server can prove from canonical data always win over stored ledger entries,
--- so a ledger that drifted (or a profile written by an older build) is corrected on load.
-local function reconcileCanonicalFacts(state, persistent, data)
-	local ledger = state.ObjectiveLedger
-	local rank = STORY_RANK[persistent.StoryStep] or 1
-	if persistent.IntroSeen == true or rank >= STORY_RANK[StoryConfig.STEPS.Healing] then
-		ledger.IntroCompleted = true
-	end
-	if rank >= STORY_RANK[StoryConfig.STEPS.Healing] then
-		ledger.RubbleCleared = true
-	end
-	if rank >= STORY_RANK[StoryConfig.STEPS.Lore] then
-		ledger.HealingManualClicks = StoryConfig.HEALING_CLICKS
-		ledger.HealingSequenceCompleted = true
-	else
-		-- Story owns whether a click was accepted during the rubble/healing transition.
-		-- Project that exact count so old quest-only increments cannot remain ahead.
-		ledger.HealingManualClicks =
-			math.clamp(math.floor(tonumber(persistent.StoryHealingClicks) or 0), 0, StoryConfig.HEALING_CLICKS)
-		if ledger.HealingManualClicks < StoryConfig.HEALING_CLICKS then
-			ledger.HealingSequenceCompleted = nil
-		end
-	end
-	if rank >= STORY_RANK[StoryConfig.STEPS.BuildTask] or persistent.MixerUnlocked == true then
-		ledger.LoreCompleted = true
-	end
-	if rank >= STORY_RANK[StoryConfig.STEPS.Complete] or readUpgradeCount(data, StoryConfig.FIRST_BUILDING_ID) > 0 then
-		ledger.NoobClickerPlaced = true
-	end
+local function allowControlIntent(player)
+	return allowRate(controlRateByPlayer, player, CONTROL_INTENT_LIMIT, CONTROL_INTENT_WINDOW_SECONDS)
 end
 
---------------------------------------------------------------------------------
--- Objective resolvers
---------------------------------------------------------------------------------
-
--- Each resolver returns: satisfied, current, target.
--- current/target are optional and drive the generic "(x/y)" sub-progress.
-local resolvers = {}
-
-resolvers.StoryTransition = function(step, ctx)
-	local key = STORY_OBJECTIVE_LEDGER_KEY[step.ObjectiveTarget]
-	return key ~= nil and ctx.ledger[key] == true
-end
-
-resolvers.ManualOwnerClickCount = function(step, ctx)
-	local target = step.ObjectiveTarget
-	local current = math.clamp(tonumber(ctx.ledger.HealingManualClicks) or 0, 0, target)
-	-- The story owns the celebration that ends the healing beat, so the count alone is
-	-- not enough: the fifth click is only done once that sequence reports completion.
-	return current >= target and ctx.ledger.HealingSequenceCompleted == true, current, target
-end
-
-resolvers.BuildingPlaced = function(step, ctx)
-	if step.ObjectiveTarget == StoryConfig.FIRST_BUILDING_ID then
-		return ctx.ledger.NoobClickerPlaced == true
-	end
-	return readUpgradeCount(ctx.data, step.ObjectiveTarget) > 0
-end
-
-resolvers.BuildingCountAtLeast = function(step, ctx)
-	local target = step.ObjectiveTarget
-	local current = readUpgradeCount(ctx.data, target.UpgradeId)
-	return current >= target.Count, math.min(current, target.Count), target.Count
-end
-
-resolvers.BuildingSold = function(_, ctx)
-	return ctx.ledger.BuildingSold == true
-end
-
-resolvers.CookieBalanceAtLeast = function(step, ctx)
-	local upgradeId = step.ObjectiveTarget
-	-- Owning the thing proves the save happened. Without this, a player who already bought
-	-- it parks on "save for it" forever, because the cookies they saved are now spent.
-	if readUpgradeCount(ctx.data, upgradeId) > 0 then
-		return true
-	end
-	local cost = readUpgradeCost(ctx.data, upgradeId)
-	if cost == nil then
-		return false
-	end
-	local cookies = readCookies(ctx.data)
-	return cookies >= cost, math.min(cookies, cost), cost
-end
-
-resolvers.UpgradePurchased = function(step, ctx)
-	return readUpgradeCount(ctx.data, step.ObjectiveTarget) > 0
-end
-
-resolvers.ClientUiObservation = function(step, ctx)
-	return ctx.ledger[step.ObjectiveTarget] == true
-end
-
-local function evaluateStep(step, ctx)
-	local resolver = resolvers[step.ObjectiveKind]
-	if not resolver then
-		return false
-	end
-	return resolver(step, ctx)
-end
-
---------------------------------------------------------------------------------
--- Quest evaluation
---------------------------------------------------------------------------------
-
-local function isUnlocked(quest, state)
-	for _, dependencyId in ipairs(quest.RequiresQuestIds) do
-		if state.CompletedQuestIds[dependencyId] ~= true then
-			return false
-		end
+local function ensureProtocolSession(player)
+	local outbox = protocolServer and protocolServer.Outbox
+	if not outbox then return false end
+	if not outbox:GetSession(player) then
+		protocolServer:BeginSession(player)
 	end
 	return true
 end
 
--- The first step at or after `fromIndex` whose objective is not satisfied, or #steps + 1
--- when the rest are all satisfied. A later step satisfied early does not skip an earlier
--- incomplete one; it simply costs nothing when the player reaches it.
---
--- Starting at the stored index is what makes a step stay done. Several objectives are
--- non-monotonic on purpose -- `undo_a_purchase` sells the very Noob Clicker that
--- satisfied `hire_another_noob` -- so a derivation that always restarted at step 1 would
--- park the quest behind its own regressed step and never let it finish.
-local function derivedStepIndex(quest, ctx, fromIndex)
-	for index = fromIndex, #quest.Steps do
-		if not evaluateStep(quest.Steps[index], ctx) then
-			return index
+local function publishCurrent(player, context, transitions)
+	if not ensureProtocolSession(player) then return false end
+	local facts = factProvider:Build(player, context, { Kind = "FullReconcile", Timestamp = timestamp() })
+	local envelope, problem = protocolServer:Publish(player, context.State, facts, transitions or {})
+	if envelope == nil and problem ~= "waiting for Ready" then
+		warn("Quest protocol publish failed: " .. tostring(problem))
+	end
+	if envelope ~= nil then lastPublishAtByPlayer[player] = os.clock() end
+	return envelope ~= nil or problem == "waiting for Ready"
+end
+
+local function publishImmediate(player, context, transitions)
+	pendingPublishTokenByPlayer[player] = nil
+	presentationMetrics.ImmediatePublishes += 1
+	return publishCurrent(player, context, transitions)
+end
+
+local function scheduleProgressPublish(player)
+	if pendingPublishTokenByPlayer[player] then
+		presentationMetrics.CoalescedUpdates += 1
+		return true
+	end
+	local token = {}
+	pendingPublishTokenByPlayer[player] = token
+	local elapsed = os.clock() - (lastPublishAtByPlayer[player] or 0)
+	task.delay(math.max(0, PROGRESS_PUBLISH_INTERVAL_SECONDS - elapsed), function()
+		if pendingPublishTokenByPlayer[player] ~= token then return end
+		pendingPublishTokenByPlayer[player] = nil
+		if player.Parent ~= Players then return end
+		local latest = persistence:Load(player, "Presentation")
+		if latest then
+			presentationMetrics.DeferredPublishes += 1
+			publishCurrent(player, latest, {})
 		end
-	end
-	return #quest.Steps + 1
+	end)
+	return true
 end
 
-local function resolveStepIndex(quest, state, ctx)
-	if state.CompletedQuestIds[quest.Id] then
-		return #quest.Steps + 1
-	end
-	local stored = state.QuestProgress[quest.Id]
-	local storedIndex =
-		math.clamp(math.floor(tonumber(type(stored) == "table" and stored.StepIndex) or 1), 1, #quest.Steps + 1)
-	return derivedStepIndex(quest, ctx, storedIndex)
+local function executeReward(player, _, effect)
+	local rewardKind = RewardRegistry.Get(effect.RewardKind)
+	if not rewardKind then return false end
+	return rewardKind.Execute({
+		AddGems = function(target, amount)
+			return GemService.AddGems(target, amount, "quest-v2:" .. effect.ReceiptId, {
+				Kind = "Ui",
+				Key = "QuestReward",
+				SuppressPresentation = true,
+			}) ~= nil
+		end,
+		GrantGooSkin = function(target, skinId)
+			if GooSkinService.IsOwned(target, skinId) then return true end
+			if GooSkinService.GrantSkin(target, skinId) then return true end
+			return GooSkinService.IsOwned(target, skinId)
+		end,
+	}, player, effect.Params, effect) == true
 end
 
---------------------------------------------------------------------------------
--- Copy
---------------------------------------------------------------------------------
-
--- Copy never spells an upgrade's name: "{Name}" resolves against the live DisplayName, so
--- renaming an upgrade renames every objective that mentions it.
-local function applyCopyTokens(text, step)
-	if type(text) ~= "string" or not string.find(text, "{Name}", 1, true) then
-		return text
-	end
-	local name = displayName(QuestDefinitions.GetCopyUpgradeId(step))
-	-- gsub treats % in the replacement as a capture reference; DisplayNames never contain
-	-- one today, but escaping keeps a future rename from erroring at runtime.
-	local replacement = string.gsub(name, "%%", "%%%%")
-	return (string.gsub(text, "{Name}", replacement))
-end
-
--- The only dynamic line in the arc so far. It must never publish the post-deduction
--- balance between payment and the authoritative placement result, or the card flickers
--- back to "save 15 cookies" during a purchase that is already succeeding.
-local function firstHelperCopy(ctx)
-	if ctx.ledger.NoobClickerPlaced == true or ctx.purchasePending then
-		return "Buy and place a Noob Clicker from the Mixer.", nil, nil
-	end
-
-	local config = UpgradeConfig[StoryConfig.FIRST_BUILDING_ID]
-	local owned = readUpgradeCount(ctx.data, StoryConfig.FIRST_BUILDING_ID)
-	local cost = UpgradePricing.GetCost(config, owned) or tonumber(config and config.BaseCost) or 0
-	local run = type(ctx.data) == "table" and ctx.data.Run
-	local cookies = math.max(0, math.floor(tonumber(type(run) == "table" and run.Cookies) or 0))
-	if cookies < cost then
-		local current = math.min(cookies, cost)
-		local touch = ("Tap the cookie until you have %d cookies. (%d/%d)"):format(
-			cost,
-			current,
-			cost
+local function executeAnalytics(player, effect, elapsed)
+	local definition = Manifest.DefinitionsById[effect.DefinitionId]
+	local arcId = definition and definition.ArcId or "unknown"
+	if effect.AnalyticsKind == "StepCompleted" then
+		QuestAnalyticsService.RecordStepCompleted(player, arcId, effect.DefinitionId, effect.StepId, elapsed)
+	elseif effect.AnalyticsKind == "QuestCompleted" then
+		QuestAnalyticsService.RecordQuestCompleted(player, arcId, effect.DefinitionId)
+	elseif effect.AnalyticsKind == "RewardGranted" then
+		QuestAnalyticsService.RecordRewardGranted(
+			player,
+			arcId,
+			effect.DefinitionId,
+			tonumber(effect.Params and effect.Params.Amount) or 0
 		)
-		local keyboard = ("Click the cookie until you have %d cookies. (%d/%d)"):format(cost, current, cost)
-		return touch, current, cost, keyboard
-	end
-	return "Buy and place a Noob Clicker from the Mixer.", cost, cost
-end
-
--- Quest 3 step 1. Unlike the first-helper line this needs no purchase freeze: the buy is
--- the NEXT step, so the balance dropping below the cost afterwards is expected and this
--- step is already complete by then.
---
--- "Earn", not "click" or "tap". By this point the player owns a producer, and 200 cookies is
--- a poor thing to instruct anyone to tap for: buying more buildings and letting them run is
--- a legitimate and often faster route. The objective names the goal and leaves the method to
--- the player, which also means it needs no device-aware variant -- unlike quest 1's
--- affordability line, where clicking really is the only way to reach 15.
-local function gooClickerSavingsCopy(ctx, step)
-	local upgradeId = step.ObjectiveTarget
-	local name = displayName(upgradeId)
-	if readUpgradeCount(ctx.data, upgradeId) > 0 then
-		return ("Earn cookies to buy the %s."):format(name)
-	end
-
-	local cost = readUpgradeCost(ctx.data, upgradeId) or 0
-	local cookies = readCookies(ctx.data)
-	local current = math.min(cookies, cost)
-	-- Cookie amounts abbreviate because the price is DevTuning-backed and can be raised
-	-- well past four digits; plain counts elsewhere in the arc never need it.
-	-- The goal lives in the "(x/y)" rather than the sentence: repeating it in words pushed
-	-- the line to 77 characters, and the strike overlay only animates two wrapped lines.
-	local suffix = (" (%s/%s)"):format(NumberFormat.abbreviate(current), NumberFormat.abbreviate(cost))
-	return ("Earn cookies to buy the %s.%s"):format(name, suffix), current, cost
-end
-
-local dynamicCopy = {
-	FirstHelperAffordability = firstHelperCopy,
-	GooClickerSavings = gooClickerSavingsCopy,
-}
-
-local function describeStep(step, ctx)
-	local resolver = step.DynamicCopy and dynamicCopy[step.DynamicCopy]
-	if resolver then
-		return resolver(ctx, step)
-	end
-
-	local _, current, target = evaluateStep(step, ctx)
-	local description = applyCopyTokens(step.CompactObjective, step)
-	local keyboard = applyCopyTokens(step.CompactObjectiveKeyboard, step)
-	if current and target and target > 1 then
-		local suffix = (" (%d/%d)"):format(current, target)
-		description ..= suffix
-		if keyboard then
-			keyboard ..= suffix
-		end
-	end
-	return description, current, target, keyboard
-end
-
---------------------------------------------------------------------------------
--- Snapshot
---------------------------------------------------------------------------------
-
-local function makeContext(player, persistent, data, state)
-	return {
-		ledger = state.ObjectiveLedger,
-		persistent = persistent,
-		data = data,
-		purchasePending = buildingPurchasePendingByPlayer[player] == true,
-	}
-end
-
-local function buildSnapshot(state, ctx)
-	local arcs = {}
-	for _, arc in ipairs(QuestDefinitions.GetArcsInOrder()) do
-		local quests = {}
-		local completedCount = 0
-		for _, quest in ipairs(QuestDefinitions.GetArcQuests(arc.Id)) do
-			local completed = state.CompletedQuestIds[quest.Id] == true
-			if completed then
-				completedCount += 1
-			end
-			if completed or isUnlocked(quest, state) then
-				local stepIndex = resolveStepIndex(quest, state, ctx)
-				local displayStepIndex = math.min(stepIndex, #quest.Steps)
-				local step = quest.Steps[displayStepIndex]
-				local description, current, target, keyboard = describeStep(step, ctx)
-				table.insert(quests, {
-					Id = quest.Id,
-					Title = quest.Title,
-					Completed = completed,
-					Selectable = not completed,
-					Selected = state.SelectedQuestId == quest.Id and not completed,
-					StepId = step.Id,
-					StepIndex = displayStepIndex,
-					StepCount = #quest.Steps,
-					Progress = completed and 1 or (displayStepIndex - 1) / #quest.Steps,
-					Description = description,
-					DescriptionKeyboard = keyboard,
-					SubProgress = current,
-					SubProgressTarget = target,
-					GuideEnabled = not completed and step.GuideCapability == true,
-					-- Lets the client re-assert a UI-only fact it may have reported before
-					-- this profile's quest state existed. Naming the awaited key is safe:
-					-- it is already in the shared definitions.
-					AwaitingObservation = not completed
-							and step.ObjectiveKind == "ClientUiObservation"
-							and step.ObjectiveTarget
-						or nil,
-					Reward = {
-						Kind = quest.Reward.Kind,
-						Amount = quest.Reward.Amount,
-						Granted = state.QuestRewardReceipts[quest.Reward.ReceiptId] == true,
-					},
-				})
-			end
-		end
-
-		table.insert(arcs, {
-			Id = arc.Id,
-			Title = arc.Title,
-			CompletedCount = completedCount,
-			QuestCount = arc.DisplayQuestCount,
-			ArcReward = {
-				DisplayName = arc.CapstoneReward.DisplayName,
-				Resolved = arc.CapstoneReward.Resolved,
-				Received = state.ArcRewardReceipts[arc.CapstoneReward.ReceiptId] == true,
-			},
-			Quests = quests,
-		})
-	end
-
-	return {
-		SchemaVersion = QuestDefinitions.SchemaVersion,
-		SelectedQuestId = state.SelectedQuestId,
-		HideCompleted = state.HideCompleted,
-		Arcs = arcs,
-	}
-end
-
-local function pushSnapshot(player, state, ctx)
-	if player.Parent == Players then
-		Net.fireClient(Net.Names.QuestSnapshot, player, buildSnapshot(state, ctx))
 	end
 end
 
---------------------------------------------------------------------------------
--- Progression
---------------------------------------------------------------------------------
-
-local function markStepStart(player, quest, stepIndex, resumed)
-	local step = quest.Steps[stepIndex]
-	if not step then
-		stepStartedAtByPlayer[player] = nil
-		return
-	end
-	stepStartedAtByPlayer[player] = {
-		QuestId = quest.Id,
-		StepId = step.Id,
-		StartedAt = os.clock(),
-	}
-	QuestAnalyticsService.RecordStepStarted(player, ARC_ID, quest.Id, step.Id, resumed)
+function QuestService.NotifyDomain(player, eventKind, payload, causeTimestamp)
+	if not router then return false, "quest router is not initialized" end
+	return router:NotifyDomain(player, eventKind, payload, causeTimestamp or timestamp())
 end
-
-local function recordStepCompleted(player, quest, step)
-	local timer = stepStartedAtByPlayer[player]
-	local elapsed = timer and timer.QuestId == quest.Id and timer.StepId == step.Id and os.clock() - timer.StartedAt
-		or 0
-	QuestAnalyticsService.RecordStepCompleted(player, ARC_ID, quest.Id, step.Id, elapsed)
-end
-
--- Completion, receipt, and balance mutation are deliberately yield-free and occur against
--- the same active profile turn. Presentation is a best-effort consequence of GemService.
-local function grantCompletionReward(player, quest, state)
-	local receiptId = quest.Reward.ReceiptId
-	if state.QuestRewardReceipts[receiptId] then
-		return true
-	end
-
-	state.QuestRewardReceipts[receiptId] = true
-	local total = GemService.AddGems(player, quest.Reward.Amount, "quest:" .. quest.Id, {
-		Kind = "Ui",
-		Key = "QuestReward",
-	})
-	if total == nil then
-		state.QuestRewardReceipts[receiptId] = nil
-		return false
-	end
-	QuestAnalyticsService.RecordRewardGranted(player, ARC_ID, quest.Id, quest.Reward.Amount)
-	return true
-end
-
-local function nextSelectableQuest(state)
-	for _, arc in ipairs(QuestDefinitions.GetArcsInOrder()) do
-		for _, quest in ipairs(QuestDefinitions.GetArcQuests(arc.Id)) do
-			if state.CompletedQuestIds[quest.Id] ~= true and isUnlocked(quest, state) then
-				return quest
-			end
-		end
-	end
-	return nil
-end
-
--- One evaluation pass over every unlocked quest. Returns true when something changed, so
--- the caller can settle a cascade: completing a quest unlocks the next, which may already
--- be satisfied for a player who performed those actions before the quest existed.
-local function advanceOnce(player, state, ctx, allowReward)
-	local changed = false
-	for _, arc in ipairs(QuestDefinitions.GetArcsInOrder()) do
-		for _, quest in ipairs(QuestDefinitions.GetArcQuests(arc.Id)) do
-			if state.CompletedQuestIds[quest.Id] ~= true and isUnlocked(quest, state) then
-				local stored = state.QuestProgress[quest.Id]
-				local previousIndex = math.floor(tonumber(type(stored) == "table" and stored.StepIndex) or 1)
-				local nextIndex = resolveStepIndex(quest, state, ctx)
-
-				if nextIndex > previousIndex then
-					for index = previousIndex, math.min(nextIndex - 1, #quest.Steps) do
-						recordStepCompleted(player, quest, quest.Steps[index])
-					end
-				end
-				-- Store the advance before attempting the grant, so a failed grant retries
-				-- on the next pass without replaying this step's analytics.
-				state.QuestProgress[quest.Id] = { StepIndex = nextIndex }
-
-				if nextIndex > #quest.Steps then
-					local paid = true
-					if allowReward then
-						paid = grantCompletionReward(player, quest, state)
-					else
-						-- Studio/backfill path: burn the receipt so the faucet cannot pay
-						-- historical completion before the economy gate passes.
-						state.QuestRewardReceipts[quest.Reward.ReceiptId] = true
-					end
-
-					if paid then
-						state.QuestProgress[quest.Id] = nil
-						state.CompletedQuestIds[quest.Id] = true
-						QuestAnalyticsService.RecordQuestCompleted(player, ARC_ID, quest.Id)
-						if state.SelectedQuestId == quest.Id then
-							state.SelectedQuestId = nil
-						end
-						stepStartedAtByPlayer[player] = nil
-						changed = true
-					end
-				elseif nextIndex ~= previousIndex then
-					changed = true
-				end
-			end
-		end
-	end
-	return changed
-end
-
-local function reconcileAndPublish(player, allowReward)
-	local persistent, data = getPersistent(player)
-	if not persistent then
-		return false
-	end
-
-	local state = normalizeState(persistent.QuestState)
-	local stateWasInitialized = state.Initialized
-	persistent.QuestState = state
-	reconcileCanonicalFacts(state, persistent, data)
-
-	local ctx = makeContext(player, persistent, data, state)
-
-	-- Bounded: every pass either advances a step or completes a quest, and both are
-	-- monotonic, so this settles rather than spins.
-	local passes = 0
-	local questCount = 0
-	for _ in pairs(QuestDefinitions.Quests) do
-		questCount += 1
-	end
-	while passes < questCount + 1 and advanceOnce(player, state, ctx, allowReward) do
-		passes += 1
-	end
-
-	local tracked = state.SelectedQuestId and QuestDefinitions.Quests[state.SelectedQuestId]
-	if not tracked or state.CompletedQuestIds[tracked.Id] == true or not isUnlocked(tracked, state) then
-		tracked = nextSelectableQuest(state)
-		state.SelectedQuestId = tracked and tracked.Id or nil
-	end
-
-	if tracked then
-		local trackedIndex = math.min(resolveStepIndex(tracked, state, ctx), #tracked.Steps)
-		local trackedStep = tracked.Steps[trackedIndex]
-		local timer = stepStartedAtByPlayer[player]
-		if not timer or timer.QuestId ~= tracked.Id or timer.StepId ~= trackedStep.Id then
-			markStepStart(player, tracked, trackedIndex, stateWasInitialized)
-		end
-	else
-		stepStartedAtByPlayer[player] = nil
-	end
-
-	pushSnapshot(player, state, ctx)
-	return true
-end
-
-local function mutateLedger(player, callback)
-	local persistent = getPersistent(player)
-	if not persistent or type(persistent.QuestState) ~= "table" then
-		return false
-	end
-	local ledger = type(persistent.QuestState.ObjectiveLedger) == "table" and persistent.QuestState.ObjectiveLedger
-	if not ledger then
-		return false
-	end
-	callback(ledger)
-	return reconcileAndPublish(player, true)
-end
-
--- The tracked step as DISPLAYED: derived, so it is already the next step the moment the
--- current one is satisfied. Used by hooks that only need to redraw live copy.
-local function trackedStep(player, persistent, data, state)
-	local tracked = state.SelectedQuestId and QuestDefinitions.Quests[state.SelectedQuestId]
-	if not tracked then
-		return nil
-	end
-	local ctx = makeContext(player, persistent, data, state)
-	return tracked.Steps[math.min(resolveStepIndex(tracked, state, ctx), #tracked.Steps)], ctx
-end
-
--- The tracked step as STORED: the step still awaiting its objective. A hook that has to
--- notice an objective being met must ask this one -- the derived step has already moved on
--- by then, so gating on its kind silently skips the advance that needs persisting.
-local function trackedPendingStep(player, persistent, data, state)
-	local tracked = state.SelectedQuestId and QuestDefinitions.Quests[state.SelectedQuestId]
-	if not tracked then
-		return nil
-	end
-	local stored = state.QuestProgress[tracked.Id]
-	local storedIndex =
-		math.clamp(math.floor(tonumber(type(stored) == "table" and stored.StepIndex) or 1), 1, #tracked.Steps)
-	return tracked.Steps[storedIndex], makeContext(player, persistent, data, state)
-end
-
---------------------------------------------------------------------------------
--- Public API — domain services call in, never the reverse
---------------------------------------------------------------------------------
 
 function QuestService.SetupPlayer(player)
-	local persistent = getPersistent(player)
-	if not persistent then
-		return false
-	end
-	local hadInitializedState = type(persistent.QuestState) == "table" and persistent.QuestState.Initialized == true
-	-- A brand-new profile earns its rewards by playing. An existing profile that predates
-	-- the quest system backfills without payment until the economy gate passes; see
-	-- docs/quest-getting-started-arc.md §16.3.
-	local allowReward = hadInitializedState or persistent.StoryStep == StoryConfig.STEPS.Meteor
-	local ok = reconcileAndPublish(player, allowReward)
-	if ok and type(persistent.QuestState) == "table" then
-		persistent.QuestState.Initialized = true
-	end
-	return ok
+	if not router or not ensureProtocolSession(player) then return false end
+	return router:SetupPlayer(player, timestamp())
+end
+
+function QuestService.ResetForDevelopment(player)
+	if not router or not ensureProtocolSession(player) then return false end
+	buildingPurchasePendingByPlayer[player] = nil
+	observationRateByPlayer[player] = nil
+	controlRateByPlayer[player] = nil
+	lastPublishAtByPlayer[player] = nil
+	pendingPublishTokenByPlayer[player] = nil
+	-- A development reset starts a genuinely new logical timeline. Reusing the
+	-- old session would make client transition dedupe and monotonic visual
+	-- high-water state survive against freshly reset authoritative state.
+	router:ClearPlayer(player)
+	protocolServer:BeginSession(player)
+	protocolServer:Ready(player, QuestProtocol.ReadyRequest())
+	return router:ResetPlayer(player, timestamp())
+end
+
+function QuestService.ReconcileForDevelopment(player, causeTimestamp)
+	return router and router:DeveloperCheck(player, causeTimestamp or timestamp()) or false
+end
+
+function QuestService.GetPerformanceMeasurements()
+	return {
+		Router = router and router:GetMeasurements() or {},
+		Protocol = protocolServer and protocolServer:GetMetrics() or {},
+		Presentation = {
+			ImmediatePublishes = presentationMetrics.ImmediatePublishes,
+			DeferredPublishes = presentationMetrics.DeferredPublishes,
+			CoalescedUpdates = presentationMetrics.CoalescedUpdates,
+		},
+	}
 end
 
 function QuestService.OnStoryStepChanged(player, storyStep)
-	return mutateLedger(player, function(ledger)
-		local rank = STORY_RANK[storyStep] or 1
-		if rank >= STORY_RANK[StoryConfig.STEPS.Healing] then
-			ledger.IntroCompleted = true
-			ledger.RubbleCleared = true
-		end
-		if rank >= STORY_RANK[StoryConfig.STEPS.Lore] then
-			ledger.HealingManualClicks = StoryConfig.HEALING_CLICKS
-			ledger.HealingSequenceCompleted = true
-		end
-		if rank >= STORY_RANK[StoryConfig.STEPS.BuildTask] then
-			ledger.LoreCompleted = true
-		end
-		if rank >= STORY_RANK[StoryConfig.STEPS.Complete] then
-			buildingPurchasePendingByPlayer[player] = nil
-			ledger.NoobClickerPlaced = true
-		end
-	end)
+	return QuestService.NotifyDomain(player, "StoryAdvanced", { StoryStep = storyStep })
 end
 
 function QuestService.OnIntroCompleted(player)
-	return mutateLedger(player, function(ledger)
-		ledger.IntroCompleted = true
-	end)
+	return QuestService.NotifyDomain(player, "IntroCompleted", {})
 end
 
 function QuestService.OnHealingCelebrationStarted(player)
-	return mutateLedger(player, function(ledger)
-		-- StoryService calls this only after accepting the authoritative fifth healing click.
-		-- Commit both facts together so its spawned celebration cannot race CookieService's
-		-- ordinary quest-ledger projection of that same click.
-		ledger.HealingManualClicks = StoryConfig.HEALING_CLICKS
-		ledger.HealingSequenceCompleted = true
-	end)
+	return QuestService.NotifyDomain(player, "HealingProgressChanged", {
+		AcceptedClicks = StoryConfig.HEALING_CLICKS,
+		SequenceCompleted = true,
+	})
 end
 
 function QuestService.OnManualCookieClick(player, acceptedHealingClicks)
-	acceptedHealingClicks = tonumber(acceptedHealingClicks)
-	if not acceptedHealingClicks then
-		return false
-	end
-	return mutateLedger(player, function(ledger)
-		ledger.HealingManualClicks = math.clamp(math.floor(acceptedHealingClicks), 0, StoryConfig.HEALING_CLICKS)
-	end)
-end
-
-function QuestService.OnBuildingPlaced(player, upgradeId)
-	if type(upgradeId) ~= "string" then
-		return false
-	end
-	if upgradeId == StoryConfig.FIRST_BUILDING_ID then
-		buildingPurchasePendingByPlayer[player] = nil
-		return mutateLedger(player, function(ledger)
-			ledger.NoobClickerPlaced = true
-		end)
-	end
-
-	-- Other buildings carry no ledger fact: their objectives read the canonical count and
-	-- re-derive on the next reconcile anyway. Only republish when a step is actually
-	-- displaying such a count, so ordinary late-game placement does not reconcile the
-	-- whole arc and push a snapshot on every placed building.
-	local persistent, data = getPersistent(player)
-	local state = persistent and persistent.QuestState
-	if type(state) ~= "table" then
-		return false
-	end
-	local step = trackedStep(player, persistent, data, state)
-	if step and step.ObjectiveKind == "BuildingCountAtLeast" then
-		return reconcileAndPublish(player, true)
-	end
-	return false
-end
-
-function QuestService.OnBuildingSold(player, upgradeId)
-	if type(upgradeId) ~= "string" then
-		return false
-	end
-	-- Any accepted sale proves the lesson, so a player who already sold something else is
-	-- never asked to prove it again on a Noob Clicker.
-	return mutateLedger(player, function(ledger)
-		ledger.BuildingSold = true
-	end)
-end
-
-function QuestService.OnCookieBalanceChanged(player)
-	if buildingPurchasePendingByPlayer[player] then
-		return
-	end
-	local persistent, data = getPersistent(player)
-	local state = persistent and persistent.QuestState
-	if type(state) ~= "table" then
-		return
-	end
-	-- A balance-gated objective IS the balance, so the crossing completes it: reconcile to
-	-- persist that advance instead of only redrawing the counter.
-	local pendingStep, ctx = trackedPendingStep(player, persistent, data, state)
-	if pendingStep and pendingStep.ObjectiveKind == "CookieBalanceAtLeast" then
-		if evaluateStep(pendingStep, ctx) then
-			reconcileAndPublish(player, true)
-		else
-			pushSnapshot(player, state, ctx)
-		end
-		return
-	end
-
-	-- Everything else here is copy that merely tracks the balance, so the displayed step is
-	-- the right one to ask.
-	local step = trackedStep(player, persistent, data, state)
-	if step and step.DynamicCopy == "FirstHelperAffordability" then
-		pushSnapshot(player, state, ctx)
-	end
-end
-
--- Non-building purchases (the Goo Clicker unlock, building upgrades). The upgrade count is
--- the canonical proof, so nothing is written to the ledger; this only exists so the step
--- advances on the purchase instead of waiting for the next reconcile.
-function QuestService.OnUpgradePurchased(player, upgradeId)
-	if type(upgradeId) ~= "string" then
-		return false
-	end
-	local persistent, data = getPersistent(player)
-	local state = persistent and persistent.QuestState
-	if type(state) ~= "table" then
-		return false
-	end
-	local step = trackedPendingStep(player, persistent, data, state)
-	-- CookieBalanceAtLeast is included because buying deducts before the count is written:
-	-- the balance hook fires first and still sees an unaffordable balance, so the save step
-	-- of a player who bought straight through would otherwise never resolve.
-	if step and (step.ObjectiveKind == "UpgradePurchased" or step.ObjectiveKind == "CookieBalanceAtLeast") then
-		return reconcileAndPublish(player, true)
-	end
-	return false
+	if type(acceptedHealingClicks) ~= "number" then return false end
+	return QuestService.NotifyDomain(player, "HealingProgressChanged", {
+		AcceptedClicks = math.clamp(math.floor(acceptedHealingClicks), 0, 1000000),
+		SequenceCompleted = false,
+	})
 end
 
 function QuestService.BeginBuildingPurchase(player, upgradeId)
-	if upgradeId ~= StoryConfig.FIRST_BUILDING_ID then
-		return false
-	end
-	local persistent, data = getPersistent(player)
-	local state = persistent and persistent.QuestState
-	if type(state) ~= "table" then
-		return false
-	end
-	local step = trackedStep(player, persistent, data, state)
-	if not step or step.DynamicCopy ~= "FirstHelperAffordability" then
-		return false
-	end
-	buildingPurchasePendingByPlayer[player] = true
+	if type(upgradeId) ~= "string" then return false end
+	buildingPurchasePendingByPlayer[player] = upgradeId
 	return true
 end
 
 function QuestService.CancelBuildingPurchase(player, upgradeId)
-	if upgradeId ~= StoryConfig.FIRST_BUILDING_ID or not buildingPurchasePendingByPlayer[player] then
-		return false
-	end
+	if buildingPurchasePendingByPlayer[player] ~= upgradeId then return false end
 	buildingPurchasePendingByPlayer[player] = nil
-	return reconcileAndPublish(player, true)
+	return QuestService.NotifyDomain(player, "CookieBalanceChanged", {
+		Balance = cookieBalance(player),
+		Source = "PurchaseCancelled",
+		CommitState = "Committed",
+	})
 end
 
-function QuestService.ResetForDevelopment(player)
-	local persistent = getPersistent(player)
-	if not persistent then
-		return false
-	end
-	persistent.QuestState = newState()
-	stepStartedAtByPlayer[player] = nil
+function QuestService.OnBuildingPlaced(player, upgradeId, floorId)
+	if type(upgradeId) ~= "string" then return false end
 	buildingPurchasePendingByPlayer[player] = nil
-	return true
+	return QuestService.NotifyDomain(player, "BuildingPlaced", {
+		UpgradeId = upgradeId,
+		Count = countUpgrade(player, upgradeId),
+		FloorId = floorId,
+	})
 end
 
---------------------------------------------------------------------------------
--- Client actions
---------------------------------------------------------------------------------
-
-local function acceptAction(player)
-	local now = os.clock()
-	local rate = rateByPlayer[player]
-	if not rate or now - rate.StartedAt >= ACTION_WINDOW_SECONDS then
-		rate = { StartedAt = now, Count = 0 }
-		rateByPlayer[player] = rate
-	end
-	if rate.Count >= ACTION_LIMIT then
-		return false
-	end
-	rate.Count += 1
-	return true
+function QuestService.OnBuildingSold(player, upgradeId, soldCount)
+	if type(upgradeId) ~= "string" then return false end
+	return QuestService.NotifyDomain(player, "BuildingSold", {
+		UpgradeId = upgradeId,
+		Count = countUpgrade(player, upgradeId),
+		SoldCount = math.max(1, math.floor(tonumber(soldCount) or 1)),
+	})
 end
 
-local function handleAction(player, action, value)
-	if type(action) ~= "string" or not acceptAction(player) then
-		return
-	end
-	local persistent, data = getPersistent(player)
-	local state = persistent and persistent.QuestState
-	if type(state) ~= "table" then
-		return
-	end
+function QuestService.OnCookieBalanceChanged(player, source)
+	local pending = source == "PendingPurchase" or source == "Refund" and buildingPurchasePendingByPlayer[player] ~= nil
+	return QuestService.NotifyDomain(player, "CookieBalanceChanged", {
+		Balance = cookieBalance(player),
+		Source = type(source) == "string" and source or "Other",
+		CommitState = pending and (source == "Refund" and "RefundPending" or "PendingPurchase") or "Committed",
+	})
+end
 
-	if action == "RequestSnapshot" then
-		pushSnapshot(player, state, makeContext(player, persistent, data, state))
-	elseif action == "SelectQuest" then
-		local quest = QuestDefinitions.Quests[value]
-		if quest and state.CompletedQuestIds[quest.Id] ~= true and isUnlocked(quest, state) then
-			state.SelectedQuestId = quest.Id
-			reconcileAndPublish(player, true)
-		end
-	elseif action == "SetHideCompleted" then
-		if type(value) == "boolean" then
-			state.HideCompleted = value
-			pushSnapshot(player, state, makeContext(player, persistent, data, state))
-		end
-	elseif action == "Observe" then
-		-- UI-only facts with no canonical server trace. The allowlist is closed and none
-		-- of them is ever treated as economic authorization.
-		if QuestDefinitions.Observations[value] and state.ObjectiveLedger[value] ~= true then
-			mutateLedger(player, function(ledger)
-				ledger[value] = true
-			end)
-		end
-	end
+function QuestService.OnUpgradePurchased(player, upgradeId)
+	if type(upgradeId) ~= "string" then return false end
+	return QuestService.NotifyDomain(player, "UpgradePurchased", {
+		UpgradeId = upgradeId,
+		Count = countUpgrade(player, upgradeId),
+	})
+end
+
+local function onObservation(player, observation)
+	if not allowObservation(player) or not UiObservations.IsAllowed(observation) then return end
+	QuestService.NotifyDomain(player, "UiObservation", { Observation = observation })
+end
+
+local function onPreference(player, hidden)
+	if type(hidden) ~= "boolean" or not allowControlIntent(player) then return end
+	local context = persistence:Load(player, "Preference")
+	if not context then return end
+	context.State.HideCompleted = hidden
+	persistence:Save(player, context)
+	publishImmediate(player, context, {})
+end
+
+local function onSelection(player, instanceId)
+	if type(instanceId) ~= "string" or #instanceId == 0 or #instanceId > 160 or not allowControlIntent(player) then return end
+	local context = persistence:Load(player, "Selection")
+	if not context then return end
+	local selected, changed = QuestEngine.select(Manifest, context.State, instanceId)
+	if not changed then return end
+	context.State = selected
+	persistence:Save(player, context)
+	publishImmediate(player, context, {})
 end
 
 function QuestService.Init()
-	QuestDefinitions.Validate()
-	Net.event(Net.Names.QuestSnapshot)
-	Net.on(Net.Names.QuestAction, handleAction)
-	Players.PlayerRemoving:Connect(function(player)
-		stepStartedAtByPlayer[player] = nil
-		rateByPlayer[player] = nil
-		buildingPurchasePendingByPlayer[player] = nil
+	persistence = QuestPersistence.new({
+		GetData = PlayerDataService.Get,
+		Schema = QuestSchema,
+		Content = Manifest,
+	})
+	factProvider = QuestFactProvider.new({
+		Content = Manifest,
+		UpgradeConfig = UpgradeConfig,
+		BoostShopConfig = BoostShopConfig,
+		GetUpgradeCost = function(config, count)
+			return UpgradePricing.GetCost(config, count) or tonumber(config.BaseCost)
+		end,
+	})
+	local outbox = QuestSessionOutbox.new({
+		Protocol = QuestProtocol,
+		NewSessionId = function(player)
+			return ("%d:%s"):format(player.UserId, HttpService:GenerateGUID(false))
+		end,
+		SendEnvelope = function(player, envelope)
+			Net.fireClient(Net.Names.QuestEnvelopeV2, player, envelope)
+		end,
+		OnDiagnostic = function(player, diagnostic)
+			warn(("Quest protocol diagnostic for %s: %s"):format(player.Name, tostring(diagnostic.Kind)))
+		end,
+	})
+	protocolServer = QuestProtocolServer.new({ Protocol = QuestProtocol, Outbox = outbox, Content = Manifest })
+	local effectRunner = QuestEffectRunner.new({
+		Engine = QuestEngine,
+		Enabled = true,
+		ExecuteReward = executeReward,
+		ExecuteAnalytics = executeAnalytics,
+	})
+	router = QuestEventRouter.new({
+		Content = Manifest,
+		DomainEvents = DomainEvents,
+		Engine = QuestEngine,
+		EffectRunner = effectRunner,
+		LoadContext = function(player, reason) return persistence:Load(player, reason) end,
+		SaveContext = function(player, context, transitions, reason)
+			if not persistence:Save(player, context) then return false end
+			if reason == "Incremental" and #transitions == 0 then
+				return scheduleProgressPublish(player)
+			end
+			return publishImmediate(player, context, transitions)
+		end,
+		BuildFacts = function(player, context, cause) return factProvider:Build(player, context, cause) end,
+	})
+
+	Net.event(Net.Names.QuestEnvelopeV2)
+	Net.on(Net.Names.QuestReadyV2, function(player, request)
+		ensureProtocolSession(player)
+		protocolServer:Ready(player, request)
 	end)
-	print("QuestService initialized")
+	Net.on(Net.Names.QuestObservationV2, onObservation)
+	Net.on(Net.Names.QuestPreferenceV2, onPreference)
+	Net.on(Net.Names.QuestSelectV2, onSelection)
+
+	local function beginPlayer(player)
+		if player.Parent == Players then ensureProtocolSession(player) end
+	end
+	Players.PlayerAdded:Connect(beginPlayer)
+	for _, player in ipairs(Players:GetPlayers()) do beginPlayer(player) end
+	Players.PlayerRemoving:Connect(function(player)
+		observationRateByPlayer[player] = nil
+		controlRateByPlayer[player] = nil
+		buildingPurchasePendingByPlayer[player] = nil
+		lastPublishAtByPlayer[player] = nil
+		pendingPublishTokenByPlayer[player] = nil
+		if router then router:ClearPlayer(player) end
+		if protocolServer then protocolServer:ClearPlayer(player) end
+	end)
+	print("QuestService initialized (protocol v2)")
 end
 
 return QuestService

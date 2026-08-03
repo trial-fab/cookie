@@ -14,6 +14,9 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
 local BoostShopConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BoostShopConfig"))
+local QuestProgressObservationBus = require(
+	script.Parent.Parent:WaitForChild("Hud"):WaitForChild("QuestProgressObservationBus")
+)
 
 -- The stall is authored content present at load (no streaming), but the client can run before
 -- Workspace has finished replicating, so poll briefly instead of binding to nothing.
@@ -48,6 +51,9 @@ local function bindCanister(canister, item, onTriggered)
 	end
 
 	local highlight = canister:FindFirstChild(BoostShopConfig.HighlightName, true)
+	prompt.PromptShown:Connect(function()
+		QuestProgressObservationBus.Publish("BoostShopApproached")
+	end)
 	if highlight then
 		highlight.Enabled = false
 		prompt.PromptShown:Connect(function()

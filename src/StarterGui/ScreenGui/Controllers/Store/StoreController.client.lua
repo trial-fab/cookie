@@ -15,8 +15,16 @@ end
 local shared = ReplicatedStorage:WaitForChild("Shared")
 local Net = require(shared:WaitForChild("Net"))
 local Attrs = require(shared:WaitForChild("Attrs"))
+local GuiNames = require(shared:WaitForChild("GuiNames"))
 local StoreShell = require(shared:WaitForChild("StoreShell"))
 local Names = Net.Names
+
+local storeModeRequest = screenGui:FindFirstChild(GuiNames.StoreModeRequest)
+if not (storeModeRequest and storeModeRequest:IsA("BindableEvent")) then
+	storeModeRequest = Instance.new("BindableEvent")
+	storeModeRequest.Name = GuiNames.StoreModeRequest
+	storeModeRequest.Parent = screenGui
+end
 
 local store = StoreShell.getActive(screenGui)
 if not store then
@@ -1080,6 +1088,18 @@ local function refreshCategory()
 	renderRows()
 	updateAllRows()
 end
+
+-- Synchronous command boundary for declarative UI actions. StoreController
+-- remains the sole owner of its private mode state and matching visuals.
+storeModeRequest.Event:Connect(function(mode)
+	if mode ~= "Build" and mode ~= "Sell" then return end
+	local requested = mode == "Sell"
+	if requested == sellMode then return end
+	sellMode = requested
+	screenGui:SetAttribute(Attrs.SellMode, sellMode)
+	updateSellButton()
+	refreshCategory()
+end)
 
 local function scrollToUpgradeRow(upgradeId)
 	if not upgradeId then

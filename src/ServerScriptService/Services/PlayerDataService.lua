@@ -81,15 +81,17 @@ local DEFAULT_PERSISTENT_DATA = {
 	StoryHealingClicks = 0,
 	MixerUnlocked = false,
 	CompletedStoryChapters = {},
-	QuestState = {
-		SchemaVersion = 2,
-		Initialized = false,
-		CompletedQuestIds = {},
-		QuestProgress = {},
-		ObjectiveLedger = {},
-		QuestRewardReceipts = {},
-		ArcRewardReceipts = {},
-		SelectedQuestId = "gooey_beginning",
+	-- Fresh protocol-v2 quest state. Pre-release QuestState data is intentionally
+	-- ignored; no migration or dual-write path exists.
+	UniversalQuestState = {
+		SchemaVersion = 1,
+		ContentVersion = 3,
+		Instances = {},
+		CompletedArcIds = {},
+		ObjectiveProgress = {},
+		RewardReceipts = {},
+		AnalyticsReceipts = {},
+		SelectedInstanceId = nil,
 		HideCompleted = false,
 	},
 	Receipts = {},

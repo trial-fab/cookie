@@ -1,8 +1,12 @@
 local SkinRarityConfig = require(script.Parent.SkinRarityConfig)
 
-local GooSkinConfig = {
+-- This module intentionally exposes a mixed config table (constants, lookup
+-- tables, and helper functions). Keep the public surface dynamic so Luau does
+-- not try to infer one recursive structural type across every definition.
+local GooSkinConfig: any = {
 	DefaultSkinId = "Goo::Default",
 	DailySkinId = "Goo::Celestial",
+	OpeningQuestSkinId = "Goo::Meteor",
 }
 
 local function skin(id, name, rarityId, multiplier, order, rollable, assetName)
@@ -32,6 +36,7 @@ GooSkinConfig.Definitions = {
 	skin("Goo::Titan", "Titan", "Legendary", 1.50, 9, true, "Titan"),
 	skin("Goo::Prism", "Prism", "Limited", 1.50, 10, true, "Prism"),
 	skin("Goo::Celestial", "Celestial", "Mythical", 1.75, 11, false, "Celestial"),
+	skin("Goo::Meteor", "Meteor Goo", "Earned", 1.05, 12, false, "Meteor"),
 }
 
 GooSkinConfig.ById = {}

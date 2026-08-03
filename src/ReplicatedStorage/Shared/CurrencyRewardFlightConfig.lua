@@ -3,6 +3,7 @@
 
 return {
 	CompletedEventName = "CurrencyRewardFlightCompleted",
+	QuestV2RequestEventName = "QuestV2CurrencyRewardRequested",
 	QuestStrikeCompletedEventName = "QuestCompletionStrikeFinished",
 	QuestStrikeWaitTimeoutSeconds = 2,
 	SourceRiseSeconds = 0.35,

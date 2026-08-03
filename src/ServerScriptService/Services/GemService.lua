@@ -58,7 +58,22 @@ function GemService.AddGems(player, amount, source, sourceAnchor)
 
 	if granted > 0 then
 		PlayerMetricsService.RecordGemsEarned(player, granted, source)
-		Net.fireClient(Net.Names.GemEarned, player, granted, source or "unknown", newTotal, sourceAnchor)
+		if not (type(sourceAnchor) == "table" and sourceAnchor.SuppressPresentation == true) then
+			Net.fireClient(Net.Names.GemEarned, player, granted, source or "unknown", newTotal, sourceAnchor)
+		end
+		-- Lazy require avoids a module cycle: QuestService owns the reward adapter and
+		-- GemService is loaded before it, while this publisher runs only after boot.
+		local ok, questService = pcall(require, script.Parent.QuestService)
+		if ok and type(questService) == "table" and type(questService.NotifyDomain) == "function" then
+			local questSource = type(source) == "string" and source or "Other"
+			if #questSource > 48 then
+				questSource = "QuestReward"
+			end
+			questService.NotifyDomain(player, "GemBalanceChanged", {
+				Balance = newTotal,
+				Source = questSource,
+			})
+		end
 	end
 
 	return newTotal

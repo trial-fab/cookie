@@ -3,9 +3,15 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
 
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
+local NumberFormat = require(ReplicatedStorage.Shared.NumberFormat)
+local OpeningContent = require(ReplicatedStorage.Shared.Quest.Content.Manifest)
+local QuestContentReader = require(ReplicatedStorage.Shared.Quest.QuestContentReader)
+local QuestCopy = require(ReplicatedStorage.Shared.Quest.QuestCopy)
 local QuestReplayConfig = require(ReplicatedStorage.Shared.QuestReplayConfig)
+local UpgradeConfig = require(ReplicatedStorage.Shared.UpgradeConfig)
 
 local QuestProgressReplay = {}
 
@@ -27,13 +33,48 @@ function QuestProgressReplay.new(screenGui, presenter, onStarted, onStopped)
 	local manualClickBaseline = 0
 	local waitingDialogue = false
 	local connections = {}
+	local definition = assert(OpeningContent.DefinitionsById.gooey_beginning, "missing canonical replay quest")
+	local currentStepId
+	local currentProjection
+	local currentProgress
 
-	local function render(stepIndex, description, progress)
+	local function inputKind()
+		if UserInputService.PreferredInput == Enum.PreferredInput.KeyboardAndMouse then
+			return "Keyboard"
+		elseif UserInputService.PreferredInput == Enum.PreferredInput.Gamepad then
+			return "Gamepad"
+		end
+		return "Touch"
+	end
+
+	local function copyContext()
+		return {
+			InputKind = inputKind(),
+			FormatNumber = NumberFormat.exact,
+			ResolveUpgradeDisplayName = function(upgradeId)
+				local config = UpgradeConfig[upgradeId]
+				return config and config.DisplayName or upgradeId
+			end,
+		}
+	end
+
+	local function render(stepId, projection, progress)
+		local step = assert(definition.StepById[stepId], "unknown canonical replay step")
+		local description = assert(QuestContentReader.RenderStep(
+			OpeningContent,
+			definition.Id,
+			stepId,
+			projection,
+			copyContext()
+		))
+		currentStepId = stepId
+		currentProjection = projection
+		currentProgress = progress
 		presenter.renderReplay({
-			Title = "A Gooey Beginning",
+			Title = QuestCopy.Fallback(definition.Title),
 			Description = description,
-			StepIndex = stepIndex,
-			StepCount = 5,
+			StepIndex = step.Index,
+			StepCount = #definition.Steps,
 			Progress = progress,
 			GuideEnabled = false,
 		})
@@ -44,6 +85,9 @@ function QuestProgressReplay.new(screenGui, presenter, onStarted, onStopped)
 		generation += 1
 		active = false
 		waitingDialogue = false
+		currentStepId = nil
+		currentProjection = nil
+		currentProgress = nil
 		presenter.renderReplay(nil)
 		if wasActive and onStopped then
 			onStopped()
@@ -54,11 +98,25 @@ function QuestProgressReplay.new(screenGui, presenter, onStarted, onStopped)
 		if not active then
 			return
 		end
-		render(5, "Buy and place a Noob Clicker from the Mixer.", 0.8)
+		render("build_first_helper", {
+			Phase = "Affordable",
+			Current = 1,
+			Target = 1,
+			Tokens = { UpgradeId = "Noob Clicker", Current = 1, Target = 1 },
+		}, 0.8)
 		local token = generation
 		task.delay(1.25, function()
 			if active and generation == token then
-				render(5, "Chapter replay complete.", 1)
+				currentStepId = nil
+				currentProjection = nil
+				presenter.renderReplay({
+					Title = QuestCopy.Fallback(definition.Title),
+					Description = QuestCopy.Fallback(definition.Replay.Terminal),
+					StepIndex = #definition.Steps,
+					StepCount = #definition.Steps,
+					Progress = 1,
+					GuideEnabled = false,
+				})
 				task.delay(0.8, function()
 					if active and generation == token then
 						stop()
@@ -73,7 +131,7 @@ function QuestProgressReplay.new(screenGui, presenter, onStarted, onStopped)
 			return
 		end
 		waitingDialogue = true
-		render(4, "Finish talking with the goo.", 0.6)
+		render("unlock_mixer", { Phase = "Waiting", Current = 0, Target = 1, Tokens = {} }, 0.6)
 		local event = getEvent(screenGui, QuestReplayConfig.DialogueRequestedEvent)
 		if event then
 			event:Fire()
@@ -98,7 +156,7 @@ function QuestProgressReplay.new(screenGui, presenter, onStarted, onStopped)
 				if onStarted then
 					onStarted()
 				end
-				render(1, "Watch the Goo's meteor crash-land.", 0)
+				render("begin_rescue", { Phase = "Waiting", Current = 0, Target = 1, Tokens = {} }, 0)
 			end)
 		)
 	end
@@ -107,7 +165,7 @@ function QuestProgressReplay.new(screenGui, presenter, onStarted, onStopped)
 			connections,
 			introCompletedEvent.Event:Connect(function()
 				if active then
-					render(2, "Clear the meteor rubble.", 0.2)
+					render("unearth_cookie", { Phase = "Waiting", Current = 0, Target = 1, Tokens = {} }, 0.2)
 				end
 			end)
 		)
@@ -119,7 +177,12 @@ function QuestProgressReplay.new(screenGui, presenter, onStarted, onStopped)
 				if active then
 					waitingDialogue = false
 					manualClickBaseline = tonumber(player:GetAttribute(Attrs.ManualClicks)) or 0
-					render(3, "Click the cookie 5 times to heal Goob. (0/5)", 0.4)
+					render("help_goo_recover", {
+						Phase = "Healing",
+						Current = 0,
+						Target = 5,
+						Tokens = { Current = 0, Target = 5 },
+					}, 0.4)
 				end
 			end)
 		)
@@ -138,9 +201,22 @@ function QuestProgressReplay.new(screenGui, presenter, onStarted, onStopped)
 				0,
 				5
 			)
-			render(3, ("Click the cookie 5 times to heal Goob. (%d/5)"):format(count), 0.4)
+			render("help_goo_recover", {
+				Phase = count >= 5 and "Satisfied" or "Healing",
+				Current = count,
+				Target = 5,
+				Tokens = { Current = count, Target = 5 },
+			}, 0.4)
 			if count >= 5 then
 				requestDialogue()
+			end
+		end)
+	)
+	table.insert(
+		connections,
+		UserInputService:GetPropertyChangedSignal("PreferredInput"):Connect(function()
+			if active and currentStepId and currentProjection then
+				render(currentStepId, currentProjection, currentProgress)
 			end
 		end)
 	)

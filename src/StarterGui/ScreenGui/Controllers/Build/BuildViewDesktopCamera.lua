@@ -2,6 +2,7 @@
 -- intact from BuildViewController so mobile can evolve independently.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TextChatService = game:GetService("TextChatService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
@@ -48,6 +49,20 @@ local KEY_LEFT = { [Enum.KeyCode.A] = true, [Enum.KeyCode.Left] = true }
 local KEY_DOWN = { [Enum.KeyCode.LeftShift] = true, [Enum.KeyCode.RightShift] = true }
 
 local BuildViewDesktopCamera = {}
+
+-- Roblox's chat bar is a CoreGui TextBox, so UserInputService:GetFocusedTextBox() never
+-- reports it and typing there looks exactly like normal play to this script. Every other
+-- key is covered anyway because chat focus makes input gameProcessed, but the Shift branch
+-- below deliberately ignores gameProcessed, so it has to ask TextChatService directly.
+local chatInputBar = nil
+
+local function isTextEntryFocused()
+	if UserInputService:GetFocusedTextBox() ~= nil then
+		return true
+	end
+	chatInputBar = chatInputBar or TextChatService:FindFirstChildOfClass("ChatInputBarConfiguration")
+	return chatInputBar ~= nil and chatInputBar.IsFocused
+end
 
 local function isMoveKey(key)
 	return KEY_FORWARD[key]
@@ -268,6 +283,12 @@ function BuildViewDesktopCamera.new(ctx)
 	end
 
 	function self:step(dt, base)
+		if isTextEntryFocused() then
+			-- A key already held when a text field takes focus (Shift mid-descend, W mid-fly)
+			-- would otherwise keep driving the camera for the whole message. Releases still
+			-- clear normally, so this only drops keys the player can no longer be steering with.
+			table.clear(heldKeys)
+		end
 		if middleMouseDragging then
 			velocity = Vector3.zero
 			moveRampStart = nil
@@ -329,10 +350,11 @@ function BuildViewDesktopCamera.new(ctx)
 			return
 		end
 		-- BuildViewController sinks Shift so Roblox's Mouse Lock cannot toggle while
-		-- the scriptable camera is active. Accept that processed Shift as descend input.
+		-- the scriptable camera is active. Accept that processed Shift as descend input,
+		-- unless the player is typing (capitals in chat must not fly the camera down).
 		local processedBuildViewShift = ctx.isActive()
 			and KEY_DOWN[input.KeyCode] == true
-			and UserInputService:GetFocusedTextBox() == nil
+			and not isTextEntryFocused()
 		local isPointerPress = input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.MouseButton3
 		local startsOnUi = isPointerPress and ctx.isInputBlocked(input.Position)

@@ -27,7 +27,10 @@ return {
 	UpdateSetting = "UpdateSetting",
 	StoryAction = "StoryAction",
 	PlacementControlUsed = "PlacementControlUsed",
-	QuestAction = "QuestAction",
+	QuestReadyV2 = "QuestReadyV2",
+	QuestObservationV2 = "QuestObservationV2",
+	QuestPreferenceV2 = "QuestPreferenceV2",
+	QuestSelectV2 = "QuestSelectV2",
 
 	-- debug / test harness only (server handler is gated to Studio or the place creator)
 	DebugPlot = "DebugPlot",
@@ -43,6 +46,6 @@ return {
 	SkinInventoryChanged = "SkinInventoryChanged",
 	GooSkinInventoryChanged = "GooSkinInventoryChanged",
 	StoryStateChanged = "StoryStateChanged",
-	QuestSnapshot = "QuestSnapshot",
+	QuestEnvelopeV2 = "QuestEnvelopeV2",
 	OrbLayerPreviewChanged = "OrbLayerPreviewChanged",
 }

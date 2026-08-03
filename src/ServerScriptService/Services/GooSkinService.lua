@@ -86,6 +86,21 @@ function GooSkinService.GrantSkin(player, skinId)
 	return true
 end
 
+function GooSkinService.RevokeEarnedSkinForDevelopment(player, skinId)
+	local persistent = readyByPlayer[player] and getPersistent(player) or nil
+	local owned = persistent and persistent.OwnedGooSkins
+	local definition = GooSkinConfig.GetSkinDef(skinId)
+	if not owned or not definition or definition.RarityId ~= "Earned" then
+		return false
+	end
+	owned[skinId] = nil
+	if persistent.SelectedGooSkin == skinId then
+		persistent.SelectedGooSkin = GooSkinConfig.DefaultSkinId
+	end
+	publish(player, persistent, true)
+	return true
+end
+
 function GooSkinService.SelectSkin(player, skinId)
 	if not SkinFeatureConfig.GooSkinsEnabled then
 		return { Success = false, Reason = "Disabled" }

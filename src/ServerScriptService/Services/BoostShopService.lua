@@ -22,6 +22,7 @@ local Net = require(ReplicatedStorage.Shared.Net)
 local BoostAnalyticsService = require(script.Parent.BoostAnalyticsService)
 local GemService = require(script.Parent.GemService)
 local PlayerDataService = require(script.Parent.PlayerDataService)
+local QuestService = require(script.Parent.QuestService)
 
 local BoostShopService = {}
 
@@ -127,6 +128,10 @@ function BoostShopService.Purchase(player, itemId)
 	local remaining = writeCharge(player, persistent, item, owned + 1)
 	-- After the spend, so GemsRemaining answers "was 40 a choice or their whole balance?".
 	BoostAnalyticsService.RecordPurchased(player, item.Id, item.PriceGems, GemService.GetGems(player))
+	QuestService.NotifyDomain(player, "BoostPurchased", {
+		ItemId = item.Id,
+		ChargeCount = remaining,
+	})
 	return true, ("%s added to your inventory."):format(item.DisplayName), remaining
 end
 

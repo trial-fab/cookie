@@ -324,7 +324,27 @@ function CurrencyRewardAnimator.new(ctx)
 		showLandingAmount(visual, item, destinationPoint, amountColor)
 	end
 
-	return { play = play }
+	return {
+		play = play,
+		-- Protocol-v2 adapter boundary. The legacy caller remains synchronous;
+		-- replacement presentation receives one completion result even on failure.
+		playWithCompletion = function(item, onCompleted)
+			local active = true
+			task.spawn(function()
+				local ok, problem = pcall(play, item)
+				if active then
+					active = false
+					onCompleted(if ok then "completed" else "failed", if ok then nil else problem)
+				end
+			end)
+			return function(reason)
+				if active then
+					active = false
+					onCompleted(reason or "cancelled")
+				end
+			end
+		end,
+	}
 end
 
 return CurrencyRewardAnimator

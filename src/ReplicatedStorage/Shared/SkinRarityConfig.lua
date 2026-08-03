@@ -26,6 +26,7 @@ SkinRarityConfig.ById.Default =
 	{ Id = "Default", DisplayName = "Default", Multiplier = 1, Color = Color3.fromRGB(0, 170, 255) }
 -- Exclusive definitions own their individual multiplier; rarity is display metadata only.
 SkinRarityConfig.ById.Mythical = { Id = "Mythical", DisplayName = "Mythical", Color = Color3.fromRGB(255, 95, 205) }
+SkinRarityConfig.ById.Earned = { Id = "Earned", DisplayName = "Earned", Color = Color3.fromRGB(191, 232, 201) }
 
 function SkinRarityConfig.Roll(random)
 	local totalWeight = 0

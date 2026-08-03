@@ -42,6 +42,7 @@ return {
 	StoreSide = "StoreSide",
 	StoreBottom = "StoreBottom",
 	StorePurchaseFeedback = "StorePurchaseFeedback",
+	StoreModeRequest = "StoreModeRequest",
 	ShowStore = "ShowStore",
 	StoreButton = "StoreButton",
 	Shop = "Shop",

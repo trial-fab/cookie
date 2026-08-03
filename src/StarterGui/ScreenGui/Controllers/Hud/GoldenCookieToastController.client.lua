@@ -44,6 +44,7 @@ end
 screenGui:SetAttribute("CurrencyRewardControllerRunning", true)
 local flightCompletedEvent = getEvent(screenGui, CurrencyRewardFlightConfig.CompletedEventName)
 local questStrikeCompletedEvent = getEvent(screenGui, CurrencyRewardFlightConfig.QuestStrikeCompletedEventName)
+local questV2RequestEvent = getEvent(screenGui, CurrencyRewardFlightConfig.QuestV2RequestEventName)
 
 local player = Players.LocalPlayer
 local leaderstats = player:WaitForChild("leaderstats")
@@ -449,4 +450,10 @@ Net.on(Net.Names.GoldenCookieEarned, function(amount, source, newTotal, sourceAn
 end)
 Net.on(Net.Names.GemEarned, function(amount, source, newTotal, sourceAnchor)
 	enqueueGemEarn(amount, source, newTotal, sourceAnchor)
+end)
+questV2RequestEvent.Event:Connect(function(amount, source, newTotal, sourceAnchor)
+	if type(source) ~= "string" or string.sub(source, 1, 9) ~= "quest-v2:" then
+		return
+	end
+	enqueueEarn(GEMS, amount, source, newTotal, sourceAnchor)
 end)

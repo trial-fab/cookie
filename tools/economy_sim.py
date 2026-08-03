@@ -32,6 +32,7 @@ BUILDINGS = [
     ("Time Machine", 120_000_000_000, 3_000_000),
 ]
 GROWTH = 1.15
+OPENING_QUEST_SKIN_MULTIPLIER = 1.05
 
 # Approved 2026-07-16 vertical floors. Every matching building is assumed to be placed on
 # its optimal themed floor once that floor is owned. The runtime requirement to
@@ -371,6 +372,19 @@ def print_paid_skin_headroom():
               f"{result['final_time'] / expected * 100:>11.0f}%")
 
 
+def validate_opening_quest_skin():
+    """Acceptance check for the non-rollable Meteor Goo capstone at x1.05."""
+    baseline = simulate(skin_multiplier=1.00, verbose=False)
+    meteor = simulate(skin_multiplier=OPENING_QUEST_SKIN_MULTIPLIER, verbose=False)
+    if meteor["final_time"] >= baseline["final_time"]:
+        raise ValueError("Meteor Goo x1.05 must improve production pacing over x1.00")
+    if OPENING_QUEST_SKIN_MULTIPLIER > 1.10:
+        raise ValueError("opening quest skin exceeds the approved early-reward cap")
+    print("\n=== opening quest skin acceptance ===")
+    print("Meteor Goo x1.05: PASS (non-rollable config; <= x1.10 tutorial cap)")
+    print(f"Time Machine: {fmt_time(baseline['final_time'])} -> {fmt_time(meteor['final_time'])}")
+
+
 if __name__ == "__main__":
     simulate(skin_multiplier=1.25, label="expected active (3 clicks/s)")
     simulate(click_rate=0.0, seed_bank=15,
@@ -378,3 +392,4 @@ if __name__ == "__main__":
              skin_multiplier=1.25)
     print_floor_economy_spot_check()
     print_paid_skin_headroom()
+    validate_opening_quest_skin()

@@ -1272,7 +1272,7 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFl
 			XpService.AwardBuildingUnlock(player, upgradeId, config)
 		end
 		StoryService.OnBuildingPlaced(player, upgradeId)
-		QuestService.OnBuildingPlaced(player, upgradeId)
+		QuestService.OnBuildingPlaced(player, upgradeId, floorId)
 	else
 		QuestService.OnUpgradePurchased(player, upgradeId)
 	end
@@ -1319,7 +1319,7 @@ function UpgradeService.Sell(player, upgradeId)
 	end
 	CookieService.AddCookies(player, refund, PlayerMetricsService.CookieSources.Refund)
 	if config.TemplateKind == "Building" then
-		QuestService.OnBuildingSold(player, upgradeId)
+		QuestService.OnBuildingSold(player, upgradeId, 1)
 	end
 
 	return true,
@@ -1366,7 +1366,7 @@ function UpgradeService.SellBuilding(player, building)
 	markBuildingCountAdjusted(building)
 	building:Destroy()
 	CookieService.AddCookies(player, refund, PlayerMetricsService.CookieSources.Refund)
-	QuestService.OnBuildingSold(player, upgradeId)
+	QuestService.OnBuildingSold(player, upgradeId, 1)
 
 	return true,
 		"Sold "
@@ -1412,7 +1412,7 @@ function UpgradeService.SellAllBuildings(player, upgradeId)
 	end
 	removeAllBuildings(player, upgradeId)
 	CookieService.AddCookies(player, refund, PlayerMetricsService.CookieSources.Refund)
-	QuestService.OnBuildingSold(player, upgradeId)
+	QuestService.OnBuildingSold(player, upgradeId, soldCount)
 
 	return true,
 		"Sold "

@@ -3,6 +3,9 @@
 local Attrs = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("Attrs"))
 local ReminderPulse = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("ReminderPulse"))
 local UiMotion = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiMotion"))
+local QuestProgressObservationBus = require(
+	script.Parent.Parent:WaitForChild("Hud"):WaitForChild("QuestProgressObservationBus")
+)
 
 local StoreUpgradeNudge = {}
 
@@ -202,7 +205,13 @@ function StoreUpgradeNudge.new(ctx)
 				-- Clicking only navigates to the available upgrade; it does not consume it.
 				-- Keep visibility derived from updateRow so returning to Buildings cannot
 				-- leave an active nudge hidden by stale click state.
-				ctx.openUpgradeCategory(targetUpgradeByNudge[nudge])
+				local targetUpgradeId = targetUpgradeByNudge[nudge]
+				if targetUpgradeId then
+					ctx.openUpgradeCategory(targetUpgradeId)
+					-- This reports activation of the genuine eligible affordance after its
+					-- navigation action. It names no quest, step, amount, or reward.
+					QuestProgressObservationBus.Publish("UpgradeNudgeActivated")
+				end
 			end
 		end)
 	end

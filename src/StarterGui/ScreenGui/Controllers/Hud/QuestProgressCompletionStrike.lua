@@ -13,7 +13,7 @@ local MAX_LINES = 2
 local STRIKE_HEIGHT = 1
 local STRIKE_Y_RATIO = 0.56
 
-local function measureWidth(description, text)
+local function measureWidth(description, text): number
 	local ok, bounds = pcall(
 		TextService.GetTextSize,
 		TextService,
@@ -22,10 +22,10 @@ local function measureWidth(description, text)
 		description.Font,
 		Vector2.new(10000, 10000)
 	)
-	return if ok then bounds.X else description.AbsoluteSize.X
+	return if ok then tonumber(bounds.X) or 0 else tonumber(description.AbsoluteSize.X) or 0
 end
 
-local function wrappedLineWidths(description, text, maxWidth)
+local function wrappedLineWidths(description, text, maxWidth: number)
 	local widths = {}
 	local currentLine = ""
 
@@ -77,8 +77,14 @@ function QuestProgressCompletionStrike.bind(description)
 	local completed = false
 	local generation = 0
 	local tweens = {}
+	local safeCompletion
 
 	local function cancelAnimation()
+		if safeCompletion then
+			local finish = safeCompletion
+			safeCompletion = nil
+			finish("cancelled")
+		end
 		generation += 1
 		for _, tween in ipairs(tweens) do
 			tween:Cancel()
@@ -204,6 +210,9 @@ function QuestProgressCompletionStrike.bind(description)
 	end
 
 	return {
+		clear = function(text)
+			showNormal(tostring(text or description.Text or ""))
+		end,
 		render = function(text, isCompleted, animate, onCompleted)
 			text = tostring(text or "")
 			if isCompleted then
@@ -214,6 +223,33 @@ function QuestProgressCompletionStrike.bind(description)
 				end
 			elseif completed or currentText ~= text then
 				showNormal(text)
+			end
+		end,
+		-- Protocol-v2 adapter boundary. Unlike the legacy render callback, this
+		-- completion is guaranteed on cancellation/destroy as well as success.
+		playWithCompletion = function(text, onCompleted)
+			local active = true
+			local function finish(outcome)
+				if not active then
+					return
+				end
+				active = false
+				if safeCompletion == finish then
+					safeCompletion = nil
+				end
+				if onCompleted then
+					onCompleted(outcome or "completed")
+				end
+			end
+			play(tostring(text or ""), function()
+				finish("completed")
+			end)
+			safeCompletion = finish
+			return function(reason)
+				if active then
+					cancelAnimation()
+					finish(reason or "cancelled")
+				end
 			end
 		end,
 		destroy = function()

@@ -165,7 +165,7 @@ function CookieService.AddCookies(player, amount, source)
 	run.Cookies = current
 	cookies.Value = current
 	PlayerMetricsService.RecordCookieDelta(player, current - previous, source)
-	QuestService.OnCookieBalanceChanged(player)
+	QuestService.OnCookieBalanceChanged(player, source)
 	return true
 end
 

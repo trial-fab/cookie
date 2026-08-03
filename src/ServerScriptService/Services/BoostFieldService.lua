@@ -28,6 +28,7 @@ local BoostAnalyticsService = require(script.Parent.BoostAnalyticsService)
 local BoostFieldEffects = require(ReplicatedStorage.Shared.BoostFieldEffects)
 local BoostShopService = require(script.Parent.BoostShopService)
 local PlayerDataService = require(script.Parent.PlayerDataService)
+local QuestService = require(script.Parent.QuestService)
 local SheetService = require(script.Parent.SheetService)
 
 local BoostFieldService = {}
@@ -493,6 +494,12 @@ function BoostFieldService.Drop(player, itemId, position)
 		surface.floorId,
 		owner ~= player
 	)
+	QuestService.NotifyDomain(player, "BoostFieldDropped", {
+		ItemId = item.Id,
+		FloorId = surface.floorId,
+		OwnerUserId = owner.UserId,
+		DropperUserId = player.UserId,
+	})
 	-- The owner's production changed the instant this landed; do not make their CpS readout wait
 	-- for the next tick to admit it.
 	notifyFieldsChanged(owner)
