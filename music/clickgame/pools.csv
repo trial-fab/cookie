@@ -1,0 +1,7 @@
+pool_id,display_name,description,unlock_rule,audience_filter,target_count,selection_policy,status,notes
+UNIVERSAL,Universal,Context-neutral ambient tracks available throughout the game,Always,,8,Shuffled Bag,Candidate,Currently seeded from the universal source folder.
+EARLY_GAME,Early Game,Ground-floor and post-intro ambient music,Always,,8,Shuffled Bag,Candidate,Can also supply gentle recovery tracks after story cues.
+INDUSTRY,Industry,Mechanical rhythmic ambient identity,IndustryFloor,,8,Shuffled Bag With Unlock Boost,Candidate,
+COMMERCE,Commerce,Polished electronic ambient identity,CommerceFloor,,8,Shuffled Bag With Unlock Boost,Candidate,Finance is a source-curation label; Commerce is the game-facing floor identity.
+SCIENCE,Science,Future-facing cosmic and synth ambient identity,ScienceFloor,,8,Shuffled Bag With Unlock Boost,Candidate,
+RECOVERY,Recovery,Calm or hopeful bridge after sad and tense story moments,ContextualOnly,,6,Weighted Contextual,Candidate,Membership should be a subset of tracks that pass dialogue and energy review.

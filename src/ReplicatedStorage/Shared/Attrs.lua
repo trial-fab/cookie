@@ -41,6 +41,9 @@ return {
 	-- Server flips this after persisted preferences have been mirrored onto the Player. The
 	-- Settings client waits for it before replacing device-aware ScreenGui defaults.
 	SettingsLoaded = "SettingsLoaded",
+	-- Server flips this once Persistent.Music has been reconciled for this session. Orbit Radio
+	-- waits for it before invoking MusicRequestState, so the hydrate never races player setup.
+	MusicLoaded = "MusicLoaded",
 	-- Optional Studio-authored Sound attribute. Set to "Music" or "SoundEffect" to
 	-- route the Sound through the matching settings-controlled SoundGroup.
 	AudioCategory = "AudioCategory",

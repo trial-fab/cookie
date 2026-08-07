@@ -1,0 +1,5 @@
+cue_id,track_id,role,sequence_order,start_offset_seconds,end_behavior,status,notes
+FX_INTRO,FX_STORY_ONE,Primary,1,,Advance,Approved,
+FX_INTRO,FX_AMBIENT_TWO,Continuation,2,,Release,Approved,
+FX_INTRO,FX_AMBIENT_ONE,Fallback,1,,Release,Approved,
+FX_STINGER,FX_AMBIENT_ONE,Primary,1,5.0,CueDefault,Approved,

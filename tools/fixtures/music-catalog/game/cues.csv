@@ -1,0 +1,3 @@
+cue_id,moment,cue_class,priority,trigger_contract,playback_behavior,loop_mode,default_crossfade_seconds,fallback_pool,story_moments_controls,status,notes
+FX_INTRO,Fixture intro presentation,Cinematic,100,Intro presentation begins,Take over music,Loop,2.5,FX_AMBIENT,Yes,Approved,
+FX_STINGER,Fixture quest completion,Stinger,30,Completion presentation accepted,Duck and overlay,No Loop,0.2,FX_AMBIENT,No,Approved,

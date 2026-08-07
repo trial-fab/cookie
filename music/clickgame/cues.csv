@@ -1,0 +1,13 @@
+cue_id,moment,cue_class,priority,trigger_contract,playback_behavior,loop_mode,default_crossfade_seconds,fallback_pool,story_moments_controls,status,notes
+INTRO_ORBIT,Intro title and meteor orbit,Cinematic,100,Intro presentation begins,Preload and take over music,Loop,2.5,UNIVERSAL,Yes,Planned,
+INTRO_DESCENT,Play pressed and meteor descent,Cinematic,100,Player commits to starting the intro descent,Crossfade from orbit into momentum,No Loop,1.5,EARLY_GAME,Yes,Planned,Impact remains SFX.
+GOO_REVEAL,Goo exposed and healed,Cinematic,100,Reveal presentation commits,Warm discovery takeover,No Loop,2.5,EARLY_GAME,Yes,Planned,
+GOOB_LORE,Goob dialogue and Mixer unlock,Cinematic,100,Lore presentation commits,Dialogue-safe curious and hopeful takeover,Loop if needed,3.0,EARLY_GAME,Yes,Planned,
+QUEST_COMPLETE_STINGER,Ordinary quest completion,Stinger,30,Quest completion presentation accepted,Duck current music and overlay a short stinger,No Loop,0.2,UNIVERSAL,No,Planned,Collapse cascaded completions into one presentation.
+OPENING_ARC_COMPLETE,Opening quest arc completed,Major Milestone,70,ArcCompleted presentation accepted,Replace ambient then resume selection,No Loop,1.5,EARLY_GAME,Yes,Planned,
+FLOOR_INDUSTRY_UNLOCK,Industry expansion committed,Major Milestone,80,New Industry unlock transaction commits,Introduce floor identity and unlock pool,No Loop,1.5,INDUSTRY,Yes,Planned,Must not fire while loading saved ownership.
+FLOOR_COMMERCE_UNLOCK,Commerce expansion committed,Major Milestone,80,New Commerce unlock transaction commits,Introduce floor identity and unlock pool,No Loop,1.5,COMMERCE,Yes,Planned,Must not fire while loading saved ownership.
+FLOOR_SCIENCE_UNLOCK,Science expansion committed,Major Milestone,80,New Science unlock transaction commits,Introduce floor identity and unlock pool,No Loop,1.5,SCIENCE,Yes,Planned,Must not fire while loading saved ownership.
+CORE_EMERGENCE,Ancient Core opens and Old Goo emerges,Cinematic,100,Core emergence presentation commits,Tense mystery takeover,Loop if needed,2.0,RECOVERY,Yes,Planned,
+OLD_GOO_BACKSTORY,Old Goo begins the sad history,Cinematic,100,Backstory dialogue begins,Dialogue-safe emotional takeover with tail,Loop if needed,3.5,RECOVERY,Yes,Planned,
+REBIRTH_FINALE,End-of-run or rebirth presentation,Cinematic,100,Finale presentation commits,Conclusive takeover before next-run music,No Loop,2.0,UNIVERSAL,Yes,Planned,

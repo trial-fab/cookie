@@ -7,6 +7,7 @@ local CookieService = require(ServerScriptService.Services.CookieService)
 local FloorService = require(ServerScriptService.Services.FloorService)
 local GemService = require(ServerScriptService.Services.GemService)
 local GooSkinService = require(ServerScriptService.Services.GooSkinService)
+local MusicService = require(ServerScriptService.Services.MusicService)
 local PlayerDataService = require(ServerScriptService.Services.PlayerDataService)
 local QuestService = require(ServerScriptService.Services.QuestService)
 local ShieldService = require(ServerScriptService.Services.ShieldService)
@@ -55,6 +56,10 @@ function ResetStatsService.ResetPlayer(player)
 		return false
 	end
 	PlayerDataService.UpdateFromPlayerValues(player)
+	-- Decision 16's approved exception: Orbit Radio's library survives the wipe
+	-- untouched (it lives in Persistent, which ResetRun never replaces). Only the
+	-- current-run grants narrow back to Ground, so this is a republish, not a reset.
+	MusicService.OnRunReset(player)
 
 	return true
 end
@@ -83,6 +88,10 @@ function ResetStatsService.ResetOnboardingForDevelopment(player)
 	end
 	-- The opening capstone is earned progression, not a paid entitlement.
 	GooSkinService.RevokeEarnedSkinForDevelopment(player, GooSkinConfig.OpeningQuestSkinId)
+	-- Unlike a rebirth, a dev reset rewinds the story timeline itself, so the
+	-- encounters that revealed the intro and milestone music have to go with it or
+	-- those cues can never be earned again in this profile.
+	MusicService.ResetForDevelopment(player)
 	if not ResetStatsService.ResetPlayer(player) then
 		return false
 	end

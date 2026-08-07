@@ -8,6 +8,7 @@ local ProfileStore = require(script.Parent.Parent.Vendor.ProfileStore)
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
 local FloorConfig = require(ReplicatedStorage.Shared.FloorConfig)
 local FloorGeometry = require(ReplicatedStorage.Shared.FloorGeometry)
+local MusicPersistence = require(ReplicatedStorage.Shared.Music.MusicPersistence)
 local PlayerMetricConfig = require(ReplicatedStorage.Shared.PlayerMetricConfig)
 local PlayerMetricsService = require(script.Parent.PlayerMetricsService)
 local PlayerDataProjectionAudit = require(script.Parent.PlayerDataProjectionAudit)
@@ -94,6 +95,15 @@ local DEFAULT_PERSISTENT_DATA = {
 		SelectedInstanceId = nil,
 		HideCompleted = false,
 	},
+	-- Orbit Radio's saved domain (MusicService owns it; see Shared/OrbitRadio). The
+	-- master mute stays in Settings above -- this is everything else: validated
+	-- preferences, the permanent library, and the short-lived resume snapshot.
+	--
+	-- It is Persistent rather than Run because decision 16 makes library metadata
+	-- the one approved non-progression exception to the rebirth wipe. QueueResume is
+	-- absent from the template on purpose: ProfileStore only fills missing keys, and
+	-- a template snapshot would reconcile an empty one onto every fresh profile.
+	Music = MusicPersistence.defaults(),
 	Receipts = {},
 }
 

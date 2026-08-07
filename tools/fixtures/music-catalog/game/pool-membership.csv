@@ -1,0 +1,4 @@
+pool_id,track_id,weight,minimum_progression,recency_exclusion,status,notes
+FX_AMBIENT,FX_AMBIENT_ONE,1.0,,4,Approved,
+FX_AMBIENT,FX_AMBIENT_TWO,0.5,2,4,Approved,
+FX_RECOVERY,FX_AMBIENT_ONE,1.0,,2,Approved,

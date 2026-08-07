@@ -16,6 +16,9 @@ return {
 	SelectTitle = "SelectTitle",
 	GetGlobalLeaderboards = "GetGlobalLeaderboards",
 	DevTuningApply = "DevTuningApply",
+	-- Orbit Radio hydrate. Returns the validated Persistent.Music projection; the
+	-- resume snapshot rides only the first successful call of a session.
+	MusicRequestState = "MusicRequestState",
 
 	-- client -> server (fire-and-forget actions; RemoteEvent)
 	DamageBuilding = "DamageBuilding",
@@ -31,6 +34,12 @@ return {
 	QuestObservationV2 = "QuestObservationV2",
 	QuestPreferenceV2 = "QuestPreferenceV2",
 	QuestSelectV2 = "QuestSelectV2",
+	-- Orbit Radio ingress. Each channel is validated and rate-limited independently;
+	-- a dropped message only costs resume precision, never progression.
+	MusicPreference = "MusicPreference",
+	MusicFavorite = "MusicFavorite",
+	MusicQueueSnapshot = "MusicQueueSnapshot",
+	MusicCueEncountered = "MusicCueEncountered",
 
 	-- debug / test harness only (server handler is gated to Studio or the place creator)
 	DebugPlot = "DebugPlot",
@@ -46,6 +55,9 @@ return {
 	SkinInventoryChanged = "SkinInventoryChanged",
 	GooSkinInventoryChanged = "GooSkinInventoryChanged",
 	StoryStateChanged = "StoryStateChanged",
+	-- Later Orbit Radio pushes: library grants, current-run progression, and the
+	-- preference reset. The hydrate itself is MusicRequestState.
+	MusicStateChanged = "MusicStateChanged",
 	QuestEnvelopeV2 = "QuestEnvelopeV2",
 	OrbLayerPreviewChanged = "OrbLayerPreviewChanged",
 }

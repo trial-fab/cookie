@@ -30,3 +30,10 @@ sourcemap.json
 
 # Historical local snapshots; Git history is the source of rollback history.
 /backups/
+
+# Local music source media. Catalog/config CSVs under /music remain trackable.
+/music/archives/
+/music/curated/
+
+# Optional local spreadsheet export; CSV is the soundtrack source of truth.
+/docs/music-planning.xlsx

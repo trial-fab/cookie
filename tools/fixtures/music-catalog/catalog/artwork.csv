@@ -1,0 +1,3 @@
+artwork_id,source_id,source_pack,archive_member,sha256,image_path,display_name,license_status,license_evidence,roblox_asset_id,upload_owner,moderation_status,review_status,notes
+FX_ART_UNIVERSAL,FIXTURE_APPROVED,fixture-pack,cover.png,6666666666666666666666666666666666666666666666666666666666666666,fixtures/cover.png,Fixture Universal Cover,Approved,fixtures/license.txt,200000001,fixture-owner,Approved,Approved,
+FX_ART_UNVERIFIED,FIXTURE_PENDING,unverified-pack,cover.png,7777777777777777777777777777777777777777777777777777777777777777,fixtures/unverified-cover.png,Unverified Cover,Pending,,,,Not Uploaded,Unreviewed,Artwork license is verified separately from the audio license.

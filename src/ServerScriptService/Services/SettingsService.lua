@@ -7,6 +7,7 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local Attrs = require(ReplicatedStorage.Shared.Attrs)
 local Net = require(ReplicatedStorage.Shared.Net)
 local SettingsConfig = require(ReplicatedStorage.Shared.SettingsConfig)
+local MusicService = require(ServerScriptService.Services.MusicService)
 local PlayerDataService = require(ServerScriptService.Services.PlayerDataService)
 
 local SettingsService = {}
@@ -76,6 +77,11 @@ function SettingsService.Init()
 					player:SetAttribute(storageAttribute, settings[storageAttribute])
 				end
 			end
+
+			-- Orbit Radio's preferences are universal, so they clear with the rest of
+			-- this reset. Its library and resume snapshot are not settings and are
+			-- deliberately left alone (docs/music.md).
+			MusicService.ResetPreferences(player)
 			return
 		end
 		if not SettingsConfig.IsPersisted(attribute) or type(value) ~= "boolean" then

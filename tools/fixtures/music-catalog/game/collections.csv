@@ -1,0 +1,4 @@
+collection_id,display_name,purpose,runtime_role,unlock_rule,artwork_id,source_folders,status,notes
+FX_STORY,Fixture Story,Story recordings revealed after their scene,Player Collection,StoryEncounter,,intro,Approved,
+FX_UNIVERSAL,Fixture Universal,Context-neutral music available from the start,Player Collection,Always,FX_ART_UNIVERSAL,universal,Approved,
+FX_WORKBENCH,Fixture Workbench,Components awaiting offline arrangement,Production Workbench,NotBrowsable,,put together,Needs Arrangement,

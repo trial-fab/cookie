@@ -16,6 +16,7 @@ local WheelService = require(ServerScriptService.Services.WheelService)
 local ProductionService = require(ServerScriptService.Services.ProductionService)
 local OfflineEarningsService = require(ServerScriptService.Services.OfflineEarningsService)
 local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
+local MusicService = require(ServerScriptService.Services.MusicService)
 local SettingsService = require(ServerScriptService.Services.SettingsService)
 local StoryService = require(ServerScriptService.Services.StoryService)
 local QuestService = require(ServerScriptService.Services.QuestService)
@@ -166,6 +167,10 @@ local function setupPlayer(player)
 	end
 	CookieService.RefreshCookiesPerClickDisplay(player)
 	SettingsService.SetupPlayer(player, data.Persistent or {})
+	-- After domain 7, because collection backfill reads the committed floor count.
+	-- Music is presentation only: a failure here leaves Orbit Radio silent and
+	-- MusicLoaded unset rather than costing the player a session.
+	MusicService.SetupPlayer(player, data.Persistent or {})
 
 	-- §7 skin inventory. The services normalize canonical Data first, then publish their
 	-- projections. The daily login bonus is no longer auto-granted here — it's a claim-based

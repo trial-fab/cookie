@@ -1,0 +1,2 @@
+experience_id,display_name,universe_id,place_id,status,notes
+CLICKGAME,ClickGame,,,Active,Record the universe and place IDs when the first audio upload is granted to this experience.

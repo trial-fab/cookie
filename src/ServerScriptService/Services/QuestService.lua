@@ -200,6 +200,17 @@ function QuestService.ReconcileForDevelopment(player, causeTimestamp)
 	return router and router:DeveloperCheck(player, causeTimestamp or timestamp()) or false
 end
 
+-- Read-only view of committed arc completion for other services (Orbit Radio's
+-- encounter eligibility). Canonical Data only: never the client envelope, and never
+-- a reason to publish or mutate quest state.
+function QuestService.IsArcCompleted(player, arcId)
+	local data = PlayerDataService.Get(player)
+	local persistent = type(data) == "table" and data.Persistent or nil
+	local state = type(persistent) == "table" and persistent.UniversalQuestState or nil
+	local completed = type(state) == "table" and state.CompletedArcIds or nil
+	return type(completed) == "table" and type(arcId) == "string" and completed[arcId] == true
+end
+
 function QuestService.GetPerformanceMeasurements()
 	return {
 		Router = router and router:GetMeasurements() or {},

@@ -1,0 +1,9 @@
+collection_id,display_name,purpose,runtime_role,unlock_rule,artwork_id,source_folders,status,notes
+COMMERCE,Commerce,Polished electronic identity for the Commerce floor,Player Collection,CommerceFloor,,finance,Candidate,Finance is the source-curation label; Commerce is the game-facing floor identity.
+GROUND,Ground,Ground-floor and early-game music available from the first session,Player Collection,Always,,post-intro,Candidate,Also supplies gentle recovery material after story cues.
+INDUSTRY,Industry,Mechanical and productive identity for the Industry floor,Player Collection,IndustryFloor,,industry,Candidate,
+INTERIOR_BIRDECORATOR,Interior Birdecorator Collection,Cohesive source set awaiting per-track assignment,Candidate Set,NotBrowsable,,cohesive,Candidate,Preserve the source relationships while assigning individual tracks to player collections.
+SCIENCE,Science,Futuristic cosmic identity for the Science floor,Player Collection,ScienceFloor,,science,Candidate,
+STORY,Story,Story and milestone recordings revealed after their scene completes,Player Collection,StoryEncounter,,intro;old slime;end,Candidate,Individual tracks stay hidden until their cue has been encountered.
+UNIVERSAL,Universal,Context-neutral music available across all progression,Player Collection,Always,,universal,Candidate,
+WORKBENCH,Production Workbench,Source components needing audition or offline arrangement,Production Workbench,NotBrowsable,,put together,Needs Arrangement,Not an initial runtime stem-mixing system.

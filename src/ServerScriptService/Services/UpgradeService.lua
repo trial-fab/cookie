@@ -10,6 +10,7 @@ local CookieService = require(ServerScriptService.Services.CookieService)
 local AutoclickerAnalyticsService = require(ServerScriptService.Services.AutoclickerAnalyticsService)
 local FloorAnalyticsService = require(ServerScriptService.Services.FloorAnalyticsService)
 local FloorService = require(ServerScriptService.Services.FloorService)
+local MusicService = require(ServerScriptService.Services.MusicService)
 local PlayerDataService = require(ServerScriptService.Services.PlayerDataService)
 local PlayerMetricsService = require(ServerScriptService.Services.PlayerMetricsService)
 local StoryService = require(ServerScriptService.Services.StoryService)
@@ -998,7 +999,13 @@ local EffectHandlers = {
 			if not definition then
 				return false, "Floor configuration is invalid."
 			end
-			return FloorService.ApplyUnlock(player, definition.Id, amount)
+			local applied, message = FloorService.ApplyUnlock(player, definition.Id, amount)
+			-- Third return: the floor this transaction is unlocking. It travels back
+			-- with the purchase so the response can name a committed one-time event
+			-- instead of leaving the client to infer one from replicated state.
+			-- `amount <= 0` is a refresh, never an unlock.
+			local unlockedFloorId = applied ~= false and amount > 0 and definition.Id or nil
+			return applied, message, unlockedFloorId
 		end,
 	},
 	-- The autoclick unlock grants its first Power level immediately. Other
@@ -1059,14 +1066,20 @@ function UpgradeService.ApplyUpgrade(player, upgradeId, amount, placementCFrame,
 		return true
 	end
 
+	-- Set only by an effect that commits a one-time unlock this transaction owns.
+	-- Returned to Purchase, which passes it on only after the transaction can no
+	-- longer roll back.
+	local unlockedFloorId
+
 	local function applyEffects(effects)
 		for effectName, value in pairs(effects) do
 			local handler = EffectHandlers[effectName]
 			if handler then
-				local applied, applyMessage = handler.apply(player, value, amount, config)
+				local applied, applyMessage, effectFloorId = handler.apply(player, value, amount, config)
 				if applied == false then
 					return false, applyMessage
 				end
+				unlockedFloorId = effectFloorId or unlockedFloorId
 			end
 		end
 		return true
@@ -1091,7 +1104,7 @@ function UpgradeService.ApplyUpgrade(player, upgradeId, amount, placementCFrame,
 		end
 	end
 
-	return true
+	return true, nil, unlockedFloorId
 end
 
 function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFloorId)
@@ -1185,7 +1198,7 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFl
 		if setUpgradeCount(player, upgradeId, count + 1, run) == nil then
 			return false, "Player data is not ready."
 		end
-		local applied, applyMessage = UpgradeService.ApplyUpgrade(
+		local applied, applyMessage, unlockedFloorId = UpgradeService.ApplyUpgrade(
 			player,
 			upgradeId,
 			1,
@@ -1207,7 +1220,14 @@ function UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFl
 			AutoclickerAnalyticsService.RecordUnlocked(player, cost)
 		end
 		QuestService.OnUpgradePurchased(player, upgradeId)
-		return true, "Purchased " .. (config.DisplayName or upgradeId) .. "."
+		-- Past every rollback path, so this is the commit boundary a one-time event
+		-- may be published from. Orbit Radio records the permanent collection here;
+		-- the client requests the matching cue from the floor id in the response,
+		-- rather than inferring one from UnlockedFloorCount replicating.
+		if unlockedFloorId then
+			MusicService.OnFloorUnlocked(player, unlockedFloorId)
+		end
+		return true, "Purchased " .. (config.DisplayName or upgradeId) .. ".", unlockedFloorId
 	end
 
 	-- Deduct BEFORE applying: grantTool can yield (WaitForChild), and paying after a
@@ -1587,8 +1607,17 @@ function UpgradeService.Init()
 			return { success = false, message = "Invalid floor." }
 		end
 
-		local success, message = UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFloorId)
-		return { success = success, message = message, upgradeId = upgradeId }
+		-- `unlockedFloorId` is present only on a committed floor unlock. It is a
+		-- presentation contract, not an authority: the client uses it to request the
+		-- one-time floor cue, and music is never allowed to move progression.
+		local success, message, unlockedFloorId =
+			UpgradeService.Purchase(player, upgradeId, placementCFrame, placementFloorId)
+		return {
+			success = success,
+			message = message,
+			upgradeId = upgradeId,
+			unlockedFloorId = unlockedFloorId,
+		}
 	end)
 
 	Net.onInvoke(Names.SellUpgrade, function(player, upgradeId)

@@ -1,0 +1,6 @@
+track_id,display_title,collection_id,audience_lane,energy,dialogue_safe,loop_quality,story_locked,favorite_enabled,status,notes
+FX_AMBIENT_ONE,Quiet Orbit,FX_UNIVERSAL,Playful,Chill,Yes,Good,No,Yes,Approved,
+FX_AMBIENT_TWO,Bright Vector,FX_UNIVERSAL,Synth,Energetic,Yes,Good,No,Yes,Approved,
+FX_STORY_ONE,First Light,FX_STORY,Crossover,Cinematic,Yes,Acceptable,Yes,Yes,Approved,
+FX_COMPONENT,,FX_WORKBENCH,,,,,No,No,Needs Arrangement,
+FX_PENDING_SOURCE,,FX_UNIVERSAL,,,,,No,No,Rejected,Held back with its source.
